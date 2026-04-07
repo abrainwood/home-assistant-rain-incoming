@@ -51,10 +51,7 @@ class IncomingRainConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_LONGITUDE, default=default_lon): vol.Coerce(float),
                 vol.Required(
                     CONF_LOOKAHEAD_MINUTES, default=DEFAULT_LOOKAHEAD_MINUTES
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=MIN_LOOKAHEAD_MINUTES, max=MAX_LOOKAHEAD_MINUTES),
-                ),
+                ): vol.Coerce(int),
             }
         )
 

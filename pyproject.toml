@@ -28,6 +28,7 @@ include = ["custom_components.*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["custom_components/incoming_rain"]
