@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "incoming-rain"
+version = "0.1.0"
+description = "Home Assistant integration that detects approaching rain using radar data"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-homeassistant-custom-component>=0.13",
+    "pytest-cov>=4.1",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "Pillow>=10.0",
+    "aiohttp>=3.9",
+    "aioresponses>=0.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["custom_components.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["custom_components/incoming_rain"]
+omit = ["tests/*"]

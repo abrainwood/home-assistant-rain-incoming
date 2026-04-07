@@ -1,0 +1,11 @@
+{
+  "domain": "incoming_rain",
+  "name": "Incoming Rain",
+  "version": "0.1.0",
+  "documentation": "https://github.com/andrewjdavies/incoming_rain",
+  "requirements": ["numpy>=1.26", "scipy>=1.11"],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "cloud_polling",
+  "config_flow": true
+}
