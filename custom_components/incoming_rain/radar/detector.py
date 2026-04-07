@@ -187,7 +187,19 @@ def detect(
     earliest_arrival: datetime | None = None
 
     for track in valid_tracks:
-        # Compute per-step velocities from consecutive track entries
+        # Check current position first - overhead rain triggers immediately
+        _, _, final_centroid = track[-1]
+        cur_row, cur_col = final_centroid
+        dist_to_loc = math.sqrt((cur_row - loc_row) ** 2 + (cur_col - loc_col) ** 2)
+
+        if dist_to_loc <= proximity_px:
+            # Rain is already at the location - report as arriving now
+            arrival_dt = last_frame_time
+            if earliest_arrival is None or arrival_dt < earliest_arrival:
+                earliest_arrival = arrival_dt
+            continue
+
+        # For cells not yet overhead, compute velocity and require directional coherence
         velocities: list[tuple[float, float]] = []
         for i in range(len(track) - 1):
             fi, _, ci = track[i]
@@ -204,15 +216,6 @@ def detect(
 
         vy = sum(v[0] for v in velocities) / len(velocities)
         vx = sum(v[1] for v in velocities) / len(velocities)
-
-        # Final centroid of the track (current position)
-        _, _, final_centroid = track[-1]
-        cur_row, cur_col = final_centroid
-
-        # Skip cells already at the location (rain already overhead)
-        dist_to_loc = math.sqrt((cur_row - loc_row) ** 2 + (cur_col - loc_col) ** 2)
-        if dist_to_loc <= proximity_px:
-            continue
 
         # Project cell forward in 60-second steps up to the lookahead limit
         step_s = 60.0

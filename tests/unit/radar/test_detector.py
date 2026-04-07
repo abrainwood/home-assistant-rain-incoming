@@ -95,17 +95,15 @@ class TestDetectNoRain:
         assert result.rain_incoming is False
         assert result.arrival_time is None
 
-    def test_rain_only_at_location_in_every_frame_not_incoming(self):
-        """Rain that is already overhead is not 'incoming'."""
+    def test_rain_at_location_is_incoming_with_arrival_now(self):
+        """Rain already overhead is reported as incoming with arrival_time = last frame time."""
         cfg = default_config()
-        # Build a grid with rain exactly at the location pixel
         grid = np.zeros((64, 64), dtype=np.float32)
-        # Location is at centre of bounds
-        grid[32, 32] = 0.8
+        grid[32, 32] = 0.8  # location is at centre of bounds
         frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
-        # Stationary rain at location is already there, not incoming
-        assert result.rain_incoming is False
+        assert result.rain_incoming is True
+        assert result.arrival_time == frames[-1].timestamp
 
 
 class TestDetectRainApproaching:
@@ -163,3 +161,21 @@ class TestDetectOutsideLookahead:
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.rain_incoming is False
+
+
+class TestDetectParallelMiss:
+    def test_cell_moving_parallel_misses_location(self):
+        """
+        Cell moving east but far north of the location.
+        Its trajectory is directionally coherent but never enters the proximity circle.
+        """
+        cfg = default_config()
+        frames = []
+        # Cell at rows 5-7 (far north of location at row 32), moving east
+        for i, col in enumerate([20, 28, 36]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[5:8, col:col + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is False
+        assert result.arrival_time is None
