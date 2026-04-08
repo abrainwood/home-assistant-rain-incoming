@@ -150,9 +150,8 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                 except Exception:
                     _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
 
-        result = detect(frames=frames, location=(lat, lon), config=config)
-
-        # Compute per-frame QC confidence maps (using all grids for temporal context)
+        # Compute per-frame QC confidence maps BEFORE detection so they can
+        # be used to gate intensity thresholding in the detector.
         grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
         qc_config = QCConfig()
 
@@ -193,6 +192,13 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                 clutter_maturity=clutter_maturity,
             )
             self.confidence_maps.append(cmap.confidence)
+
+        result = detect(
+            frames=frames,
+            location=(lat, lon),
+            config=config,
+            confidence_maps=self.confidence_maps,
+        )
 
         # Store frame paths, timestamps, and tracked cells for the radar image entity
         self.frame_paths = [f.path for f in frames if hasattr(f, "path")]

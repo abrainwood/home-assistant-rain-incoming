@@ -278,3 +278,89 @@ class TestTrackedCells:
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.rain_incoming is True
         assert len(result.tracked_cells) >= 1
+
+
+class TestConfidenceMaps:
+    def test_low_confidence_noise_not_detected(self):
+        """Low-confidence noise (conf=0.2, intensity=0.15) -> effective 0.03 -> below threshold."""
+        cfg = default_config()
+        # Create grid with borderline intensity
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.15  # just above threshold of 0.1
+
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+
+        # Confidence map that heavily penalizes
+        confidence_map = np.full((64, 64), 0.2, dtype=np.float32)
+        confidence_maps = [confidence_map] * 3
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, confidence_maps=confidence_maps)
+        # effective = 0.15 * 0.2 = 0.03 < threshold 0.1 -> no detection
+        assert result.rain_incoming is False
+
+    def test_high_confidence_rain_detected(self):
+        """High-confidence rain (conf=0.9, intensity=0.15) -> effective 0.135 -> above threshold."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.15
+
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+
+        # High confidence
+        confidence_map = np.full((64, 64), 0.9, dtype=np.float32)
+        confidence_maps = [confidence_map] * 3
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, confidence_maps=confidence_maps)
+        # effective = 0.15 * 0.9 = 0.135 > threshold 0.1 -> detected
+        assert result.rain_incoming is True
+
+    def test_confidence_maps_none_backward_compat(self):
+        """confidence_maps=None should work exactly as before."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.9
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, confidence_maps=None)
+        assert result.rain_incoming is True
+
+    def test_tracked_cell_has_confidence_field(self):
+        """TrackedCell should have a confidence field."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.9
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+
+        confidence_map = np.full((64, 64), 0.8, dtype=np.float32)
+        confidence_maps = [confidence_map] * 3
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, confidence_maps=confidence_maps)
+        assert len(result.tracked_cells) >= 1
+        cell = result.tracked_cells[0]
+        assert hasattr(cell, 'confidence')
+        assert 0.0 <= cell.confidence <= 1.0
+
+    def test_low_confidence_cell_not_reported_as_incoming(self):
+        """A cell with confidence < 0.4 should not trigger rain_incoming."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        # Cell right at location with moderate intensity but low confidence
+        grid[31:34, 31:34] = 0.15
+
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+
+        # Confidence just high enough to pass threshold but cell confidence < 0.4
+        # effective = 0.15 * 0.3 = 0.045 -> below threshold anyway
+        # Let's use a value that makes effective > threshold but cell confidence < 0.4
+        # We need: intensity * confidence >= 0.1 and confidence < 0.4
+        # So intensity > 0.25 with confidence 0.39
+        grid2 = np.zeros((64, 64), dtype=np.float32)
+        grid2[31:34, 31:34] = 0.3
+        frames2 = [make_frame(ts(-20 + i * 10), grid2, cfg.analysis_bounds) for i in range(3)]
+
+        confidence_map = np.full((64, 64), 0.35, dtype=np.float32)
+        confidence_maps = [confidence_map] * 3
+
+        result = detect(frames=frames2, location=(LAT, LON), config=cfg, confidence_maps=confidence_maps)
+        # effective = 0.3 * 0.35 = 0.105 > threshold 0.1 -> cells detected
+        # but cell confidence 0.35 < 0.4 -> rain_incoming should be False
+        assert result.rain_incoming is False

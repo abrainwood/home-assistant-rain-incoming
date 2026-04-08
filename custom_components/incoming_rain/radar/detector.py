@@ -32,6 +32,7 @@ class TrackedCell:
     lon: float
     velocity_kmh: float  # speed in km/h
     bearing: float  # direction in degrees (0=N, 90=E, 180=S, 270=W)
+    confidence: float = 1.0  # QC confidence for this cell (0.0-1.0)
 
 
 @dataclass
@@ -185,8 +186,16 @@ def detect(
     frames: list[RadarFrame],
     location: tuple[float, float],
     config: DetectorConfig,
+    confidence_maps: list[np.ndarray] | None = None,
 ) -> DetectionResult:
-    """Run the full rain detection pipeline over a list of radar frames."""
+    """Run the full rain detection pipeline over a list of radar frames.
+
+    Parameters
+    ----------
+    confidence_maps: optional per-frame QC confidence arrays. When provided,
+        intensity grids are multiplied by confidence before thresholding,
+        so low-confidence pixels (clutter) are effectively filtered out.
+    """
     frame_count = len(frames)
 
     if frame_count < 2:
@@ -206,8 +215,19 @@ def detect(
     # 1. Extract intensity grids from all frames
     grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
 
+    # Apply QC confidence as a multiplier before thresholding
+    if confidence_maps is not None:
+        effective_grids = []
+        for i, g in enumerate(grids):
+            if i < len(confidence_maps) and confidence_maps[i] is not None:
+                effective_grids.append(g * confidence_maps[i])
+            else:
+                effective_grids.append(g)
+    else:
+        effective_grids = grids
+
     # 2. Threshold + spatial filter each frame independently
-    masks = [threshold_intensity(g, config.intensity_threshold) for g in grids]
+    masks = [threshold_intensity(g, config.intensity_threshold) for g in effective_grids]
     masks = [filter_by_area(m, config.min_cell_area_pixels) for m in masks]
 
     # 3. Label each frame independently
@@ -250,20 +270,42 @@ def detect(
     last_labeled = per_frame_labeled[-1]
     tracked_cells: list[TrackedCell] = []
 
+    # Pre-compute confidence map for the last frame (for per-cell confidence)
+    last_conf_map = (
+        confidence_maps[-1]
+        if confidence_maps is not None and len(confidence_maps) == len(frames)
+        else None
+    )
+
+    def _cell_mean_confidence(label: int) -> float:
+        """Compute mean QC confidence for pixels belonging to a cell."""
+        if last_conf_map is None:
+            return 1.0
+        cell_mask = last_labeled == label
+        cell_conf = last_conf_map[cell_mask]
+        if cell_conf.size == 0:
+            return 1.0
+        return float(cell_conf.mean())
+
+    # Minimum cell confidence to report rain_incoming
+    _MIN_CELL_CONFIDENCE = 0.4
+
     for track in valid_tracks:
         # Check current position first - overhead rain triggers immediately
         _, last_label, final_centroid = track[-1]
         cur_row, cur_col = final_centroid
         dist_to_loc = math.sqrt((cur_row - loc_row) ** 2 + (cur_col - loc_col) ** 2)
+        cell_conf = _cell_mean_confidence(last_label)
 
         if dist_to_loc <= proximity_px:
             # Rain is already at the location - report as arriving now
-            arrival_dt = last_frame_time
-            if earliest_arrival is None or arrival_dt < earliest_arrival:
-                earliest_arrival = arrival_dt
-            cell_pixels = last_grid[last_labeled == last_label]
-            if cell_pixels.size > 0:
-                max_intensity = max(max_intensity, float(cell_pixels.max()))
+            if cell_conf >= _MIN_CELL_CONFIDENCE:
+                arrival_dt = last_frame_time
+                if earliest_arrival is None or arrival_dt < earliest_arrival:
+                    earliest_arrival = arrival_dt
+                cell_pixels = last_grid[last_labeled == last_label]
+                if cell_pixels.size > 0:
+                    max_intensity = max(max_intensity, float(cell_pixels.max()))
 
             # Build TrackedCell - compute velocity if we have enough track points
             cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
@@ -273,6 +315,7 @@ def detect(
             tracked_cells.append(TrackedCell(
                 lat=cell_lat, lon=cell_lon,
                 velocity_kmh=speed_kmh, bearing=bearing,
+                confidence=cell_conf,
             ))
             continue
 
@@ -308,7 +351,7 @@ def detect(
                 break
             t += step_s
 
-        if arrival_seconds is not None:
+        if arrival_seconds is not None and cell_conf >= _MIN_CELL_CONFIDENCE:
             arrival_dt = last_frame_time + timedelta(seconds=arrival_seconds)
             if earliest_arrival is None or arrival_dt < earliest_arrival:
                 earliest_arrival = arrival_dt
@@ -326,6 +369,7 @@ def detect(
         tracked_cells.append(TrackedCell(
             lat=cell_lat, lon=cell_lon,
             velocity_kmh=speed_kmh_val, bearing=bearing_val,
+            confidence=cell_conf,
         ))
 
     rain_incoming = earliest_arrival is not None
