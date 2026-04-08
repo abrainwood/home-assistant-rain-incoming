@@ -49,9 +49,17 @@ def auto_enable_custom_integrations():
     _restore_sockets()
     yield
 
-HA_URL = "http://localhost:8123"
+E2E_HA_PORT = 18123
+HA_URL = f"http://localhost:{E2E_HA_PORT}"
 MOCK_PORT = 9876
-TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "..", ".dev-token")
+TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "..", ".e2e-token")
+
+# Docker env for E2E - isolated container, volume, and port to avoid clobbering dev state
+_DOCKER_ENV = {
+    "HA_CONTAINER": "ha-e2e",
+    "HA_VOLUME": "ha-e2e-config",
+    "HA_PORT": str(E2E_HA_PORT),
+}
 
 
 class HAClient:
@@ -106,8 +114,10 @@ def _wait_for(url: str, timeout: int = 60) -> None:
             req = urllib.request.Request(url)
             urllib.request.urlopen(req, timeout=2)
             return
-        except urllib.error.HTTPError:
-            return  # server is up, just returned an error code
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                return  # server is up, just needs auth
+            time.sleep(1)  # other errors - keep waiting
         except (urllib.error.URLError, OSError):
             time.sleep(1)
     raise TimeoutError(f"Timed out waiting for {url}")
@@ -126,11 +136,12 @@ def ha_container(mock_server):
     """Ensure HA container is running with mock RainViewer URLs."""
     env = {
         **os.environ,
+        **_DOCKER_ENV,
         "RAINVIEWER_API_URL": f"http://host.docker.internal:{MOCK_PORT}",
         "RAINVIEWER_TILE_URL": f"http://host.docker.internal:{MOCK_PORT}",
     }
 
-    # Always start fresh - remove old container and volume for a clean slate
+    # Always start fresh - remove old E2E container and volume for a clean slate
     subprocess.run(
         ["docker", "compose", "-f", "docker-compose.dev.yml", "down", "-v"],
         capture_output=True, env=env,
@@ -222,7 +233,16 @@ def ha_client(ha_container) -> HAClient:
             "code": resp["auth_code"],
         }, form=True)
         token = token_resp["access_token"]
-        _raw_request("POST", "/api/onboarding/core_config", {}, token=token)
+        _raw_request("POST", "/api/onboarding/core_config", {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "country": "AU",
+            "time_zone": "Australia/Sydney",
+            "elevation": 200,
+            "unit_system": "metric",
+            "currency": "AUD",
+            "language": "en",
+        }, token=token)
         _raw_request("POST", "/api/onboarding/analytics", {}, token=token)
     else:
         # Already onboarded - log in

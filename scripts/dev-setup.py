@@ -22,6 +22,16 @@ import urllib.request
 HA_URL = "http://localhost:8123"
 TOKEN_FILE = ".dev-token"
 DEV_USER = {"name": "Developer", "username": "dev", "password": "devdevdev", "language": "en"}
+HOME_LOCATION = {
+    "latitude": -33.701,
+    "longitude": 151.209,
+    "country": "AU",
+    "time_zone": "Australia/Sydney",
+    "elevation": 200,
+    "unit_system": "metric",
+    "currency": "AUD",
+    "language": "en",
+}
 INTEGRATION_CONFIG = {"latitude": -33.701, "longitude": 151.209, "lookahead_minutes": 60}
 
 
@@ -62,10 +72,14 @@ def wait_for_ha(timeout: int = 120) -> None:
             urllib.request.urlopen(req, timeout=2)
             print(" ready")
             return
-        except urllib.error.HTTPError:
-            # 401 = HA is up but needs auth - that's fine
-            print(" ready")
-            return
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                # HA is up but needs auth - that's fine
+                print(" ready")
+                return
+            # Other HTTP errors (5xx etc) - keep waiting
+            print(".", end="", flush=True)
+            time.sleep(2)
         except (urllib.error.URLError, OSError):
             print(".", end="", flush=True)
             time.sleep(2)
@@ -163,7 +177,7 @@ def onboard(token_file: str = TOKEN_FILE) -> str:
 
     # Complete remaining onboarding steps
     print("Completing onboarding...")
-    _request("POST", "/api/onboarding/core_config", {}, token=token)
+    _request("POST", "/api/onboarding/core_config", HOME_LOCATION, token=token)
     _request("POST", "/api/onboarding/analytics", {}, token=token)
 
     # Save token
