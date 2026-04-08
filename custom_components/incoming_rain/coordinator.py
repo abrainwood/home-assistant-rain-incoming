@@ -116,8 +116,8 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # Store the latest frame path for the radar image entity
         if frames:
             latest = frames[-1]
-            if hasattr(latest, "_path"):
-                self.latest_frame_path = latest._path
+            if hasattr(latest, "path"):
+                self.latest_frame_path = latest.path
 
         self._consecutive_failures = 0
         self.last_update_success_time = datetime.now(timezone.utc)

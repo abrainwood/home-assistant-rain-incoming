@@ -6,6 +6,7 @@ from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -64,11 +65,14 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
         radius_km = data.get(CONF_RADAR_RADIUS_KM, DEFAULT_RADAR_RADIUS_KM)
 
+        session = async_get_clientsession(self.hass)
         self._cached_image = await render_composite(
             lat=lat,
             lon=lon,
             radius_km=radius_km,
             frame_path=frame_path,
+            session=session,
+            run_in_executor=self.hass.async_add_executor_job,
         )
         self._cached_frame_path = frame_path
         return self._cached_image

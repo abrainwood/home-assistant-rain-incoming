@@ -13,9 +13,9 @@ from custom_components.incoming_rain.providers.rainviewer import (
     RainViewerFrame,
     RainViewerProvider,
     _colour_to_intensity,
-    _lat_lon_to_tile,
     _tile_bounds,
 )
+from custom_components.incoming_rain.radar.geo import lat_lon_to_tile
 
 
 # --- Unit tests for pure helpers ---
@@ -45,13 +45,13 @@ class TestColourToIntensity:
 class TestLatLonToTile:
     def test_known_location(self):
         # Terry Hills at zoom 7 should be tile (117, 76)
-        x, y = _lat_lon_to_tile(-33.701, 151.209, zoom=7)
+        x, y = lat_lon_to_tile(-33.701, 151.209, zoom=7)
         assert x == 117
         assert y == 76
 
     def test_zoom_increases_tile_resolution(self):
-        x7, y7 = _lat_lon_to_tile(-33.701, 151.209, zoom=7)
-        x8, y8 = _lat_lon_to_tile(-33.701, 151.209, zoom=8)
+        x7, y7 = lat_lon_to_tile(-33.701, 151.209, zoom=7)
+        x8, y8 = lat_lon_to_tile(-33.701, 151.209, zoom=8)
         assert x8 == x7 * 2 or x8 == x7 * 2 + 1
         assert y8 == y7 * 2 or y8 == y7 * 2 + 1
 

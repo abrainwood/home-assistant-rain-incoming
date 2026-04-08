@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from .base import BoundingBox, RadarFrame, RadarProvider
+from ..radar.geo import lat_lon_to_tile
 
 import os
 
@@ -21,7 +22,7 @@ TILE_SIZE = 256
 # RainViewer precipitation colour table for colour scheme 6 (ordered light→heavy).
 # Each entry: (R, G, B, intensity 0.0-1.0).
 # Intensities are calibrated against approximate dBZ equivalents.
-_PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
+PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
     (0, 91, 142, 0.10),    # very light (~16 dBZ)
     (0, 119, 170, 0.18),   # light (~20 dBZ)
     (0, 154, 213, 0.28),   # light-moderate (~24 dBZ)
@@ -35,7 +36,7 @@ _PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
 
 # Maximum L2 colour distance to match a pixel to a known precipitation colour.
 # Pixels further than this threshold are treated as land mask or unknown = 0.
-_MAX_COLOUR_DISTANCE = 60.0
+MAX_COLOUR_DISTANCE = 60.0
 
 
 def _colour_distance(r1: int, g1: int, b1: int, r2: int, g2: int, b2: int) -> float:
@@ -48,26 +49,15 @@ def _colour_to_intensity(r: int, g: int, b: int, alpha: int) -> float:
         return 0.0
     best_dist = float("inf")
     best_intensity = 0.0
-    for pr, pg, pb, intensity in _PRECIP_COLOURS:
+    for pr, pg, pb, intensity in PRECIP_COLOURS:
         d = _colour_distance(r, g, b, pr, pg, pb)
         if d < best_dist:
             best_dist = d
             best_intensity = intensity
-    if best_dist > _MAX_COLOUR_DISTANCE:
+    if best_dist > MAX_COLOUR_DISTANCE:
         return 0.0  # land mask or unrecognised colour
     return best_intensity
 
-
-def _lat_lon_to_tile(lat: float, lon: float, zoom: int) -> tuple[int, int]:
-    """Convert lat/lon to tile (x, y) at the given zoom level."""
-    x = int((lon + 180.0) / 360.0 * (2 ** zoom))
-    lat_r = math.radians(lat)
-    y = int(
-        (1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi)
-        / 2.0
-        * (2 ** zoom)
-    )
-    return x, y
 
 
 def _tile_bounds(tx: int, ty: int, zoom: int) -> BoundingBox:
@@ -92,10 +82,10 @@ def _tile_to_intensity_array(image_bytes: bytes) -> np.ndarray:
 
     # Build colour/intensity lookup from the precipitation table
     colours = np.array(
-        [[r, g, b] for r, g, b, _ in _PRECIP_COLOURS], dtype=np.float32
+        [[r, g, b] for r, g, b, _ in PRECIP_COLOURS], dtype=np.float32
     )
     intensities = np.array(
-        [i for _, _, _, i in _PRECIP_COLOURS], dtype=np.float32
+        [i for _, _, _, i in PRECIP_COLOURS], dtype=np.float32
     )
 
     # Compute L2 distance from each pixel to each precipitation colour
@@ -106,7 +96,7 @@ def _tile_to_intensity_array(image_bytes: bytes) -> np.ndarray:
     best_idx = distances.argmin(axis=-1)
     best_dist = distances.min(axis=-1)
 
-    valid = alpha_mask & (best_dist <= _MAX_COLOUR_DISTANCE)
+    valid = alpha_mask & (best_dist <= MAX_COLOUR_DISTANCE)
     result[valid] = intensities[best_idx[valid]]
     return result
 
@@ -125,6 +115,10 @@ class RainViewerFrame(RadarFrame):
     @property
     def timestamp(self) -> datetime:
         return self._timestamp
+
+    @property
+    def path(self) -> str:
+        return self._path
 
     def get_intensity_at(self, lat: float, lon: float) -> float:
         if self._cached_grid is None or self._cached_bounds is None:
@@ -154,7 +148,7 @@ class RainViewerFrame(RadarFrame):
         session: aiohttp.ClientSession,
     ) -> np.ndarray:
         """Fetch tiles covering bounds, stitch, and resample to (height, width)."""
-        cx, cy = _lat_lon_to_tile(
+        cx, cy = lat_lon_to_tile(
             (bounds.lat_min + bounds.lat_max) / 2,
             (bounds.lon_min + bounds.lon_max) / 2,
             self._zoom,
