@@ -81,8 +81,8 @@ def draw_crosshair(img: Image.Image, cx: int, cy: int) -> None:
     gap = _CROSSHAIR_LINE_GAP
     length = _CROSSHAIR_LINE_LENGTH
 
-    outline_color = (255, 255, 255, 200)
-    fill_color = (255, 0, 0, 255)
+    outline_color = (255, 255, 255, 160)
+    fill_color = (200, 50, 50, 180)
 
     # White outline circle
     draw.ellipse(
@@ -110,7 +110,7 @@ def draw_range_rings(
 ) -> None:
     """Draw subtle range rings at half-radius and full-radius with distance labels."""
     draw = ImageDraw.Draw(img)
-    ring_color = (255, 255, 255, 60)
+    ring_color = (255, 255, 255, 80)
     try:
         font = ImageFont.load_default(size=14)
     except TypeError:
@@ -131,7 +131,7 @@ def draw_range_rings(
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 if dx or dy:
-                    draw.text((lx + dx, ly + dy), label, fill=(255, 255, 255, 160), font=font)
+                    draw.text((lx + dx, ly + dy), label, fill=(255, 255, 255, 255), font=font)
         draw.text((lx, ly), label, fill=(0, 0, 0, 200), font=font)
 
 
@@ -198,7 +198,7 @@ def _draw_tracked_cells(
         draw.ellipse(
             [cx - r, cy - r, cx + r, cy + r],
             fill=(255, 255, 0, 180),
-            outline=(255, 255, 255, 200),
+            outline=(255, 255, 255, 255),
             width=1,
         )
 
@@ -345,18 +345,28 @@ def _render_gif_sync(
     frame_duration_ms: int,
 ) -> bytes:
     """CPU-bound: assemble RGBA frames into an animated GIF. Returns GIF bytes."""
-    rgb_frames = [f.convert("RGB") for f in frames]
+    # Quantize all frames to the FIRST frame's palette so colors (crosshair,
+    # range rings, labels) stay consistent across the animation.
+    first_quantized = frames[0].convert("RGB").quantize(colors=256, method=Image.Quantize.MEDIANCUT)
+    palette = first_quantized.getpalette()
+
+    quantized_frames = []
+    for f in frames:
+        rgb = f.convert("RGB")
+        q = rgb.quantize(palette=first_quantized, dither=Image.Dither.FLOYDSTEINBERG)
+        quantized_frames.append(q)
+
     buf = BytesIO()
-    if len(rgb_frames) == 1:
-        rgb_frames[0].save(buf, format="GIF")
+    if len(quantized_frames) == 1:
+        quantized_frames[0].save(buf, format="GIF")
     else:
-        durations = [frame_duration_ms] * len(rgb_frames)
+        durations = [frame_duration_ms] * len(quantized_frames)
         durations[-1] = frame_duration_ms * 4  # hold on last frame
-        rgb_frames[0].save(
+        quantized_frames[0].save(
             buf,
             format="GIF",
             save_all=True,
-            append_images=rgb_frames[1:],
+            append_images=quantized_frames[1:],
             duration=durations,
             loop=0,
             disposal=2,
