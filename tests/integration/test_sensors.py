@@ -97,3 +97,10 @@ async def test_arrival_sensor_unknown_when_no_rain(hass: HomeAssistant, mock_ent
     state = hass.states.get("sensor.incoming_rain_rain_arrival_time")
     assert state is not None
     assert state.state in ("unknown", "None")
+
+
+@pytest.mark.asyncio
+async def test_image_entity_created(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("image.incoming_rain_radar")
+    assert state is not None

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
@@ -66,6 +66,8 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self._entry = entry
         self._provider = RainViewerProvider()
         self._consecutive_failures = 0
+        self.latest_frame_path: str | None = None
+        self.last_update_success_time: datetime | None = None
 
     def _build_config(self) -> DetectorConfig:
         data = self._entry.data
@@ -111,7 +113,14 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         result = detect(frames=frames, location=(lat, lon), config=config)
 
+        # Store the latest frame path for the radar image entity
+        if frames:
+            latest = frames[-1]
+            if hasattr(latest, "_path"):
+                self.latest_frame_path = latest._path
+
         self._consecutive_failures = 0
+        self.last_update_success_time = datetime.now(timezone.utc)
         return result
 
     async def _fetch_with_backoff(self, lat: float, lon: float):
