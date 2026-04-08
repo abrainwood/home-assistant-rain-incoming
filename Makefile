@@ -33,5 +33,5 @@ dev-logs:
 	docker logs ha-dev -f --tail 50
 
 dev-restart:
-	docker compose -f docker-compose.dev.yml stop
-	docker compose -f docker-compose.dev.yml start
+	docker compose -f docker-compose.dev.yml down
+	docker compose -f docker-compose.dev.yml up -d

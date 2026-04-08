@@ -118,11 +118,25 @@ async def handle_get_scenario(request: web.Request) -> web.Response:
     return web.json_response({"scenario": _current_scenario})
 
 
+async def handle_open_meteo(request: web.Request) -> web.Response:
+    """Serve fake Open-Meteo current weather response."""
+    if _current_scenario in ("rain_everywhere", "rain_approaching"):
+        precip = 2.5
+    else:
+        precip = 0.0
+
+    return web.json_response({
+        "current": {"precipitation": precip},
+        "current_units": {"precipitation": "mm"},
+    })
+
+
 def create_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/public/weather-maps.json", handle_manifest)
     app.router.add_post("/__scenario", handle_set_scenario)
     app.router.add_get("/__scenario", handle_get_scenario)
+    app.router.add_get("/v1/forecast", handle_open_meteo)
     app.router.add_get("/{tail:.+\\.png}", handle_tile)
     return app
 

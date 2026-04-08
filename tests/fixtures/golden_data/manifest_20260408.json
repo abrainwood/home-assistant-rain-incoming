@@ -1,0 +1,48 @@
+{
+  "captured_at": "2026-04-08T12:37:44.958781+00:00",
+  "location": {
+    "lat": -33.701,
+    "lon": 151.209,
+    "name": "Terry Hills, Sydney"
+  },
+  "ground_truth": {
+    "sydney_local": "Clear sky, stars visible, no rain",
+    "sw_512km": "Real rain moving W->E in bottom-left quadrant of 512km BOM radar",
+    "bom_assessment": "Worst noise night seen - heavy AP/ground clutter on all BOM FTP images",
+    "open_meteo": "0.0mm"
+  },
+  "frames": [
+    {
+      "time": 1775647200,
+      "path": "/v2/radar/7a5418ee7d0a"
+    },
+    {
+      "time": 1775647800,
+      "path": "/v2/radar/ea07b9c48c4b"
+    },
+    {
+      "time": 1775648400,
+      "path": "/v2/radar/7e319bcf204b"
+    },
+    {
+      "time": 1775649000,
+      "path": "/v2/radar/1140f5b36d91"
+    },
+    {
+      "time": 1775649600,
+      "path": "/v2/radar/2a4e1f525720"
+    },
+    {
+      "time": 1775650200,
+      "path": "/v2/radar/957b48dab2c8"
+    },
+    {
+      "time": 1775650800,
+      "path": "/v2/radar/caf7b44bbdd9"
+    },
+    {
+      "time": 1775651400,
+      "path": "/v2/radar/8af3b57309b7"
+    }
+  ]
+}

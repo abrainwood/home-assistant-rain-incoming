@@ -1,21 +1,23 @@
 services:
   homeassistant:
-    container_name: ha-dev
+    container_name: ${HA_CONTAINER:-ha-dev}
     image: ghcr.io/home-assistant/home-assistant:stable
     volumes:
       # Mount the custom component directly - edits reflect on restart
       - ./custom_components/incoming_rain:/config/custom_components/incoming_rain:ro
       # Persist HA config/state across restarts
-      - ha-dev-config:/config
+      - ${HA_VOLUME:-ha-dev-config}:/config
     environment:
       # When set, RainViewer API calls go to the mock server instead.
       # Leave unset for real API (manual dev testing).
       - RAINVIEWER_API_URL=${RAINVIEWER_API_URL:-}
       - RAINVIEWER_TILE_URL=${RAINVIEWER_TILE_URL:-}
+      - OPEN_METEO_URL=${OPEN_METEO_URL:-}
     ports:
-      - "8123:8123"
+      - "${HA_PORT:-8123}:8123"
     stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:
   ha-dev-config:
+  ha-e2e-config:

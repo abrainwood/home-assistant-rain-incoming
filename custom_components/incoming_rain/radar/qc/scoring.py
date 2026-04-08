@@ -86,10 +86,18 @@ def compute_confidence_map(
     if total_weight > 0:
         confidence /= total_weight
 
-    # Apply model-based penalty: if a weather model says 0mm precipitation,
-    # we're skeptical of everything radar shows
-    if model_precipitation_mm is not None and model_precipitation_mm == 0.0:
-        confidence *= 0.3
+    # Model-based modifier: asymmetric treatment.
+    # "Model says rain" is a strong positive (boost). "Model says dry" is a
+    # weak negative (mild skepticism) - radar might see virga or cells about
+    # to reach the ground that the model hasn't picked up yet.
+    if model_precipitation_mm is not None:
+        if model_precipitation_mm >= 0.5:
+            confidence *= 1.15  # model confirms rain - boost
+            np.clip(confidence, 0, 1, out=confidence)
+        elif model_precipitation_mm > 0.01:
+            pass  # trace amounts - no change either way
+        else:
+            confidence *= 0.85  # model says dry - mild skepticism only
 
     return ConfidenceMap(confidence=confidence, factor_scores=factor_scores)
 

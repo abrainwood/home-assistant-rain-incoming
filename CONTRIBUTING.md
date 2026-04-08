@@ -90,10 +90,20 @@ make dev               # start HA with real RainViewer
 # open http://localhost:8123
 # login: dev / devdevdev
 
-make dev-restart       # after code changes
+make dev-restart       # recreate container after code changes
 make dev-logs          # tail HA logs
 make dev-stop          # shut down
 ```
+
+The dev instance and E2E tests use separate Docker containers, volumes, and ports so they don't interfere with each other:
+
+| | Dev | E2E |
+|---|---|---|
+| Container | `ha-dev` | `ha-e2e` |
+| Volume | `ha-dev-config` | `ha-e2e-config` |
+| Port | 8123 | 18123 |
+
+`make dev-restart` recreates the container (not just stop/start), so any stale environment from a previous mock session is cleared.
 
 ## Useful make targets
 

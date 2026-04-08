@@ -9,25 +9,45 @@ from custom_components.incoming_rain.radar.qc.types import ConfidenceMap, QCConf
 
 
 class TestModelPrecipitationModifier:
-    def test_model_zero_precip_penalizes_confidence(self):
-        """0.0mm from the weather model -> confidence * 0.3."""
+    """Asymmetric model treatment: 'confirms rain' is a strong boost,
+    'says dry' is a mild skepticism. Radar might see virga or cells
+    the model hasn't picked up yet."""
+
+    def test_model_dry_applies_mild_penalty(self):
+        """0.0mm -> confidence * 0.85 (mild skepticism, not a veto)."""
         grid = np.full((32, 32), 0.5, dtype=np.float32)
         result_normal = compute_confidence_map(grid)
-        result_penalized = compute_confidence_map(grid, model_precipitation_mm=0.0)
-        # Every non-zero pixel should be ~0.3x the normal confidence
+        result_dry = compute_confidence_map(grid, model_precipitation_mm=0.0)
         mask = result_normal.confidence > 0
-        ratio = result_penalized.confidence[mask] / result_normal.confidence[mask]
-        np.testing.assert_allclose(ratio, 0.3, atol=0.01)
+        ratio = result_dry.confidence[mask] / result_normal.confidence[mask]
+        np.testing.assert_allclose(ratio, 0.85, atol=0.01)
 
-    def test_model_positive_precip_no_penalty(self):
-        """1.5mm from the weather model -> confidence unchanged."""
+    def test_model_trace_no_change(self):
+        """0.3mm (trace) -> no change either way."""
         grid = np.full((32, 32), 0.5, dtype=np.float32)
         result_normal = compute_confidence_map(grid)
-        result_rain = compute_confidence_map(grid, model_precipitation_mm=1.5)
-        np.testing.assert_array_equal(result_rain.confidence, result_normal.confidence)
+        result_trace = compute_confidence_map(grid, model_precipitation_mm=0.3)
+        np.testing.assert_array_almost_equal(result_trace.confidence, result_normal.confidence)
 
-    def test_model_none_no_penalty(self):
-        """None (API failure) -> confidence unchanged (fail open)."""
+    def test_model_confirms_rain_boosts_confidence(self):
+        """1.0mm -> confidence * 1.15 (model confirms, boost)."""
+        # Use noisy grid so base confidence is well below 1.0 (avoids cap)
+        rng = np.random.default_rng(42)
+        grid = rng.random((32, 32)).astype(np.float32) * 0.3 + 0.1
+        result_normal = compute_confidence_map(grid)
+        result_rain = compute_confidence_map(grid, model_precipitation_mm=1.0)
+        mask = result_normal.confidence > 0.01
+        ratio = result_rain.confidence[mask] / result_normal.confidence[mask]
+        np.testing.assert_allclose(ratio.mean(), 1.15, atol=0.05)
+
+    def test_model_boost_capped_at_one(self):
+        """Boost can't push confidence above 1.0."""
+        grid = np.full((32, 32), 0.95, dtype=np.float32)
+        result = compute_confidence_map(grid, model_precipitation_mm=2.0)
+        assert result.confidence.max() <= 1.0
+
+    def test_model_none_no_change(self):
+        """None (API failure) -> unchanged (fail open)."""
         grid = np.full((32, 32), 0.5, dtype=np.float32)
         result_normal = compute_confidence_map(grid)
         result_none = compute_confidence_map(grid, model_precipitation_mm=None)

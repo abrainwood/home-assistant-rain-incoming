@@ -13,9 +13,26 @@ from custom_components.incoming_rain.providers.rainviewer import (
     RainViewerFrame,
     RainViewerProvider,
     _colour_to_intensity,
+    _resolve_url,
     _tile_bounds,
 )
 from custom_components.incoming_rain.radar.geo import lat_lon_to_tile
+
+
+# --- URL resolution ---
+
+class TestResolveUrl:
+    def test_returns_default_when_env_var_unset(self):
+        with patch.dict("os.environ", {}, clear=True):
+            assert _resolve_url("MISSING_VAR", "https://default.com") == "https://default.com"
+
+    def test_returns_env_value_when_set(self):
+        with patch.dict("os.environ", {"MY_URL": "https://override.com"}):
+            assert _resolve_url("MY_URL", "https://default.com") == "https://override.com"
+
+    def test_returns_default_when_env_var_is_empty_string(self):
+        with patch.dict("os.environ", {"MY_URL": ""}):
+            assert _resolve_url("MY_URL", "https://default.com") == "https://default.com"
 
 
 # --- Unit tests for pure helpers ---

@@ -340,29 +340,21 @@ class TestConfidenceMaps:
         assert 0.0 <= cell.confidence <= 1.0
 
     def test_low_confidence_cell_not_reported_as_incoming(self):
-        """A cell with confidence < 0.4 should not trigger rain_incoming."""
+        """A cell with confidence < 0.35 should not trigger rain_incoming."""
         cfg = default_config()
-        grid = np.zeros((64, 64), dtype=np.float32)
-        # Cell right at location with moderate intensity but low confidence
-        grid[31:34, 31:34] = 0.15
 
+        # We need: intensity * confidence >= 0.1 and confidence < 0.35
+        # So intensity > 0.29 with confidence 0.34
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.3
         frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
 
-        # Confidence just high enough to pass threshold but cell confidence < 0.4
-        # effective = 0.15 * 0.3 = 0.045 -> below threshold anyway
-        # Let's use a value that makes effective > threshold but cell confidence < 0.4
-        # We need: intensity * confidence >= 0.1 and confidence < 0.4
-        # So intensity > 0.25 with confidence 0.39
-        grid2 = np.zeros((64, 64), dtype=np.float32)
-        grid2[31:34, 31:34] = 0.3
-        frames2 = [make_frame(ts(-20 + i * 10), grid2, cfg.analysis_bounds) for i in range(3)]
-
-        confidence_map = np.full((64, 64), 0.35, dtype=np.float32)
+        confidence_map = np.full((64, 64), 0.34, dtype=np.float32)
         confidence_maps = [confidence_map] * 3
 
-        result = detect(frames=frames2, location=(LAT, LON), config=cfg, confidence_maps=confidence_maps)
-        # effective = 0.3 * 0.35 = 0.105 > threshold 0.1 -> cells detected
-        # but cell confidence 0.35 < 0.4 -> rain_incoming should be False
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, confidence_maps=confidence_maps)
+        # effective = 0.3 * 0.34 = 0.102 > threshold 0.1 -> cells detected
+        # but cell confidence 0.34 < 0.35 -> rain_incoming should be False
         assert result.rain_incoming is False
 
 
@@ -390,11 +382,11 @@ class TestQCDoesNotSuppressRealRain:
         assert len(result.tracked_cells) > 0
 
     def test_approaching_rain_not_suppressed_by_model_zero(self):
-        """Even if Open-Meteo says 0mm, a strong approaching cell should still be tracked.
+        """Even if Open-Meteo says 0mm, a strong approaching cell should still be
+        tracked AND trigger rain_incoming with the softened 0.5x penalty.
 
-        The model penalty (0.3x) means cell confidence will be < 0.4, so
-        rain_incoming won't fire - but the cell should still be segmented and
-        tracked with a valid velocity, preserving it for rendering.
+        With the graduated penalty (0.5x for 0mm), a cell with high pre-penalty
+        confidence can still exceed the _MIN_CELL_CONFIDENCE threshold (0.35).
         """
         # Cell must be large enough (>5x5) to survive texture scoring with a 5x5 kernel.
         cfg = default_config()
@@ -416,9 +408,8 @@ class TestQCDoesNotSuppressRealRain:
         ]
 
         result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
-        # Cell pixels survive effective intensity gating (0.8 * 0.21 = 0.17 > 0.1)
-        # so the cell is tracked, but its confidence (0.21) is below _MIN_CELL_CONFIDENCE (0.4)
-        # meaning rain_incoming won't fire - the model penalty is working as intended
+        # Cell pixels survive effective intensity gating and the softened 0.5x penalty
+        # means cell confidence can exceed 0.35 threshold
         assert len(result.tracked_cells) > 0
         assert result.tracked_cells[0].velocity_kmh > 0
 

@@ -13,8 +13,14 @@ from ..radar.geo import lat_lon_to_tile
 
 import os
 
-_API_BASE = os.environ.get("RAINVIEWER_API_URL", "https://api.rainviewer.com")
-_TILE_BASE = os.environ.get("RAINVIEWER_TILE_URL", "https://tilecache.rainviewer.com")
+
+def _resolve_url(env_key: str, default: str) -> str:
+    """Return the env var value if set and non-empty, otherwise the default."""
+    return os.environ.get(env_key) or default
+
+
+_API_BASE = _resolve_url("RAINVIEWER_API_URL", "https://api.rainviewer.com")
+_TILE_BASE = _resolve_url("RAINVIEWER_TILE_URL", "https://tilecache.rainviewer.com")
 MANIFEST_URL = f"{_API_BASE}/public/weather-maps.json"
 TILE_BASE_URL = _TILE_BASE
 TILE_SIZE = 256

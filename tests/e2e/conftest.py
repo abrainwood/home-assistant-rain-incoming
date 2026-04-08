@@ -139,6 +139,7 @@ def ha_container(mock_server):
         **_DOCKER_ENV,
         "RAINVIEWER_API_URL": f"http://host.docker.internal:{MOCK_PORT}",
         "RAINVIEWER_TILE_URL": f"http://host.docker.internal:{MOCK_PORT}",
+        "OPEN_METEO_URL": f"http://host.docker.internal:{MOCK_PORT}/v1/forecast",
     }
 
     # Always start fresh - remove old E2E container and volume for a clean slate

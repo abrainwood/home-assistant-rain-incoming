@@ -289,7 +289,7 @@ def detect(
         return float(cell_conf.mean())
 
     # Minimum cell confidence to report rain_incoming
-    _MIN_CELL_CONFIDENCE = 0.4
+    _MIN_CELL_CONFIDENCE = 0.35
 
     for track in valid_tracks:
         # Check current position first - overhead rain triggers immediately
