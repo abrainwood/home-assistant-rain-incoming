@@ -5,6 +5,8 @@ import logging
 import numpy as np
 
 from .clutter import score_clutter
+from .motion_consistency import score_motion_consistency
+from .speed_sanity import score_speed
 from .temporal import score_temporal
 from .texture import score_texture
 from .types import ConfidenceMap, QCConfig
@@ -84,3 +86,55 @@ def compute_confidence_map(
         confidence /= total_weight
 
     return ConfidenceMap(confidence=confidence, factor_scores=factor_scores)
+
+
+def refine_confidence_post_detection(
+    pre_confidence: np.ndarray,
+    cells: list,
+    labeled: np.ndarray,
+    config: QCConfig | None = None,
+) -> np.ndarray:
+    """Apply post-detection QC factors (speed, motion) to refine confidence.
+
+    The pre-detection confidence map is combined with speed and motion
+    consistency scores using a weighted average of all five factors.
+
+    Parameters
+    ----------
+    pre_confidence: the pre-detection confidence map (texture + temporal + clutter).
+    cells: list of TrackedCell from the detector.
+    labeled: labeled array from the last frame's cell segmentation.
+    config: QC configuration. Uses defaults if None.
+
+    Returns float32 confidence array.
+    """
+    if config is None:
+        config = QCConfig()
+
+    speed = score_speed(cells, labeled)
+    motion = score_motion_consistency(cells, labeled)
+
+    # Get pre-detection weight total and post-detection weight total
+    pre_factor_names = {"texture", "temporal", "clutter"}
+    post_factor_names = {"speed", "motion"}
+
+    pre_weight = sum(config.weights.get(k, 0.0) for k in pre_factor_names)
+    post_scores = {"speed": speed, "motion": motion}
+
+    post_weight = 0.0
+    post_combined = np.zeros_like(pre_confidence, dtype=np.float32)
+    for name in post_factor_names:
+        w = config.weights.get(name, 0.0)
+        if w > 0:
+            post_combined += w * post_scores[name]
+            post_weight += w
+
+    total_weight = pre_weight + post_weight
+    if total_weight <= 0:
+        return pre_confidence
+
+    # Re-weight: pre_confidence already has its factors normalised,
+    # so scale it by its share of the total weight
+    refined = (pre_weight * pre_confidence + post_combined) / total_weight
+
+    return np.clip(refined, 0.0, 1.0).astype(np.float32)

@@ -57,6 +57,7 @@ class DetectionResult:
     frame_count: int
     max_approaching_intensity: float = 0.0
     tracked_cells: list[TrackedCell] = None  # type: ignore[assignment]
+    last_labeled: np.ndarray | None = None  # labeled array of last frame's cells
 
     def __post_init__(self) -> None:
         if self.tracked_cells is None:
@@ -380,4 +381,5 @@ def detect(
         frame_count=frame_count,
         max_approaching_intensity=max_intensity if rain_incoming else 0.0,
         tracked_cells=tracked_cells,
+        last_labeled=last_labeled,
     )

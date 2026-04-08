@@ -13,7 +13,10 @@ class QCConfig:
     texture_high_threshold: float = 0.15
     texture_low_threshold: float = 0.05
     weights: dict[str, float] = field(
-        default_factory=lambda: {"texture": 0.40, "temporal": 0.35, "clutter": 0.25}
+        default_factory=lambda: {
+            "texture": 0.30, "temporal": 0.25, "clutter": 0.20,
+            "speed": 0.15, "motion": 0.10,
+        }
     )
 
 

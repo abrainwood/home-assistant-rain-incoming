@@ -35,6 +35,7 @@ from .radar.qc import (
     compute_confidence_map,
     get_clutter_frequency,
     load_clutter_map,
+    refine_confidence_post_detection,
     save_clutter_map,
     update_clutter_map,
 )
@@ -199,6 +200,21 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             config=config,
             confidence_maps=self.confidence_maps,
         )
+
+        # Post-detection pass: refine confidence with speed/motion factors
+        # (only for the last frame, which is what gets rendered)
+        if (
+            result.tracked_cells
+            and result.last_labeled is not None
+            and self.confidence_maps
+        ):
+            refined = refine_confidence_post_detection(
+                pre_confidence=self.confidence_maps[-1],
+                cells=result.tracked_cells,
+                labeled=result.last_labeled,
+                config=qc_config,
+            )
+            self.confidence_maps[-1] = refined
 
         # Store frame paths, timestamps, and tracked cells for the radar image entity
         self.frame_paths = [f.path for f in frames if hasattr(f, "path")]
