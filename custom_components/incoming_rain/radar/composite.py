@@ -65,8 +65,8 @@ def _lat_lon_to_pixel(lat: float, lon: float, zoom: int) -> tuple[float, float]:
 def filter_precipitation_pixels(rgba_array: np.ndarray) -> np.ndarray:
     """Keep pixels with alpha > 10 (precipitation), zero out the rest.
 
-    Colour scheme 2 (Universal Blue) uses transparent non-precipitation areas
-    natively, so a simple alpha threshold is sufficient.
+    RainViewer scheme 2 uses transparency to indicate no-data areas.
+    All non-transparent pixels are real precipitation data.
     """
     result = rgba_array.copy()
     result[rgba_array[:, :, 3] <= 10, 3] = 0
@@ -152,9 +152,9 @@ async def _fetch_map_tile(
 
     url = f"{_MAP_TILE_BASE}/{zoom}/{tx}/{ty}.png"
     tile = await _fetch_tile(session, url)
-    # Boost saturation slightly for richer land/water colours
+    # Boost saturation for richer land/water colours
     from PIL import ImageEnhance
-    tile = ImageEnhance.Color(tile).enhance(1.4)
+    tile = ImageEnhance.Color(tile).enhance(1.8)
     _map_tile_cache[key] = tile
     return tile
 
@@ -167,7 +167,7 @@ def _draw_timestamp(img: Image.Image, timestamp: datetime, tz_name: str | None =
     except TypeError:
         font = ImageFont.load_default()
 
-    tz_label = tz_name or "UTC"
+    tz_label = timestamp.strftime("%Z") or tz_name or "UTC"
     label = timestamp.strftime(f"%d %b %Y  %H:%M {tz_label}")
     bbox = font.getbbox(label)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
