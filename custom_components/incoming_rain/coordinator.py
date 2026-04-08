@@ -29,12 +29,25 @@ from .const import (
 from .providers.base import BoundingBox
 from .providers.rainviewer import RainViewerProvider
 from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
-from .radar.qc import compute_confidence_map, QCConfig
+from .radar.qc import (
+    ClutterMap,
+    QCConfig,
+    compute_confidence_map,
+    get_clutter_frequency,
+    load_clutter_map,
+    save_clutter_map,
+    update_clutter_map,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 # Frames to fetch: enough history for motion tracking + temporal persistence
 FRAMES_TO_FETCH = 8
+
+# Clutter map persistence
+CLUTTER_MAP_FILENAME = "incoming_rain_clutter.npz"
+CLUTTER_SAVE_INTERVAL = 36  # save every 36 cycles (~6 hours at 10-min intervals)
+CLUTTER_MATURITY_CYCLES = 72  # fully mature after ~12 hours
 
 
 def _build_analysis_bounds(lat: float, lon: float) -> BoundingBox:
@@ -74,6 +87,22 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.confidence_maps: list = []
         self.last_update_success_time: datetime | None = None
         self.last_rain_nearby_time: datetime | None = None
+
+        # Clutter map
+        import os
+        self._clutter_path = os.path.join(
+            hass.config.path(".storage"), CLUTTER_MAP_FILENAME
+        )
+        self._clutter_map: ClutterMap | None = load_clutter_map(self._clutter_path)
+        self._clutter_cycle_count = 0
+
+    def save_clutter_map(self) -> None:
+        """Persist the clutter map to disk. Called on HA shutdown."""
+        if self._clutter_map is not None:
+            try:
+                save_clutter_map(self._clutter_map, self._clutter_path)
+            except Exception:
+                _LOGGER.debug("Failed to save clutter map on shutdown")
 
     def _build_config(self) -> DetectorConfig:
         data = self._entry.data
@@ -126,11 +155,43 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # Compute per-frame QC confidence maps (using all grids for temporal context)
         grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
         qc_config = QCConfig()
+
+        # Update clutter map with the latest frame
+        import numpy as np
+        latest_grid = grids[-1] if grids else None
+        if latest_grid is not None:
+            if self._clutter_map is None:
+                self._clutter_map = ClutterMap(
+                    echo_count=np.zeros_like(latest_grid, dtype=np.float32),
+                    update_count=0.0,
+                )
+            update_clutter_map(self._clutter_map, latest_grid)
+            self._clutter_cycle_count += 1
+
+            # Save periodically
+            if self._clutter_cycle_count % CLUTTER_SAVE_INTERVAL == 0:
+                try:
+                    save_clutter_map(self._clutter_map, self._clutter_path)
+                except Exception:
+                    _LOGGER.debug("Failed to save clutter map")
+
+        # Get clutter frequency and maturity for QC scoring
+        clutter_freq = None
+        clutter_maturity = 0.0
+        if self._clutter_map is not None:
+            clutter_freq = get_clutter_frequency(self._clutter_map)
+            clutter_maturity = min(1.0, self._clutter_map.update_count / CLUTTER_MATURITY_CYCLES)
+
         self.confidence_maps = []
         for i, grid in enumerate(grids):
-            # Temporal scoring uses all grids up to and including the current frame
             grids_up_to_i = grids[: i + 1]
-            cmap = compute_confidence_map(grid, config=qc_config, grids=grids_up_to_i)
+            cmap = compute_confidence_map(
+                grid,
+                config=qc_config,
+                grids=grids_up_to_i,
+                clutter_freq=clutter_freq,
+                clutter_maturity=clutter_maturity,
+            )
             self.confidence_maps.append(cmap.confidence)
 
         # Store frame paths, timestamps, and tracked cells for the radar image entity
