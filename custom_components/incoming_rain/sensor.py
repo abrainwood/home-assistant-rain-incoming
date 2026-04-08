@@ -7,9 +7,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
-
-from .const import CONF_LOOKAHEAD_MINUTES, DOMAIN
+from .const import DOMAIN
 from .coordinator import RainDetectorCoordinator
 from .radar.detector import Confidence
 
@@ -29,7 +27,6 @@ class RainArrivalTimeSensor(CoordinatorEntity[RainDetectorCoordinator], SensorEn
     _attr_has_entity_name = True
     _attr_name = "Arrival Time"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_icon = "mdi:clock-time-four-outline"
 
     def __init__(self, coordinator: RainDetectorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
@@ -42,6 +39,12 @@ class RainArrivalTimeSensor(CoordinatorEntity[RainDetectorCoordinator], SensorEn
             identifiers={(DOMAIN, self._entry.entry_id)},
             name="Incoming Rain",
         )
+
+    @property
+    def icon(self) -> str:
+        if self.coordinator.data and self.coordinator.data.rain_incoming:
+            return "mdi:clock-alert-outline"
+        return "mdi:clock-outline"
 
     @property
     def native_value(self):
@@ -61,11 +64,7 @@ class RainArrivalTimeSensor(CoordinatorEntity[RainDetectorCoordinator], SensorEn
 
     @property
     def extra_state_attributes(self) -> dict:
-        attrs = {
-            "latitude": self._entry.data.get(CONF_LATITUDE),
-            "longitude": self._entry.data.get(CONF_LONGITUDE),
-            "lookahead_minutes": self._entry.data.get(CONF_LOOKAHEAD_MINUTES),
-        }
+        attrs: dict = {}
         if self.coordinator.data is not None:
             attrs["confidence"] = self.coordinator.data.confidence.value
             attrs["frame_count"] = self.coordinator.data.frame_count

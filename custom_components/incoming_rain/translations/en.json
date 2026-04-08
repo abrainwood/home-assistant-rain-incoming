@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Incoming Rain",
+        "description": "Monitor a location for approaching rain using radar data.",
+        "data": {
+          "latitude": "Latitude",
+          "longitude": "Longitude",
+          "lookahead_minutes": "Lookahead (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_latitude": "Latitude must be between -90 and 90",
+      "invalid_longitude": "Longitude must be between -180 and 180",
+      "invalid_lookahead": "Lookahead must be between 15 and 120 minutes"
+    },
+    "abort": {
+      "already_configured": "This location is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Incoming Rain",
+        "data": {
+          "latitude": "Latitude",
+          "longitude": "Longitude",
+          "lookahead_minutes": "Lookahead (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_latitude": "Latitude must be between -90 and 90",
+      "invalid_longitude": "Longitude must be between -180 and 180",
+      "invalid_lookahead": "Lookahead must be between 15 and 120 minutes"
+    }
+  }
+}

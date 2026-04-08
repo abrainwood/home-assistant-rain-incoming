@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import json
+import pathlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.incoming_rain.const import DOMAIN
 from custom_components.incoming_rain.radar.detector import Confidence, DetectionResult
+
+COMPONENT_DIR = pathlib.Path(__file__).resolve().parents[2] / "custom_components" / "incoming_rain"
 
 MOCK_RESULT_UNAVAILABLE = DetectionResult(
     rain_incoming=False,
@@ -109,3 +114,115 @@ async def test_image_entity_created(hass: HomeAssistant, mock_entry, entity_id):
     await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
     state = hass.states.get(entity_id)
     assert state is not None, f"Entity {entity_id} not found"
+
+
+# --- strings.json ---
+
+
+def test_strings_json_exists():
+    strings_path = COMPONENT_DIR / "strings.json"
+    assert strings_path.is_file(), "strings.json must exist"
+
+
+def test_strings_json_has_config_step_user():
+    strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
+    user_step = strings["config"]["step"]["user"]
+    assert "title" in user_step
+    assert "data" in user_step
+    assert "latitude" in user_step["data"]
+    assert "longitude" in user_step["data"]
+    assert "lookahead_minutes" in user_step["data"]
+
+
+def test_strings_json_has_config_errors():
+    strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
+    errors = strings["config"]["error"]
+    assert "invalid_latitude" in errors
+    assert "invalid_longitude" in errors
+    assert "invalid_lookahead" in errors
+
+
+def test_translations_en_json_exists():
+    en_path = COMPONENT_DIR / "translations" / "en.json"
+    assert en_path.is_file(), "translations/en.json must exist"
+
+
+def test_translations_en_json_matches_strings_json():
+    strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
+    en = json.loads((COMPONENT_DIR / "translations" / "en.json").read_text())
+    assert strings == en
+
+
+# --- Binary sensor device class ---
+
+
+@pytest.mark.asyncio
+async def test_binary_sensor_device_class_is_moisture(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.incoming_rain_status")
+    assert state is not None
+    assert state.attributes.get("device_class") == BinarySensorDeviceClass.MOISTURE
+
+
+# --- Dynamic icons ---
+
+
+@pytest.mark.asyncio
+async def test_binary_sensor_icon_pouring_when_rain(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get("binary_sensor.incoming_rain_status")
+    assert state.attributes["icon"] == "mdi:weather-pouring"
+
+
+@pytest.mark.asyncio
+async def test_binary_sensor_icon_sunny_when_no_rain(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.incoming_rain_status")
+    assert state.attributes["icon"] == "mdi:weather-sunny"
+
+
+@pytest.mark.asyncio
+async def test_arrival_sensor_icon_alert_when_rain(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get("sensor.incoming_rain_arrival_time")
+    assert state.attributes["icon"] == "mdi:clock-alert-outline"
+
+
+@pytest.mark.asyncio
+async def test_arrival_sensor_icon_clock_when_no_rain(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("sensor.incoming_rain_arrival_time")
+    assert state.attributes["icon"] == "mdi:clock-outline"
+
+
+# --- Attributes cleanup ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entity_id", [
+    "binary_sensor.incoming_rain_status",
+    "sensor.incoming_rain_arrival_time",
+])
+async def test_config_values_not_in_attributes(hass: HomeAssistant, mock_entry, entity_id):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert "latitude" not in state.attributes
+    assert "longitude" not in state.attributes
+    assert "lookahead_minutes" not in state.attributes
+
+
+@pytest.mark.asyncio
+async def test_binary_sensor_still_has_dynamic_attributes(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get("binary_sensor.incoming_rain_status")
+    assert "confidence" in state.attributes
+    assert "frame_count" in state.attributes
+
+
+@pytest.mark.asyncio
+async def test_arrival_sensor_still_has_dynamic_attributes(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get("sensor.incoming_rain_arrival_time")
+    assert "confidence" in state.attributes
+    assert "frame_count" in state.attributes
