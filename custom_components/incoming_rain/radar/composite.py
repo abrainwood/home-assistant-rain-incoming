@@ -17,6 +17,7 @@ from ..providers.rainviewer import (
 )
 from .detector import TrackedCell
 from .geo import lat_lon_to_tile
+from .qc import compute_confidence_map
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -461,12 +462,16 @@ async def _fetch_radar_overlay(
 
     # QC Phase 1: apply texture-based confidence as alpha multiplier.
     # Smooth rain keeps full alpha; speckly clutter gets dimmed.
-    from .qc.texture import score_texture
-
-    alpha_float = radar_arr[:, :, 3].astype(np.float32) / 255.0
-    confidence = score_texture(alpha_float)
+    # Must run on native-resolution data BEFORE crop/resize so the
+    # texture kernel operates on real pixel neighbourhoods.
+    intensity = (
+        0.299 * radar_arr[:, :, 0].astype(np.float32)
+        + 0.587 * radar_arr[:, :, 1].astype(np.float32)
+        + 0.114 * radar_arr[:, :, 2].astype(np.float32)
+    ) / 255.0
+    cmap = compute_confidence_map(intensity)
     radar_arr[:, :, 3] = (
-        radar_arr[:, :, 3].astype(np.float32) * confidence
+        radar_arr[:, :, 3].astype(np.float32) * cmap.confidence
     ).astype(np.uint8)
 
     radar_filtered = Image.fromarray(radar_arr)

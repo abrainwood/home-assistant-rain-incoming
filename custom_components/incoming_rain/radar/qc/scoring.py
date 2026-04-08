@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from .texture import score_texture
 from .types import ConfidenceMap, QCConfig
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def compute_confidence_map(
@@ -28,6 +32,10 @@ def compute_confidence_map(
     factor_scores: dict[str, np.ndarray] = {"texture": texture}
 
     # Weighted combination of all factors (Phase 1: texture only)
+    unmatched = set(config.weights.keys()) - set(factor_scores.keys())
+    if unmatched:
+        _LOGGER.warning("QC weight keys have no matching factor score: %s", unmatched)
+
     confidence = np.zeros_like(texture, dtype=np.float32)
     total_weight = 0.0
     for name, weight in config.weights.items():

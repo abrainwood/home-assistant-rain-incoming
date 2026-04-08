@@ -21,6 +21,7 @@ def score_texture(
     grid = np.asarray(grid, dtype=np.float32)
     mean = uniform_filter(grid, size=kernel_size)
     mean_sq = uniform_filter(grid**2, size=kernel_size)
+    # Clamp to zero: float32 rounding can make (mean_sq - mean**2) slightly negative
     local_std = np.sqrt(np.maximum(mean_sq - mean**2, 0))
 
     # Map std dev to confidence: low std = high confidence, high std = low confidence

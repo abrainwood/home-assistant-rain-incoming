@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from custom_components.incoming_rain.radar.qc.scoring import compute_confidence_map
@@ -46,3 +48,11 @@ class TestComputeConfidenceMap:
         grid = np.full((32, 32), 0.5, dtype=np.float32)
         result = compute_confidence_map(grid)
         assert result.confidence.dtype == np.float32
+
+    def test_unmatched_weight_keys_logs_warning(self, caplog):
+        """Weight keys that don't match any factor should log a warning."""
+        grid = np.full((32, 32), 0.5, dtype=np.float32)
+        config = QCConfig(weights={"texture": 1.0, "bogus_factor": 0.5})
+        with caplog.at_level(logging.WARNING):
+            compute_confidence_map(grid, config)
+        assert "bogus_factor" in caplog.text

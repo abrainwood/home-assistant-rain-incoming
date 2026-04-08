@@ -15,7 +15,7 @@ class QCConfig:
     weights: dict[str, float] = field(default_factory=lambda: {"texture": 1.0})
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfidenceMap:
     """Per-pixel confidence scores from the QC pipeline."""
 

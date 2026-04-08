@@ -69,4 +69,26 @@ class TestScoreTexture:
         # Larger kernel should produce smoother (higher mean) confidence
         # because it averages over more pixels
         echo_mask = grid > 0
-        assert score_large[echo_mask].mean() >= score_small[echo_mask].mean() - 0.1
+        assert score_large[echo_mask].mean() >= score_small[echo_mask].mean() - 0.01
+
+    def test_1x1_grid(self):
+        """A 1x1 grid should return a valid 1x1 score."""
+        grid = np.array([[0.5]], dtype=np.float32)
+        score = score_texture(grid)
+        assert score.shape == (1, 1)
+        assert 0.0 <= score[0, 0] <= 1.0
+
+    def test_grid_smaller_than_kernel(self):
+        """A grid smaller than the default kernel (5) should still work."""
+        grid = np.full((3, 3), 0.4, dtype=np.float32)
+        score = score_texture(grid)
+        assert score.shape == (3, 3)
+        assert score.min() >= 0.0
+        assert score.max() <= 1.0
+
+    def test_nan_values_do_not_crash(self):
+        """NaN values in the grid should not cause an exception."""
+        grid = np.full((16, 16), 0.5, dtype=np.float32)
+        grid[8, 8] = np.nan
+        score = score_texture(grid)
+        assert score.shape == (16, 16)
