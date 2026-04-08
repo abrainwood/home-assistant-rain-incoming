@@ -93,7 +93,11 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
 
         try:
-            frames = await self._fetch_with_backoff(lat, lon)
+            if self.data is None:
+                # First fetch - fail fast, let HA's ConfigEntryNotReady handle retries
+                frames = await self._provider.get_frames(lat, lon, count=FRAMES_TO_FETCH)
+            else:
+                frames = await self._fetch_with_backoff(lat, lon)
         except Exception as err:
             raise UpdateFailed(f"RainViewer fetch failed: {err}") from err
 

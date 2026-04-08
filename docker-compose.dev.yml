@@ -14,6 +14,7 @@ services:
       - RAINVIEWER_TILE_URL=${RAINVIEWER_TILE_URL:-}
     ports:
       - "8123:8123"
+    stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:
