@@ -128,6 +128,47 @@ def _track_velocity_kmh_bearing(
     return speed_kmh, bearing
 
 
+# How many recent frames to check for rain directly at the location pixel.
+# We check the last 2 frames: the final frame and the one before it. This
+# catches rain that was overhead moments ago but has just moved/dissipated,
+# without reaching too far back (which would false-positive on receding rain).
+_RECENT_FRAMES_FOR_LOCATION_CHECK = 2
+
+
+def _check_rain_at_location(
+    effective_grids: list[np.ndarray],
+    intensity_threshold: float,
+    loc_row: int,
+    loc_col: int,
+    confidence_maps: list[np.ndarray] | None = None,
+    min_confidence: float = 0.35,
+) -> tuple[int, float] | None:
+    """Check if rain exists at the location pixel in recent frames.
+
+    Scans the last few effective (QC-adjusted) grids for above-threshold
+    intensity at the exact location pixel. When confidence maps are provided,
+    the pixel's confidence must also meet min_confidence.
+
+    Returns (frame_index, intensity) for the most recent frame with rain,
+    or None if no rain found.
+    """
+    h, w = effective_grids[0].shape
+    if not (0 <= loc_row < h and 0 <= loc_col < w):
+        return None
+
+    n_recent = min(_RECENT_FRAMES_FOR_LOCATION_CHECK, len(effective_grids))
+    for i in range(len(effective_grids) - 1, len(effective_grids) - 1 - n_recent, -1):
+        intensity = float(effective_grids[i][loc_row, loc_col])
+        if intensity >= intensity_threshold:
+            # Check pixel confidence if available
+            if confidence_maps is not None and i < len(confidence_maps):
+                pixel_conf = float(confidence_maps[i][loc_row, loc_col])
+                if pixel_conf < min_confidence:
+                    continue
+            return i, intensity
+    return None
+
+
 def _build_cell_tracks(
     per_frame_centroids: list[dict[int, tuple[float, float]]],
     max_match_distance: float,
@@ -239,6 +280,17 @@ def detect(
         per_frame_labeled.append(labeled)
         per_frame_centroids.append(extract_cell_centroids(labeled))
 
+    # 3b. Direct rain-at-location check across recent frames.
+    # If rain is at the location pixel in any of the last few frames, we know
+    # rain is overhead. This catches cases where rain is overhead but cell
+    # centroids are offset (large cells) or rain dissipates in the final frame
+    # while it was clearly present moments earlier.
+    loc_row, loc_col = _location_to_pixel(location[0], location[1], bounds, W, H)
+    rain_at_location = _check_rain_at_location(
+        effective_grids, config.intensity_threshold, loc_row, loc_col,
+        confidence_maps=confidence_maps,
+    )
+
     # 4. Build cell tracks across frames
     max_match_dist = max(W, H) * 0.25  # allow up to 25% of grid size per frame
     all_tracks = _build_cell_tracks(per_frame_centroids, max_match_dist)
@@ -251,6 +303,17 @@ def detect(
     ]
 
     if not valid_tracks:
+        if rain_at_location is not None:
+            rain_frame_idx, rain_intensity = rain_at_location
+            return DetectionResult(
+                rain_incoming=True,
+                arrival_time=frames[rain_frame_idx].timestamp,
+                confidence=confidence,
+                frame_count=frame_count,
+                max_approaching_intensity=rain_intensity,
+                tracked_cells=[],
+                last_labeled=per_frame_labeled[-1] if per_frame_labeled else None,
+            )
         return DetectionResult(
             rain_incoming=False,
             arrival_time=None,
@@ -260,7 +323,7 @@ def detect(
         )
 
     # 6. For each valid track: compute velocity, check coherence, project forward
-    loc_row, loc_col = _location_to_pixel(location[0], location[1], bounds, W, H)
+    # loc_row, loc_col already computed above for the rain-at-location check
     km_per_row, km_per_col = _pixel_size_km(bounds, W, H)
     proximity_px = config.proximity_radius_km / ((km_per_row + km_per_col) / 2)
     last_frame_time = frames[-1].timestamp
@@ -372,6 +435,14 @@ def detect(
             velocity_kmh=speed_kmh_val, bearing=bearing_val,
             confidence=cell_conf,
         ))
+
+    # Combine cell-tracking results with the direct rain-at-location check
+    if rain_at_location is not None:
+        rain_frame_idx, rain_intensity = rain_at_location
+        rain_arrival = frames[rain_frame_idx].timestamp
+        if earliest_arrival is None or rain_arrival < earliest_arrival:
+            earliest_arrival = rain_arrival
+        max_intensity = max(max_intensity, rain_intensity)
 
     rain_incoming = earliest_arrival is not None
     return DetectionResult(

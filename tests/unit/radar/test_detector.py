@@ -437,3 +437,95 @@ class TestQCDoesNotSuppressRealRain:
         result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
         # Model confirms rain - no penalty, full confidence, rain_incoming fires
         assert result.rain_incoming is True
+
+
+class TestOverheadRainDetection:
+    def test_large_rain_cell_centered_nearby_detected_as_overhead(self):
+        """A 20km-wide rain cell centered 10km from location should trigger overhead.
+
+        When a cell's centroid is outside the proximity radius but the cell is
+        large enough to cover the location, it should still be detected.
+        """
+        cfg = default_config()
+        # Location is at pixel ~(32, 32). Create a large blob centered at (32, 22)
+        # which is ~10 pixels away but extends to cover (32, 32).
+        frames = []
+        for i in range(3):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            # Large rain cell: 24 pixels wide, centered at col 22
+            # Covers cols 10-34, which includes location at col 32
+            grid[24:40, 10:34] = 0.6
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert result.arrival_time == frames[-1].timestamp
+
+    def test_rain_at_location_in_recent_frames_triggers_incoming(self):
+        """Rain over the location in recent frames should trigger rain_incoming
+        even if it's gone in the very last frame.
+
+        This is the Shepparton scenario: rain was directly overhead in frames 3-4
+        but dissipated by frame 5. The detector should still report rain_incoming.
+        """
+        cfg = default_config()
+        frames = []
+        # Frame 0: no rain
+        grid0 = np.zeros((64, 64), dtype=np.float32)
+        frames.append(make_frame(ts(-50), grid0, cfg.analysis_bounds))
+        # Frame 1: no rain
+        frames.append(make_frame(ts(-40), grid0, cfg.analysis_bounds))
+        # Frame 2: rain approaching - near but not at location
+        grid2 = np.zeros((64, 64), dtype=np.float32)
+        grid2[28:36, 24:30] = 0.5
+        frames.append(make_frame(ts(-30), grid2, cfg.analysis_bounds))
+        # Frame 3: rain at location
+        grid3 = np.zeros((64, 64), dtype=np.float32)
+        grid3[28:36, 28:36] = 0.5
+        frames.append(make_frame(ts(-20), grid3, cfg.analysis_bounds))
+        # Frame 4: rain at location
+        grid4 = np.zeros((64, 64), dtype=np.float32)
+        grid4[28:36, 28:36] = 0.4
+        frames.append(make_frame(ts(-10), grid4, cfg.analysis_bounds))
+        # Frame 5 (last): rain has dissipated/moved away
+        grid5 = np.zeros((64, 64), dtype=np.float32)
+        frames.append(make_frame(ts(0), grid5, cfg.analysis_bounds))
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+
+    def test_shepparton_golden_data_detects_rain(self):
+        """Regression test: real radar data from Shepparton with active rain
+        over the location should trigger rain_incoming."""
+        data = np.load('tests/fixtures/golden_data/grids_20260409_shepparton.npz')
+        grids = [data[f'frame_{i}'] for i in range(len(data.files))]
+        H, W = grids[0].shape
+
+        shep_lat, shep_lon = -36.381, 145.399
+        from custom_components.incoming_rain.coordinator import _build_analysis_bounds
+        bounds = _build_analysis_bounds(shep_lat, shep_lon)
+
+        from datetime import timezone, timedelta
+        timestamps = [1775682600, 1775683200, 1775683800, 1775684400, 1775685000, 1775685600]
+        frames = []
+        for i, t in enumerate(timestamps):
+            frames.append(make_frame(
+                datetime.fromtimestamp(t, tz=timezone.utc),
+                grids[i],
+                bounds,
+            ))
+
+        config = DetectorConfig(
+            lookahead_seconds=3600,
+            intensity_threshold=0.1,
+            min_cell_area_pixels=1,
+            min_temporal_frames=2,
+            max_angular_variance=0.5,
+            max_storm_speed_kmh=120.0,
+            proximity_radius_km=5.0,
+            analysis_bounds=bounds,
+            grid_width=W,
+            grid_height=H,
+        )
+        result = detect(frames, (shep_lat, shep_lon), config)
+        # Rain was confirmed over Shepparton by BOM, Apple Weather, Weatherzone
+        assert result.rain_incoming is True
