@@ -61,19 +61,19 @@ def _approaching_tile(ts: int, tile_x: int) -> bytes:
     """Determine whether a tile has rain in the 'approaching' scenario.
 
     Simulates a rain cell moving east toward the location:
-    - Frame 0 (oldest): rain in tiles x <= location - 2
-    - Frame 1:          rain in tiles x <= location - 1
-    - Frame 2 (newest): rain in tiles x <= location - 1
+    - Frame 0 (oldest): rain in tiles x <= location - 1
+    - Frame 1:          rain in tiles x <= location (at location)
+    - Frame 2 (newest): rain in tiles x <= location (at location)
 
-    The cell front advances one tile between frames 0 and 1, putting it
-    one tile west of the location. The detector projects this motion
-    forward and predicts arrival.
+    The cell front advances one tile between frames 0 and 1, reaching
+    the location tile. Rain is visible in the radar image and detected
+    as approaching/overhead.
     """
     if ts not in _manifest_timestamps:
         return _NO_RAIN_TILE
 
     frame_idx = _manifest_timestamps.index(ts)
-    rain_max_x = _LOCATION_TILE_X - 2 + min(frame_idx, 1)  # -2, -1, -1
+    rain_max_x = _LOCATION_TILE_X - 1 + min(frame_idx, 1)  # -1, 0, 0
 
     return _RAIN_TILE if tile_x <= rain_max_x else _NO_RAIN_TILE
 

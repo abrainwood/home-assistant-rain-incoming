@@ -27,7 +27,7 @@ class RainArrivalTimeSensor(CoordinatorEntity[RainDetectorCoordinator], SensorEn
     """Sensor showing the predicted arrival time of incoming rain."""
 
     _attr_has_entity_name = True
-    _attr_name = "Rain Arrival Time"
+    _attr_name = "Arrival Time"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:clock-time-four-outline"
 

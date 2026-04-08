@@ -27,7 +27,7 @@ class RainIncomingBinarySensor(CoordinatorEntity[RainDetectorCoordinator], Binar
     """Binary sensor that is on when rain is detected approaching or at the location."""
 
     _attr_has_entity_name = True
-    _attr_name = "Rain Incoming"
+    _attr_name = "Status"
     _attr_icon = "mdi:weather-rainy"
 
     def __init__(self, coordinator: RainDetectorCoordinator, entry: ConfigEntry) -> None:

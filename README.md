@@ -6,8 +6,8 @@ A Home Assistant integration that detects whether rain is approaching your locat
 
 | Entity | Type | Description |
 |---|---|---|
-| `binary_sensor.incoming_rain_rain_incoming` | Binary | `on` when rain is approaching or overhead |
-| `sensor.incoming_rain_rain_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
+| `binary_sensor.incoming_rain_status` | Binary | `on` when rain is approaching or overhead |
+| `sensor.incoming_rain_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
 
 Both sensors expose these attributes for debugging and automation:
 

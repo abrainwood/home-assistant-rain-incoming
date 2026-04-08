@@ -12,8 +12,8 @@ import time
 import pytest
 
 
-BINARY_SENSOR = "binary_sensor.incoming_rain_rain_incoming"
-ARRIVAL_SENSOR = "sensor.incoming_rain_rain_arrival_time"
+BINARY_SENSOR = "binary_sensor.incoming_rain_status"
+ARRIVAL_SENSOR = "sensor.incoming_rain_arrival_time"
 
 
 class TestIntegrationLoaded:
