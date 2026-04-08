@@ -152,19 +152,23 @@ async def _fetch_map_tile(
 
     url = f"{_MAP_TILE_BASE}/{zoom}/{tx}/{ty}.png"
     tile = await _fetch_tile(session, url)
+    # Boost saturation slightly for richer land/water colours
+    from PIL import ImageEnhance
+    tile = ImageEnhance.Color(tile).enhance(1.4)
     _map_tile_cache[key] = tile
     return tile
 
 
-def _draw_timestamp(img: Image.Image, timestamp: datetime) -> None:
-    """Draw a UTC timestamp in the bottom-left corner."""
+def _draw_timestamp(img: Image.Image, timestamp: datetime, tz_name: str | None = None) -> None:
+    """Draw a timestamp with date in the bottom-left corner."""
     draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.load_default(size=16)
     except TypeError:
         font = ImageFont.load_default()
 
-    label = timestamp.strftime("%H:%M UTC")
+    tz_label = tz_name or "UTC"
+    label = timestamp.strftime(f"%d %b %Y  %H:%M {tz_label}")
     bbox = font.getbbox(label)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     padding = 8
@@ -187,6 +191,7 @@ def _composite_single_frame(
     radius_km: int,
     output_size: int,
     timestamp: datetime | None = None,
+    tz_name: str | None = None,
 ) -> Image.Image:
     """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image."""
     composite = Image.alpha_composite(map_crop.convert("RGBA"), radar_resized)
@@ -199,7 +204,7 @@ def _composite_single_frame(
     draw_crosshair(composite, cx, cy)
 
     if timestamp is not None:
-        _draw_timestamp(composite, timestamp)
+        _draw_timestamp(composite, timestamp, tz_name)
 
     return composite
 
@@ -415,6 +420,7 @@ async def render_animated_composite(
     frame_duration_ms: int = 500,
     *,
     frame_timestamps: list[datetime] | None = None,
+    tz_name: str | None = None,
     session: aiohttp.ClientSession,
     run_in_executor: object = None,
 ) -> bytes:
@@ -447,7 +453,7 @@ async def render_animated_composite(
         ts = timestamps[i] if i < len(timestamps) else None
         frame_img = _composite_single_frame(
             map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size,
-            timestamp=ts,
+            timestamp=ts, tz_name=tz_name,
         )
         frames.append(frame_img)
 
