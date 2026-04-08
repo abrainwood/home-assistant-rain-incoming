@@ -140,32 +140,43 @@ def _check_rain_at_location(
     intensity_threshold: float,
     loc_row: int,
     loc_col: int,
+    proximity_px: int = 10,
     confidence_maps: list[np.ndarray] | None = None,
     min_confidence: float = 0.35,
 ) -> tuple[int, float] | None:
-    """Check if rain exists at the location pixel in recent frames.
+    """Check if rain exists near the location in recent frames.
 
-    Scans the last few effective (QC-adjusted) grids for above-threshold
-    intensity at the exact location pixel. When confidence maps are provided,
-    the pixel's confidence must also meet min_confidence.
+    Scans a neighborhood (proximity_px radius) around the location pixel
+    in the last few effective grids. This catches rain that's nearby but
+    not on the exact pixel - critical because a 1km pixel grid can miss
+    rain that's clearly overhead on a wider view.
 
-    Returns (frame_index, intensity) for the most recent frame with rain,
+    Returns (frame_index, max_intensity) for the most recent frame with rain,
     or None if no rain found.
     """
     h, w = effective_grids[0].shape
     if not (0 <= loc_row < h and 0 <= loc_col < w):
         return None
 
+    r1 = max(0, loc_row - proximity_px)
+    r2 = min(h, loc_row + proximity_px + 1)
+    c1 = max(0, loc_col - proximity_px)
+    c2 = min(w, loc_col + proximity_px + 1)
+
     n_recent = min(_RECENT_FRAMES_FOR_LOCATION_CHECK, len(effective_grids))
     for i in range(len(effective_grids) - 1, len(effective_grids) - 1 - n_recent, -1):
-        intensity = float(effective_grids[i][loc_row, loc_col])
-        if intensity >= intensity_threshold:
-            # Check pixel confidence if available
+        neighborhood = effective_grids[i][r1:r2, c1:c2]
+        max_intensity = float(neighborhood.max())
+        if max_intensity >= intensity_threshold:
+            # Check confidence of the brightest pixel in the neighborhood
             if confidence_maps is not None and i < len(confidence_maps):
-                pixel_conf = float(confidence_maps[i][loc_row, loc_col])
+                conf_hood = confidence_maps[i][r1:r2, c1:c2]
+                # Use confidence at the pixel with max intensity
+                max_pos = np.unravel_index(neighborhood.argmax(), neighborhood.shape)
+                pixel_conf = float(conf_hood[max_pos])
                 if pixel_conf < min_confidence:
                     continue
-            return i, intensity
+            return i, max_intensity
     return None
 
 
@@ -281,13 +292,14 @@ def detect(
         per_frame_centroids.append(extract_cell_centroids(labeled))
 
     # 3b. Direct rain-at-location check across recent frames.
-    # If rain is at the location pixel in any of the last few frames, we know
-    # rain is overhead. This catches cases where rain is overhead but cell
-    # centroids are offset (large cells) or rain dissipates in the final frame
-    # while it was clearly present moments earlier.
+    # Check a neighborhood around the location pixel, not just the exact pixel.
+    # Rain 10km away is still "overhead" for practical purposes.
     loc_row, loc_col = _location_to_pixel(location[0], location[1], bounds, W, H)
+    km_per_row, km_per_col = _pixel_size_km(bounds, W, H)
+    proximity_px = int(config.proximity_radius_km / ((km_per_row + km_per_col) / 2))
     rain_at_location = _check_rain_at_location(
         effective_grids, config.intensity_threshold, loc_row, loc_col,
+        proximity_px=proximity_px,
         confidence_maps=confidence_maps,
     )
 
