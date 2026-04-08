@@ -458,6 +458,17 @@ async def _fetch_radar_overlay(
 
     radar_arr = np.array(radar_canvas)
     radar_arr = filter_precipitation_pixels(radar_arr)
+
+    # QC Phase 1: apply texture-based confidence as alpha multiplier.
+    # Smooth rain keeps full alpha; speckly clutter gets dimmed.
+    from .qc.texture import score_texture
+
+    alpha_float = radar_arr[:, :, 3].astype(np.float32) / 255.0
+    confidence = score_texture(alpha_float)
+    radar_arr[:, :, 3] = (
+        radar_arr[:, :, 3].astype(np.float32) * confidence
+    ).astype(np.uint8)
+
     radar_filtered = Image.fromarray(radar_arr)
 
     radar_crop_x = int(vp.radar_vp_left - vp.radar_tx_min * 256)

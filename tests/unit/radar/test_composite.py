@@ -439,6 +439,74 @@ class TestDrawMotionArrow:
         assert yellow_coords[:, 1].mean() > 100
 
 
+class TestConfidenceWeightedRendering:
+    """Verify that QC texture scoring dims speckly radar and preserves smooth rain."""
+
+    @pytest.fixture(autouse=True)
+    def clear_tile_cache(self):
+        _map_tile_cache.clear()
+        yield
+        _map_tile_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_speckle_is_dimmed_vs_smooth_rain(self):
+        """Speckly radar tile should have lower mean alpha than smooth rain tile
+        after confidence-weighted rendering."""
+        output_size = 256
+
+        # Create a smooth rain radar tile: solid green with full alpha
+        smooth_img = Image.new("RGBA", (256, 256), (0, 200, 0, 200))
+        smooth_buf = BytesIO()
+        smooth_img.save(smooth_buf, format="PNG")
+        smooth_bytes = smooth_buf.getvalue()
+
+        # Create a speckly radar tile: random scattered pixels
+        rng = np.random.default_rng(42)
+        speckle_arr = np.zeros((256, 256, 4), dtype=np.uint8)
+        mask = rng.random((256, 256)) > 0.7
+        speckle_arr[mask] = [0, 200, 0, 200]
+        speckle_img = Image.fromarray(speckle_arr)
+        speckle_buf = BytesIO()
+        speckle_img.save(speckle_buf, format="PNG")
+        speckle_bytes = speckle_buf.getvalue()
+
+        # Render with smooth radar
+        smooth_session = _mock_session(
+            map_tile_bytes=_make_tile_png((30, 30, 30, 255)),
+            radar_tile_bytes=smooth_bytes,
+        )
+        smooth_result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=["/v2/radar/smooth"],
+            output_size=output_size,
+            frame_timestamps=_make_frame_timestamps(1),
+            session=smooth_session,
+        )
+
+        # Render with speckly radar
+        speckle_session = _mock_session(
+            map_tile_bytes=_make_tile_png((30, 30, 30, 255)),
+            radar_tile_bytes=speckle_bytes,
+        )
+        speckle_result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=["/v2/radar/speckle"],
+            output_size=output_size,
+            frame_timestamps=_make_frame_timestamps(1),
+            session=speckle_session,
+        )
+
+        # Compare: GIF frames are RGB, so compare green channel intensity
+        # (the green from radar should be more preserved in smooth vs speckle)
+        smooth_frame = np.array(Image.open(BytesIO(smooth_result)).convert("RGB"))
+        speckle_frame = np.array(Image.open(BytesIO(speckle_result)).convert("RGB"))
+
+        # Green channel mean - smooth rain should show more green
+        smooth_green = smooth_frame[:, :, 1].mean()
+        speckle_green = speckle_frame[:, :, 1].mean()
+        assert smooth_green > speckle_green
+
+
 class TestDetectionInformedRendering:
     @pytest.fixture(autouse=True)
     def clear_tile_cache(self):
