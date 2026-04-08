@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -91,19 +92,22 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.last_rain_nearby_time: datetime | None = None
         self.model_precipitation_mm: float | None = None
 
-        # Clutter map
+        # Clutter map - loaded lazily in _async_update_data to avoid blocking I/O
         import os
         self._clutter_path = os.path.join(
             hass.config.path(".storage"), CLUTTER_MAP_FILENAME
         )
-        self._clutter_map: ClutterMap | None = load_clutter_map(self._clutter_path)
+        self._clutter_map: ClutterMap | None = None
+        self._clutter_loaded = False
         self._clutter_cycle_count = 0
 
-    def save_clutter_map(self) -> None:
+    async def async_save_clutter_map(self) -> None:
         """Persist the clutter map to disk. Called on HA shutdown."""
         if self._clutter_map is not None:
             try:
-                save_clutter_map(self._clutter_map, self._clutter_path)
+                await self.hass.async_add_executor_job(
+                    save_clutter_map, self._clutter_map, self._clutter_path
+                )
             except Exception:
                 _LOGGER.debug("Failed to save clutter map on shutdown")
 
@@ -143,20 +147,30 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         bounds = config.analysis_bounds
         W, H = config.grid_width, config.grid_height
 
+        # Load clutter map on first update (off the event loop)
+        if not self._clutter_loaded:
+            self._clutter_map = await self.hass.async_add_executor_job(
+                load_clutter_map, self._clutter_path
+            )
+            self._clutter_loaded = True
+
         # Fetch tile grids BEFORE running detection - get_intensity_grid returns
         # zeros until the tiles have been fetched and stitched.
         # Also fetch Open-Meteo precipitation concurrently (non-blocking, fail open).
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            open_meteo_task = asyncio.create_task(
-                fetch_precipitation_now(lat, lon, session)
-            )
-            for frame in frames:
-                try:
-                    await frame._fetch_stitched_grid(bounds, W, H, session)
-                except Exception:
-                    _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
-            self.model_precipitation_mm = await open_meteo_task
+        session = async_get_clientsession(self.hass)
+
+        async def _fetch_frame(frame):
+            try:
+                await frame._fetch_stitched_grid(bounds, W, H, session)
+            except Exception:
+                _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
+
+        results = await asyncio.gather(
+            *[_fetch_frame(frame) for frame in frames],
+            fetch_precipitation_now(lat, lon, session),
+        )
+        # Last result is the Open-Meteo precipitation value
+        self.model_precipitation_mm = results[-1] if results else None
 
         # Compute per-frame QC confidence maps BEFORE detection so they can
         # be used to gate intensity thresholding in the detector.
@@ -178,7 +192,9 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             # Save periodically
             if self._clutter_cycle_count % CLUTTER_SAVE_INTERVAL == 0:
                 try:
-                    save_clutter_map(self._clutter_map, self._clutter_path)
+                    await self.hass.async_add_executor_job(
+                        save_clutter_map, self._clutter_map, self._clutter_path
+                    )
                 except Exception:
                     _LOGGER.debug("Failed to save clutter map")
 

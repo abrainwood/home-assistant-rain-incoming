@@ -34,10 +34,19 @@ async def test_coordinator_returns_detection_result(hass: HomeAssistant):
     entry = make_entry()
     coordinator = RainDetectorCoordinator(hass, entry)
 
+    mock_session = MagicMock()
+
     with (
         patch.object(coordinator._provider, "get_frames", new=AsyncMock(return_value=[])),
         patch("custom_components.incoming_rain.coordinator.detect", return_value=EMPTY_RESULT),
-        patch("aiohttp.ClientSession"),
+        patch(
+            "custom_components.incoming_rain.coordinator.async_get_clientsession",
+            return_value=mock_session,
+        ),
+        patch(
+            "custom_components.incoming_rain.coordinator.fetch_precipitation_now",
+            new=AsyncMock(return_value=None),
+        ),
     ):
         result = await coordinator._async_update_data()
 
