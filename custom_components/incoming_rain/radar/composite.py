@@ -254,20 +254,31 @@ async def _fetch_map_crop(
     vp: _ViewportParams,
     output_size: int,
 ) -> Image.Image:
-    """Fetch and stitch map tiles, then crop to viewport."""
+    """Fetch and stitch map tiles (in parallel), then crop to viewport."""
+    import asyncio
+
+    coords = [
+        (tx, ty)
+        for ty in range(vp.tile_y_min, vp.tile_y_max + 1)
+        for tx in range(vp.tile_x_min, vp.tile_x_max + 1)
+    ]
+
+    async def _fetch_one(tx: int, ty: int):
+        try:
+            return tx, ty, await _fetch_map_tile(session, vp.map_zoom, tx, ty)
+        except Exception:
+            _LOGGER.debug("Failed to fetch map tile z=%d x=%d y=%d", vp.map_zoom, tx, ty)
+            return tx, ty, None
+
+    results = await asyncio.gather(*[_fetch_one(tx, ty) for tx, ty in coords])
+
     canvas_w = (vp.tile_x_max - vp.tile_x_min + 1) * 256
     canvas_h = (vp.tile_y_max - vp.tile_y_min + 1) * 256
     map_canvas = Image.new("RGBA", (canvas_w, canvas_h))
 
-    for ty in range(vp.tile_y_min, vp.tile_y_max + 1):
-        for tx in range(vp.tile_x_min, vp.tile_x_max + 1):
-            try:
-                tile = await _fetch_map_tile(session, vp.map_zoom, tx, ty)
-                px = (tx - vp.tile_x_min) * 256
-                py = (ty - vp.tile_y_min) * 256
-                map_canvas.paste(tile, (px, py))
-            except Exception:
-                _LOGGER.debug("Failed to fetch map tile z=%d x=%d y=%d", vp.map_zoom, tx, ty)
+    for tx, ty, tile in results:
+        if tile is not None:
+            map_canvas.paste(tile, ((tx - vp.tile_x_min) * 256, (ty - vp.tile_y_min) * 256))
 
     crop_x = int(vp.centre_px - vp.half_size - vp.tile_x_min * 256)
     crop_y = int(vp.centre_py - vp.half_size - vp.tile_y_min * 256)
@@ -280,26 +291,36 @@ async def _fetch_radar_overlay(
     frame_path: str,
     output_size: int,
 ) -> Image.Image:
-    """Fetch radar tiles for one frame, filter, crop, and resize to viewport."""
+    """Fetch radar tiles for one frame (in parallel), filter, crop, and resize to viewport."""
+    import asyncio
     radar_zoom = RAINVIEWER_ZOOM
+
+    coords = [
+        (tx, ty)
+        for ty in range(vp.radar_ty_min, vp.radar_ty_max + 1)
+        for tx in range(vp.radar_tx_min, vp.radar_tx_max + 1)
+    ]
+
+    async def _fetch_one(tx: int, ty: int):
+        url = (
+            f"{_RAINVIEWER_TILE_BASE}{frame_path}"
+            f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{RAINVIEWER_COLOUR_SCHEME}/0.png"
+        )
+        try:
+            return tx, ty, await _fetch_tile(session, url)
+        except Exception:
+            _LOGGER.debug("Failed to fetch radar tile z=%d x=%d y=%d", radar_zoom, tx, ty)
+            return tx, ty, None
+
+    results = await asyncio.gather(*[_fetch_one(tx, ty) for tx, ty in coords])
 
     radar_canvas_w = (vp.radar_tx_max - vp.radar_tx_min + 1) * 256
     radar_canvas_h = (vp.radar_ty_max - vp.radar_ty_min + 1) * 256
     radar_canvas = Image.new("RGBA", (radar_canvas_w, radar_canvas_h), (0, 0, 0, 0))
 
-    for ty in range(vp.radar_ty_min, vp.radar_ty_max + 1):
-        for tx in range(vp.radar_tx_min, vp.radar_tx_max + 1):
-            url = (
-                f"{_RAINVIEWER_TILE_BASE}{frame_path}"
-                f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{RAINVIEWER_COLOUR_SCHEME}/0.png"
-            )
-            try:
-                tile = await _fetch_tile(session, url)
-                px = (tx - vp.radar_tx_min) * 256
-                py = (ty - vp.radar_ty_min) * 256
-                radar_canvas.paste(tile, (px, py))
-            except Exception:
-                _LOGGER.debug("Failed to fetch radar tile z=%d x=%d y=%d", radar_zoom, tx, ty)
+    for tx, ty, tile in results:
+        if tile is not None:
+            radar_canvas.paste(tile, ((tx - vp.radar_tx_min) * 256, (ty - vp.radar_ty_min) * 256))
 
     radar_arr = np.array(radar_canvas)
     radar_arr = filter_precipitation_pixels(radar_arr)
@@ -372,10 +393,15 @@ async def render_animated_composite(
     # Fetch map tiles once - they're the same for every frame
     map_crop = await _fetch_map_crop(session, vp, output_size)
 
-    # Render each frame as an RGBA composite
+    # Fetch all radar overlays in parallel
+    import asyncio
+    radar_overlays = await asyncio.gather(*[
+        _fetch_radar_overlay(session, vp, fp, output_size) for fp in frame_paths
+    ])
+
+    # Composite each frame (CPU-bound but fast - no I/O)
     frames: list[Image.Image] = []
-    for frame_path in frame_paths:
-        radar_resized = await _fetch_radar_overlay(session, vp, frame_path, output_size)
+    for radar_resized in radar_overlays:
         frame_img = _composite_single_frame(
             map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size,
         )
