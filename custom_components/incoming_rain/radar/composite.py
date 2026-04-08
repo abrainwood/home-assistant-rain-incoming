@@ -17,7 +17,6 @@ from ..providers.rainviewer import (
 )
 from .detector import TrackedCell
 from .geo import lat_lon_to_tile
-from .qc import compute_confidence_map
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -266,12 +265,31 @@ def _composite_single_frame(
     timestamp: datetime | None = None,
     tz_name: str | None = None,
     tracked_cells: list[TrackedCell] | None = None,
+    confidence_map: np.ndarray | None = None,
 ) -> Image.Image:
     """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image.
+
+    When confidence_map is provided (float32, 0-1, same size as radar_resized),
+    it's applied as an alpha multiplier to reduce clutter opacity.
 
     When tracked_cells is provided (last frame only), the raw radar is dimmed to ~30%
     opacity and tracked cell markers with motion arrows are overlaid.
     """
+    if confidence_map is not None:
+        radar_arr = np.array(radar_resized)
+        # Resize confidence map if dimensions differ
+        if confidence_map.shape != (radar_arr.shape[0], radar_arr.shape[1]):
+            from PIL import Image as PILImage
+            conf_img = PILImage.fromarray((confidence_map * 255).astype(np.uint8))
+            conf_img = conf_img.resize(
+                (radar_arr.shape[1], radar_arr.shape[0]), PILImage.BILINEAR
+            )
+            confidence_map = np.array(conf_img).astype(np.float32) / 255.0
+        radar_arr[:, :, 3] = (
+            radar_arr[:, :, 3].astype(np.float32) * confidence_map
+        ).astype(np.uint8)
+        radar_resized = Image.fromarray(radar_arr)
+
     if tracked_cells:
         # Dim the raw radar to ~30% alpha
         radar_dimmed = radar_resized.copy()
@@ -460,20 +478,6 @@ async def _fetch_radar_overlay(
     radar_arr = np.array(radar_canvas)
     radar_arr = filter_precipitation_pixels(radar_arr)
 
-    # QC Phase 1: apply texture-based confidence as alpha multiplier.
-    # Smooth rain keeps full alpha; speckly clutter gets dimmed.
-    # Must run on native-resolution data BEFORE crop/resize so the
-    # texture kernel operates on real pixel neighbourhoods.
-    intensity = (
-        0.299 * radar_arr[:, :, 0].astype(np.float32)
-        + 0.587 * radar_arr[:, :, 1].astype(np.float32)
-        + 0.114 * radar_arr[:, :, 2].astype(np.float32)
-    ) / 255.0
-    cmap = compute_confidence_map(intensity)
-    radar_arr[:, :, 3] = (
-        radar_arr[:, :, 3].astype(np.float32) * cmap.confidence
-    ).astype(np.uint8)
-
     radar_filtered = Image.fromarray(radar_arr)
 
     radar_crop_x = int(vp.radar_vp_left - vp.radar_tx_min * 256)
@@ -530,6 +534,7 @@ async def render_animated_composite(
     frame_timestamps: list[datetime] | None = None,
     tz_name: str | None = None,
     tracked_cells: list[TrackedCell] | None = None,
+    confidence_maps: list[np.ndarray] | None = None,
     session: aiohttp.ClientSession,
     run_in_executor: object = None,
 ) -> bytes:
@@ -542,6 +547,9 @@ async def render_animated_composite(
     tracked_cells: optional list of TrackedCells from the detector. When provided,
         the last frame dims raw radar to ~30% opacity and highlights tracked cells
         with markers and motion arrows.
+    confidence_maps: optional per-frame confidence arrays from the QC pipeline.
+        Each array is float32 (H, W), values 0-1. Applied as an alpha multiplier
+        to dim low-confidence pixels.
     session: an aiohttp.ClientSession for fetching tiles.
     run_in_executor: optional callable (e.g. hass.async_add_executor_job)
         to offload CPU-bound GIF assembly. If None, rendering runs inline.
@@ -565,9 +573,11 @@ async def render_animated_composite(
     for i, radar_resized in enumerate(radar_overlays):
         ts = timestamps[i] if i < len(timestamps) else None
         cells_for_frame = tracked_cells if (i == last_idx and tracked_cells) else None
+        conf_map = confidence_maps[i] if confidence_maps and i < len(confidence_maps) else None
         frame_img = _composite_single_frame(
             map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
             timestamp=ts, tz_name=tz_name, tracked_cells=cells_for_frame,
+            confidence_map=conf_map,
         )
         frames.append(frame_img)
 

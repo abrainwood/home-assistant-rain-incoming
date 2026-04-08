@@ -29,6 +29,7 @@ from .const import (
 from .providers.base import BoundingBox
 from .providers.rainviewer import RainViewerProvider
 from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
+from .radar.qc import compute_confidence_map, QCConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.frame_paths: list[str] = []
         self.frame_timestamps: list[datetime] = []
         self.tracked_cells: list[TrackedCell] = []
+        self.confidence_maps: list = []
         self.last_update_success_time: datetime | None = None
         self.last_rain_nearby_time: datetime | None = None
 
@@ -120,6 +122,16 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                     _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
 
         result = detect(frames=frames, location=(lat, lon), config=config)
+
+        # Compute per-frame QC confidence maps (using all grids for temporal context)
+        grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
+        qc_config = QCConfig()
+        self.confidence_maps = []
+        for i, grid in enumerate(grids):
+            # Temporal scoring uses all grids up to and including the current frame
+            grids_up_to_i = grids[: i + 1]
+            cmap = compute_confidence_map(grid, config=qc_config, grids=grids_up_to_i)
+            self.confidence_maps.append(cmap.confidence)
 
         # Store frame paths, timestamps, and tracked cells for the radar image entity
         self.frame_paths = [f.path for f in frames if hasattr(f, "path")]

@@ -4,6 +4,7 @@ import logging
 
 import numpy as np
 
+from .temporal import score_temporal
 from .texture import score_texture
 from .types import ConfidenceMap, QCConfig
 
@@ -13,11 +14,17 @@ _LOGGER = logging.getLogger(__name__)
 def compute_confidence_map(
     grid: np.ndarray,
     config: QCConfig | None = None,
+    grids: list[np.ndarray] | None = None,
 ) -> ConfidenceMap:
     """Compute a per-pixel confidence map by combining QC factor scores.
 
-    For Phase 1, only texture scoring is implemented. Later phases will add
-    temporal persistence, static clutter maps, etc.
+    Parameters
+    ----------
+    grid: the current (latest) frame's intensity grid.
+    config: QC configuration. Uses defaults if None.
+    grids: optional list of intensity grids (all frames) for temporal scoring.
+        When provided, temporal persistence scoring is computed and combined
+        with texture.
     """
     if config is None:
         config = QCConfig()
@@ -31,7 +38,11 @@ def compute_confidence_map(
 
     factor_scores: dict[str, np.ndarray] = {"texture": texture}
 
-    # Weighted combination of all factors (Phase 1: texture only)
+    if grids is not None and len(grids) > 0:
+        temporal = score_temporal(grids)
+        factor_scores["temporal"] = temporal
+
+    # Weighted combination of all available factors
     unmatched = set(config.weights.keys()) - set(factor_scores.keys())
     if unmatched:
         _LOGGER.warning("QC weight keys have no matching factor score: %s", unmatched)
