@@ -1,0 +1,39 @@
+{
+  "captured_at": "2026-04-08T22:07:41.964590+00:00",
+  "location": {
+    "lat": -36.381,
+    "lon": 145.399,
+    "name": "Shepparton, VIC"
+  },
+  "ground_truth": {
+    "conditions": "Active rain cells visible on BOM, Apple Weather, Weatherzone",
+    "open_meteo": "0.1mm (trace)",
+    "visual_assessment": "Shepparton 128km GIF looks lovely - real rain rendering correctly"
+  },
+  "frames": [
+    {
+      "time": 1775682600,
+      "path": "/v2/radar/41ec0e5f32be"
+    },
+    {
+      "time": 1775683200,
+      "path": "/v2/radar/e42bf32e5997"
+    },
+    {
+      "time": 1775683800,
+      "path": "/v2/radar/f8f0cd81b6bb"
+    },
+    {
+      "time": 1775684400,
+      "path": "/v2/radar/306b4f27de70"
+    },
+    {
+      "time": 1775685000,
+      "path": "/v2/radar/32fc87b41561"
+    },
+    {
+      "time": 1775685600,
+      "path": "/v2/radar/14dcbf044426"
+    }
+  ]
+}
