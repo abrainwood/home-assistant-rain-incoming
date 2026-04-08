@@ -1,6 +1,7 @@
 DOMAIN = "incoming_rain"
 
 # Config keys (user-facing)
+CONF_LOCATION_NAME = "location_name"
 CONF_LOOKAHEAD_MINUTES = "lookahead_minutes"
 
 # Lookahead bounds

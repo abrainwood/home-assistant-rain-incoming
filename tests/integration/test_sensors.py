@@ -10,7 +10,7 @@ from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.incoming_rain.const import DOMAIN
+from custom_components.incoming_rain.const import CONF_LOCATION_NAME, DOMAIN
 from custom_components.incoming_rain.radar.detector import Confidence, DetectionResult
 
 COMPONENT_DIR = pathlib.Path(__file__).resolve().parents[2] / "custom_components" / "incoming_rain"
@@ -226,3 +226,52 @@ async def test_arrival_sensor_still_has_dynamic_attributes(hass: HomeAssistant, 
     state = hass.states.get("sensor.incoming_rain_arrival_time")
     assert "confidence" in state.attributes
     assert "frame_count" in state.attributes
+
+
+# --- Named location device name ---
+
+
+@pytest.fixture
+def mock_entry_named():
+    return MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            CONF_LOCATION_NAME: "Beach House",
+        },
+        entry_id="test_named_abc",
+    )
+
+
+@pytest.mark.asyncio
+async def test_named_location_device_name(hass: HomeAssistant, mock_entry_named):
+    await _setup_integration(hass, mock_entry_named, MOCK_RESULT_NO_RAIN)
+    # Entity IDs use the device name - with a named location
+    # the device is "Incoming Rain - Beach House", so entity IDs change
+    state = hass.states.get("binary_sensor.incoming_rain_beach_house_status")
+    assert state is not None, (
+        f"Expected named entity. Available: {[s.entity_id for s in hass.states.async_all()]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unnamed_location_device_name(hass: HomeAssistant, mock_entry):
+    """Entries without location_name still use 'Incoming Rain' device name."""
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.incoming_rain_status")
+    assert state is not None
+
+
+# --- strings.json location_name ---
+
+
+def test_strings_json_has_location_name_in_config():
+    strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
+    assert "location_name" in strings["config"]["step"]["user"]["data"]
+
+
+def test_strings_json_has_location_name_in_options():
+    strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
+    assert "location_name" in strings["options"]["step"]["init"]["data"]

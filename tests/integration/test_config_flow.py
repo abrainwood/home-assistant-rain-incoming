@@ -53,6 +53,61 @@ async def test_config_flow_rejects_invalid_latitude(hass: HomeAssistant):
 
 
 @pytest.mark.asyncio
+async def test_config_flow_title_uses_location_name_when_provided(hass: HomeAssistant):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            "location_name": "Beach House",
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Incoming Rain - Beach House"
+    assert result["data"]["location_name"] == "Beach House"
+
+
+@pytest.mark.asyncio
+async def test_config_flow_title_uses_coordinates_when_name_empty(hass: HomeAssistant):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            "location_name": "",
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Incoming Rain (-33.70, 151.21)"
+
+
+@pytest.mark.asyncio
+async def test_config_flow_title_uses_coordinates_when_name_omitted(hass: HomeAssistant):
+    """Existing entries without location_name should still work."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Incoming Rain (-33.70, 151.21)"
+
+
+@pytest.mark.asyncio
 async def test_config_flow_rejects_lookahead_out_of_range(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}

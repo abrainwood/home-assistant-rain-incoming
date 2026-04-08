@@ -6,6 +6,7 @@ from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import callback
 
 from .const import (
+    CONF_LOCATION_NAME,
     CONF_LOOKAHEAD_MINUTES,
     DEFAULT_LOOKAHEAD_MINUTES,
     DOMAIN,
@@ -29,16 +30,27 @@ def _validate_input(user_input: dict) -> dict[str, str]:
     return errors
 
 
+def _build_title(user_input: dict) -> str:
+    location_name = user_input.get(CONF_LOCATION_NAME, "").strip()
+    if location_name:
+        return f"Incoming Rain - {location_name}"
+    lat = user_input[CONF_LATITUDE]
+    lon = user_input[CONF_LONGITUDE]
+    return f"Incoming Rain ({lat:.2f}, {lon:.2f})"
+
+
 def _build_schema(
     default_lat: float,
     default_lon: float,
     default_lookahead: int = DEFAULT_LOOKAHEAD_MINUTES,
+    default_location_name: str = "",
 ) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(CONF_LATITUDE, default=default_lat): vol.Coerce(float),
             vol.Required(CONF_LONGITUDE, default=default_lon): vol.Coerce(float),
             vol.Required(CONF_LOOKAHEAD_MINUTES, default=default_lookahead): vol.Coerce(int),
+            vol.Optional(CONF_LOCATION_NAME, default=default_location_name): str,
         }
     )
 
@@ -66,7 +78,7 @@ class IncomingRainConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(f"{lat:.4f}_{lon:.4f}")
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
-                    title=f"Incoming Rain ({lat:.2f}, {lon:.2f})",
+                    title=_build_title(user_input),
                     data=user_input,
                 )
 
@@ -97,7 +109,7 @@ class IncomingRainOptionsFlow(OptionsFlow):
                 self.hass.config_entries.async_update_entry(
                     self._config_entry,
                     data=user_input,
-                    title=f"Incoming Rain ({user_input[CONF_LATITUDE]:.2f}, {user_input[CONF_LONGITUDE]:.2f})",
+                    title=_build_title(user_input),
                 )
                 await self.hass.config_entries.async_reload(self._config_entry.entry_id)
                 return self.async_create_entry(data={})
@@ -107,6 +119,7 @@ class IncomingRainOptionsFlow(OptionsFlow):
             current.get(CONF_LATITUDE, self.hass.config.latitude),
             current.get(CONF_LONGITUDE, self.hass.config.longitude),
             current.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
+            current.get(CONF_LOCATION_NAME, ""),
         )
         return self.async_show_form(
             step_id="init", data_schema=schema, errors=errors

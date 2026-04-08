@@ -7,7 +7,8 @@
         "data": {
           "latitude": "Latitude",
           "longitude": "Longitude",
-          "lookahead_minutes": "Lookahead (minutes)"
+          "lookahead_minutes": "Lookahead (minutes)",
+          "location_name": "Location name (optional)"
         }
       }
     },
@@ -27,7 +28,8 @@
         "data": {
           "latitude": "Latitude",
           "longitude": "Longitude",
-          "lookahead_minutes": "Lookahead (minutes)"
+          "lookahead_minutes": "Lookahead (minutes)",
+          "location_name": "Location name (optional)"
         }
       }
     },

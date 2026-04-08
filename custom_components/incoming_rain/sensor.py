@@ -7,7 +7,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_LOCATION_NAME, DOMAIN
 from .coordinator import RainDetectorCoordinator
 from .radar.detector import Confidence
 
@@ -35,9 +35,13 @@ class RainArrivalTimeSensor(CoordinatorEntity[RainDetectorCoordinator], SensorEn
 
     @property
     def device_info(self) -> DeviceInfo:
+        location_name = self._entry.data.get(CONF_LOCATION_NAME) or ""
+        device_name = "Incoming Rain"
+        if location_name:
+            device_name = f"Incoming Rain - {location_name}"
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.entry_id)},
-            name="Incoming Rain",
+            name=device_name,
         )
 
     @property
