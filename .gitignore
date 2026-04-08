@@ -32,3 +32,6 @@ htmlcov/
 *.db
 *.log
 home-assistant_v2.db
+
+# Dev environment
+.dev-token

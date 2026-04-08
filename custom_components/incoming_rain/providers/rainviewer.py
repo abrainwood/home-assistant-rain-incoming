@@ -10,8 +10,12 @@ from PIL import Image
 
 from .base import BoundingBox, RadarFrame, RadarProvider
 
-MANIFEST_URL = "https://api.rainviewer.com/public/weather-maps.json"
-TILE_BASE_URL = "https://tilecache.rainviewer.com"
+import os
+
+_API_BASE = os.environ.get("RAINVIEWER_API_URL", "https://api.rainviewer.com")
+_TILE_BASE = os.environ.get("RAINVIEWER_TILE_URL", "https://tilecache.rainviewer.com")
+MANIFEST_URL = f"{_API_BASE}/public/weather-maps.json"
+TILE_BASE_URL = _TILE_BASE
 TILE_SIZE = 256
 
 # RainViewer precipitation colour table for colour scheme 6 (ordered light→heavy).
@@ -79,12 +83,31 @@ def _tile_bounds(tx: int, ty: int, zoom: int) -> BoundingBox:
 def _tile_to_intensity_array(image_bytes: bytes) -> np.ndarray:
     """Convert raw tile PNG bytes to a float32 intensity array (TILE_SIZE x TILE_SIZE)."""
     img = Image.open(BytesIO(image_bytes)).convert("RGBA")
-    arr = np.array(img, dtype=np.uint8)  # shape (H, W, 4)
+    arr = np.array(img, dtype=np.float32)  # shape (H, W, 4)
+
     result = np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32)
-    for row in range(TILE_SIZE):
-        for col in range(TILE_SIZE):
-            r, g, b, a = arr[row, col]
-            result[row, col] = _colour_to_intensity(int(r), int(g), int(b), int(a))
+    alpha_mask = arr[:, :, 3] >= 10
+    if not alpha_mask.any():
+        return result
+
+    # Build colour/intensity lookup from the precipitation table
+    colours = np.array(
+        [[r, g, b] for r, g, b, _ in _PRECIP_COLOURS], dtype=np.float32
+    )
+    intensities = np.array(
+        [i for _, _, _, i in _PRECIP_COLOURS], dtype=np.float32
+    )
+
+    # Compute L2 distance from each pixel to each precipitation colour
+    rgb = arr[:, :, :3]  # (H, W, 3)
+    diff = rgb[:, :, np.newaxis, :] - colours[np.newaxis, np.newaxis, :, :]
+    distances = np.sqrt((diff ** 2).sum(axis=-1))  # (H, W, N_colours)
+
+    best_idx = distances.argmin(axis=-1)
+    best_dist = distances.min(axis=-1)
+
+    valid = alpha_mask & (best_dist <= _MAX_COLOUR_DISTANCE)
+    result[valid] = intensities[best_idx[valid]]
     return result
 
 

@@ -96,18 +96,20 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             raise UpdateFailed(f"RainViewer fetch failed: {err}") from err
 
         config = self._build_config()
-        result = detect(frames=frames, location=(lat, lon), config=config)
-
-        # Pre-populate frame grids asynchronously
-        import aiohttp
         bounds = config.analysis_bounds
         W, H = config.grid_width, config.grid_height
+
+        # Fetch tile grids BEFORE running detection - get_intensity_grid returns
+        # zeros until the tiles have been fetched and stitched.
+        import aiohttp
         async with aiohttp.ClientSession() as session:
             for frame in frames:
                 try:
                     await frame._fetch_stitched_grid(bounds, W, H, session)
                 except Exception:
-                    _LOGGER.debug("Failed to pre-fetch grid for frame %s", frame.timestamp)
+                    _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
+
+        result = detect(frames=frames, location=(lat, lon), config=config)
 
         self._consecutive_failures = 0
         return result
