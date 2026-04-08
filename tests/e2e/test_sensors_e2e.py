@@ -14,6 +14,9 @@ import pytest
 
 BINARY_SENSOR = "binary_sensor.incoming_rain_status"
 ARRIVAL_SENSOR = "sensor.incoming_rain_arrival_time"
+IMAGE_64 = "image.incoming_rain_radar_64km"
+IMAGE_128 = "image.incoming_rain_radar_128km"
+IMAGE_256 = "image.incoming_rain_radar_256km"
 
 
 class TestIntegrationLoaded:
@@ -25,6 +28,11 @@ class TestIntegrationLoaded:
     def test_arrival_sensor_exists(self, ha_client):
         state = ha_client.get_state(ARRIVAL_SENSOR)
         assert state is not None, f"Entity {ARRIVAL_SENSOR} not found"
+
+    @pytest.mark.parametrize("entity_id", [IMAGE_64, IMAGE_128, IMAGE_256])
+    def test_image_entities_exist(self, ha_client, entity_id):
+        state = ha_client.get_state(entity_id)
+        assert state is not None, f"Entity {entity_id} not found"
 
 
 class TestNoRainScenario:

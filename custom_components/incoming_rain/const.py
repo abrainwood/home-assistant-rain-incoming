@@ -27,9 +27,7 @@ MAX_STORM_SPEED_KMH = 120.0
 PROXIMITY_RADIUS_KM = 5.0
 
 # Radar image config
-CONF_RADAR_RADIUS_KM = "radar_radius_km"
-DEFAULT_RADAR_RADIUS_KM = 128
-RADAR_RADIUS_OPTIONS = {64: "64 km", 128: "128 km", 256: "256 km"}
+RADAR_RADII_KM = [64, 128, 256]
 
 # RainViewer tile config
 RAINVIEWER_ZOOM = 7

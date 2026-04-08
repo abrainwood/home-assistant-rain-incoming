@@ -8,6 +8,9 @@ A Home Assistant integration that detects whether rain is approaching your locat
 |---|---|---|
 | `binary_sensor.incoming_rain_status` | Binary | `on` when rain is approaching or overhead |
 | `sensor.incoming_rain_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
+| `image.incoming_rain_radar_64km` | Image | Radar composite map - 64km radius |
+| `image.incoming_rain_radar_128km` | Image | Radar composite map - 128km radius |
+| `image.incoming_rain_radar_256km` | Image | Radar composite map - 256km radius |
 
 Both sensors expose these attributes for debugging and automation:
 

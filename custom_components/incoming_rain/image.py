@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_RADAR_RADIUS_KM, DEFAULT_RADAR_RADIUS_KM, DOMAIN
+from .const import DOMAIN, RADAR_RADII_KM
 from .coordinator import RainDetectorCoordinator
 from .radar.composite import render_composite
 
@@ -22,21 +22,25 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: RainDetectorCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([RadarImageEntity(coordinator, entry)])
+    async_add_entities([
+        RadarImageEntity(coordinator, entry, radius_km)
+        for radius_km in RADAR_RADII_KM
+    ])
 
 
 class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
     """Image entity showing a radar composite map."""
 
     _attr_has_entity_name = True
-    _attr_name = "Radar"
     _attr_content_type = "image/png"
 
-    def __init__(self, coordinator: RainDetectorCoordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: RainDetectorCoordinator, entry: ConfigEntry, radius_km: int) -> None:
         super().__init__(coordinator)
         ImageEntity.__init__(self, coordinator.hass)
         self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_radar"
+        self._radius_km = radius_km
+        self._attr_name = f"Radar {radius_km}km"
+        self._attr_unique_id = f"{entry.entry_id}_radar_{radius_km}km"
         self._cached_image: bytes | None = None
         self._cached_frame_path: str | None = None
 
@@ -63,13 +67,12 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         data = self._entry.data
         lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
         lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
-        radius_km = data.get(CONF_RADAR_RADIUS_KM, DEFAULT_RADAR_RADIUS_KM)
 
         session = async_get_clientsession(self.hass)
         self._cached_image = await render_composite(
             lat=lat,
             lon=lon,
-            radius_km=radius_km,
+            radius_km=self._radius_km,
             frame_path=frame_path,
             session=session,
             run_in_executor=self.hass.async_add_executor_job,

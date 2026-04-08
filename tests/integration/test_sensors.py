@@ -100,7 +100,12 @@ async def test_arrival_sensor_unknown_when_no_rain(hass: HomeAssistant, mock_ent
 
 
 @pytest.mark.asyncio
-async def test_image_entity_created(hass: HomeAssistant, mock_entry):
+@pytest.mark.parametrize("entity_id", [
+    "image.incoming_rain_radar_64km",
+    "image.incoming_rain_radar_128km",
+    "image.incoming_rain_radar_256km",
+])
+async def test_image_entity_created(hass: HomeAssistant, mock_entry, entity_id):
     await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("image.incoming_rain_radar")
-    assert state is not None
+    state = hass.states.get(entity_id)
+    assert state is not None, f"Entity {entity_id} not found"

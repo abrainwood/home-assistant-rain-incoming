@@ -7,13 +7,10 @@ from homeassistant.core import callback
 
 from .const import (
     CONF_LOOKAHEAD_MINUTES,
-    CONF_RADAR_RADIUS_KM,
     DEFAULT_LOOKAHEAD_MINUTES,
-    DEFAULT_RADAR_RADIUS_KM,
     DOMAIN,
     MAX_LOOKAHEAD_MINUTES,
     MIN_LOOKAHEAD_MINUTES,
-    RADAR_RADIUS_OPTIONS,
 )
 
 
@@ -36,16 +33,12 @@ def _build_schema(
     default_lat: float,
     default_lon: float,
     default_lookahead: int = DEFAULT_LOOKAHEAD_MINUTES,
-    default_radar_radius: int = DEFAULT_RADAR_RADIUS_KM,
 ) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(CONF_LATITUDE, default=default_lat): vol.Coerce(float),
             vol.Required(CONF_LONGITUDE, default=default_lon): vol.Coerce(float),
             vol.Required(CONF_LOOKAHEAD_MINUTES, default=default_lookahead): vol.Coerce(int),
-            vol.Required(CONF_RADAR_RADIUS_KM, default=default_radar_radius): vol.In(
-                RADAR_RADIUS_OPTIONS
-            ),
         }
     )
 
@@ -114,7 +107,6 @@ class IncomingRainOptionsFlow(OptionsFlow):
             current.get(CONF_LATITUDE, self.hass.config.latitude),
             current.get(CONF_LONGITUDE, self.hass.config.longitude),
             current.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
-            current.get(CONF_RADAR_RADIUS_KM, DEFAULT_RADAR_RADIUS_KM),
         )
         return self.async_show_form(
             step_id="init", data_schema=schema, errors=errors
