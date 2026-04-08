@@ -29,6 +29,7 @@ PROXIMITY_RADIUS_KM = 5.0
 
 # Radar image config
 RADAR_RADII_KM = [64, 128, 256]
+RADAR_GIF_FRAME_DURATION_MS = 500
 
 # RainViewer tile config
 RAINVIEWER_ZOOM = 7

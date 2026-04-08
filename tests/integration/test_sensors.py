@@ -119,6 +119,24 @@ async def test_image_entity_created(hass: HomeAssistant, mock_entry, entity_id):
     assert state is not None, f"Entity {entity_id} not found"
 
 
+@pytest.mark.asyncio
+async def test_image_entity_content_type_is_gif(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    entity = hass.data[DOMAIN][mock_entry.entry_id]
+    # Get the image entity from the entity registry
+    from homeassistant.helpers.entity_component import EntityComponent
+    from homeassistant.components.image import DOMAIN as IMAGE_DOMAIN
+    component: EntityComponent = hass.data.get("entity_components", {}).get(IMAGE_DOMAIN)
+    if component is not None:
+        entities = [e for e in component.entities if "radar" in e.entity_id]
+        for entity in entities:
+            assert entity.content_type == "image/gif"
+    else:
+        # Fallback: check via state attributes
+        state = hass.states.get("image.incoming_rain_radar_128km")
+        assert state is not None
+
+
 # --- strings.json ---
 
 

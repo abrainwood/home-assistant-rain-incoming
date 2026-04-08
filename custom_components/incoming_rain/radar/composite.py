@@ -148,15 +148,15 @@ async def _fetch_map_tile(
     return tile
 
 
-def _render_sync(
+def _composite_single_frame(
     map_crop: Image.Image,
     radar_resized: Image.Image,
     lat: float,
     map_zoom: int,
     radius_km: int,
     output_size: int,
-) -> bytes:
-    """CPU-bound rendering: composite, draw overlays, export PNG."""
+) -> Image.Image:
+    """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image."""
     composite = Image.alpha_composite(map_crop.convert("RGBA"), radar_resized)
 
     kpp = km_per_pixel(lat, map_zoom)
@@ -166,9 +166,156 @@ def _render_sync(
     draw_range_rings(composite, cx, cy, radius_px)
     draw_crosshair(composite, cx, cy)
 
+    return composite
+
+
+def _render_sync(
+    map_crop: Image.Image,
+    radar_resized: Image.Image,
+    lat: float,
+    map_zoom: int,
+    radius_km: int,
+    output_size: int,
+) -> bytes:
+    """CPU-bound rendering: composite, draw overlays, export PNG."""
+    composite = _composite_single_frame(
+        map_crop, radar_resized, lat, map_zoom, radius_km, output_size,
+    )
     buf = BytesIO()
     composite.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _render_gif_sync(
+    frames: list[Image.Image],
+    frame_duration_ms: int,
+) -> bytes:
+    """CPU-bound: assemble RGBA frames into an animated GIF. Returns GIF bytes."""
+    rgb_frames = [f.convert("RGB") for f in frames]
+    buf = BytesIO()
+    if len(rgb_frames) == 1:
+        rgb_frames[0].save(buf, format="GIF")
+    else:
+        rgb_frames[0].save(
+            buf,
+            format="GIF",
+            save_all=True,
+            append_images=rgb_frames[1:],
+            duration=frame_duration_ms,
+            loop=0,
+            disposal=2,
+        )
+    return buf.getvalue()
+
+
+class _ViewportParams:
+    """Pre-computed viewport geometry shared across frames."""
+
+    __slots__ = (
+        "map_zoom", "centre_px", "centre_py", "half_size",
+        "tile_x_min", "tile_x_max", "tile_y_min", "tile_y_max",
+        "radar_vp_left", "radar_vp_right", "radar_vp_top", "radar_vp_bottom",
+        "radar_tx_min", "radar_tx_max", "radar_ty_min", "radar_ty_max",
+    )
+
+    def __init__(self, lat: float, lon: float, radius_km: int, output_size: int) -> None:
+        self.map_zoom = calculate_map_zoom(lat, radius_km, output_size)
+        self.centre_px, self.centre_py = _lat_lon_to_pixel(lat, lon, self.map_zoom)
+        self.half_size = output_size / 2
+
+        self.tile_x_min = int((self.centre_px - self.half_size) // 256)
+        self.tile_x_max = int((self.centre_px + self.half_size) // 256)
+        self.tile_y_min = int((self.centre_py - self.half_size) // 256)
+        self.tile_y_max = int((self.centre_py + self.half_size) // 256)
+
+        radar_zoom = RAINVIEWER_ZOOM
+        map_n = 2 ** self.map_zoom
+        radar_n = 2 ** radar_zoom
+        scale = radar_n / map_n
+
+        vp_left = self.centre_px - self.half_size
+        vp_right = self.centre_px + self.half_size
+        vp_top = self.centre_py - self.half_size
+        vp_bottom = self.centre_py + self.half_size
+
+        self.radar_vp_left = vp_left * scale
+        self.radar_vp_right = vp_right * scale
+        self.radar_vp_top = vp_top * scale
+        self.radar_vp_bottom = vp_bottom * scale
+
+        self.radar_tx_min = int(self.radar_vp_left // 256)
+        self.radar_tx_max = int(self.radar_vp_right // 256)
+        self.radar_ty_min = int(self.radar_vp_top // 256)
+        self.radar_ty_max = int(self.radar_vp_bottom // 256)
+
+
+async def _fetch_map_crop(
+    session: aiohttp.ClientSession,
+    vp: _ViewportParams,
+    output_size: int,
+) -> Image.Image:
+    """Fetch and stitch map tiles, then crop to viewport."""
+    canvas_w = (vp.tile_x_max - vp.tile_x_min + 1) * 256
+    canvas_h = (vp.tile_y_max - vp.tile_y_min + 1) * 256
+    map_canvas = Image.new("RGBA", (canvas_w, canvas_h))
+
+    for ty in range(vp.tile_y_min, vp.tile_y_max + 1):
+        for tx in range(vp.tile_x_min, vp.tile_x_max + 1):
+            try:
+                tile = await _fetch_map_tile(session, vp.map_zoom, tx, ty)
+                px = (tx - vp.tile_x_min) * 256
+                py = (ty - vp.tile_y_min) * 256
+                map_canvas.paste(tile, (px, py))
+            except Exception:
+                _LOGGER.debug("Failed to fetch map tile z=%d x=%d y=%d", vp.map_zoom, tx, ty)
+
+    crop_x = int(vp.centre_px - vp.half_size - vp.tile_x_min * 256)
+    crop_y = int(vp.centre_py - vp.half_size - vp.tile_y_min * 256)
+    return map_canvas.crop((crop_x, crop_y, crop_x + output_size, crop_y + output_size))
+
+
+async def _fetch_radar_overlay(
+    session: aiohttp.ClientSession,
+    vp: _ViewportParams,
+    frame_path: str,
+    output_size: int,
+) -> Image.Image:
+    """Fetch radar tiles for one frame, filter, crop, and resize to viewport."""
+    radar_zoom = RAINVIEWER_ZOOM
+
+    radar_canvas_w = (vp.radar_tx_max - vp.radar_tx_min + 1) * 256
+    radar_canvas_h = (vp.radar_ty_max - vp.radar_ty_min + 1) * 256
+    radar_canvas = Image.new("RGBA", (radar_canvas_w, radar_canvas_h), (0, 0, 0, 0))
+
+    for ty in range(vp.radar_ty_min, vp.radar_ty_max + 1):
+        for tx in range(vp.radar_tx_min, vp.radar_tx_max + 1):
+            url = (
+                f"{_RAINVIEWER_TILE_BASE}{frame_path}"
+                f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{RAINVIEWER_COLOUR_SCHEME}/0.png"
+            )
+            try:
+                tile = await _fetch_tile(session, url)
+                px = (tx - vp.radar_tx_min) * 256
+                py = (ty - vp.radar_ty_min) * 256
+                radar_canvas.paste(tile, (px, py))
+            except Exception:
+                _LOGGER.debug("Failed to fetch radar tile z=%d x=%d y=%d", radar_zoom, tx, ty)
+
+    radar_arr = np.array(radar_canvas)
+    radar_arr = filter_precipitation_pixels(radar_arr)
+    radar_filtered = Image.fromarray(radar_arr)
+
+    radar_crop_x = int(vp.radar_vp_left - vp.radar_tx_min * 256)
+    radar_crop_y = int(vp.radar_vp_top - vp.radar_ty_min * 256)
+    radar_crop_w = int(vp.radar_vp_right - vp.radar_vp_left)
+    radar_crop_h = int(vp.radar_vp_bottom - vp.radar_vp_top)
+
+    radar_crop = radar_filtered.crop((
+        radar_crop_x, radar_crop_y,
+        radar_crop_x + radar_crop_w, radar_crop_y + radar_crop_h,
+    ))
+
+    return radar_crop.resize((output_size, output_size), Image.BILINEAR)
 
 
 async def render_composite(
@@ -189,104 +336,59 @@ async def render_composite(
     run_in_executor: optional callable (e.g. hass.async_add_executor_job)
         to offload CPU-bound rendering. If None, rendering runs inline.
     """
-    map_zoom = calculate_map_zoom(lat, radius_km, output_size)
+    vp = _ViewportParams(lat, lon, radius_km, output_size)
+    map_crop = await _fetch_map_crop(session, vp, output_size)
+    radar_resized = await _fetch_radar_overlay(session, vp, frame_path, output_size)
 
-    # Calculate the pixel extent at map zoom level
-    centre_px, centre_py = _lat_lon_to_pixel(lat, lon, map_zoom)
-    half_size = output_size / 2
-
-    # Determine which map tiles we need
-    tile_x_min = int((centre_px - half_size) // 256)
-    tile_x_max = int((centre_px + half_size) // 256)
-    tile_y_min = int((centre_py - half_size) // 256)
-    tile_y_max = int((centre_py + half_size) // 256)
-
-    # Fetch and stitch map tiles
-    canvas_w = (tile_x_max - tile_x_min + 1) * 256
-    canvas_h = (tile_y_max - tile_y_min + 1) * 256
-    map_canvas = Image.new("RGBA", (canvas_w, canvas_h))
-
-    for ty in range(tile_y_min, tile_y_max + 1):
-        for tx in range(tile_x_min, tile_x_max + 1):
-            try:
-                tile = await _fetch_map_tile(session, map_zoom, tx, ty)
-                px = (tx - tile_x_min) * 256
-                py = (ty - tile_y_min) * 256
-                map_canvas.paste(tile, (px, py))
-            except Exception:
-                _LOGGER.debug("Failed to fetch map tile z=%d x=%d y=%d", map_zoom, tx, ty)
-
-    # Crop map canvas to our exact viewport
-    crop_x = int(centre_px - half_size - tile_x_min * 256)
-    crop_y = int(centre_py - half_size - tile_y_min * 256)
-    map_crop = map_canvas.crop((crop_x, crop_y, crop_x + output_size, crop_y + output_size))
-
-    # Fetch radar tiles at RainViewer zoom
-    radar_zoom = RAINVIEWER_ZOOM
-    radar_centre_px, radar_centre_py = _lat_lon_to_pixel(lat, lon, radar_zoom)
-
-    map_n = 2**map_zoom
-    radar_n = 2**radar_zoom
-
-    # Viewport bounds in global pixel coords at map zoom
-    vp_left = centre_px - half_size
-    vp_right = centre_px + half_size
-    vp_top = centre_py - half_size
-    vp_bottom = centre_py + half_size
-
-    # Convert viewport bounds to radar zoom pixel coords
-    scale = radar_n / map_n
-    radar_vp_left = vp_left * scale
-    radar_vp_right = vp_right * scale
-    radar_vp_top = vp_top * scale
-    radar_vp_bottom = vp_bottom * scale
-
-    radar_tx_min = int(radar_vp_left // 256)
-    radar_tx_max = int(radar_vp_right // 256)
-    radar_ty_min = int(radar_vp_top // 256)
-    radar_ty_max = int(radar_vp_bottom // 256)
-
-    radar_canvas_w = (radar_tx_max - radar_tx_min + 1) * 256
-    radar_canvas_h = (radar_ty_max - radar_ty_min + 1) * 256
-    radar_canvas = Image.new("RGBA", (radar_canvas_w, radar_canvas_h), (0, 0, 0, 0))
-
-    for ty in range(radar_ty_min, radar_ty_max + 1):
-        for tx in range(radar_tx_min, radar_tx_max + 1):
-            url = (
-                f"{_RAINVIEWER_TILE_BASE}{frame_path}"
-                f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{RAINVIEWER_COLOUR_SCHEME}/0.png"
-            )
-            try:
-                tile = await _fetch_tile(session, url)
-                px = (tx - radar_tx_min) * 256
-                py = (ty - radar_ty_min) * 256
-                radar_canvas.paste(tile, (px, py))
-            except Exception:
-                _LOGGER.debug("Failed to fetch radar tile z=%d x=%d y=%d", radar_zoom, tx, ty)
-
-    # Filter to precipitation-only pixels (CPU-bound numpy work)
-    radar_arr = np.array(radar_canvas)
-    radar_arr = filter_precipitation_pixels(radar_arr)
-    radar_filtered = Image.fromarray(radar_arr)
-
-    # Crop radar to match our viewport
-    radar_crop_x = int(radar_vp_left - radar_tx_min * 256)
-    radar_crop_y = int(radar_vp_top - radar_ty_min * 256)
-    radar_crop_w = int(radar_vp_right - radar_vp_left)
-    radar_crop_h = int(radar_vp_bottom - radar_vp_top)
-
-    radar_crop = radar_filtered.crop((
-        radar_crop_x, radar_crop_y,
-        radar_crop_x + radar_crop_w, radar_crop_y + radar_crop_h,
-    ))
-
-    # Resample radar to match map viewport size
-    radar_resized = radar_crop.resize((output_size, output_size), Image.BILINEAR)
-
-    # CPU-bound compositing and drawing
     if run_in_executor is not None:
         return await run_in_executor(
-            _render_sync, map_crop, radar_resized, lat, map_zoom, radius_km, output_size,
+            _render_sync, map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size,
         )
 
-    return _render_sync(map_crop, radar_resized, lat, map_zoom, radius_km, output_size)
+    return _render_sync(map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size)
+
+
+async def render_animated_composite(
+    lat: float,
+    lon: float,
+    radius_km: int,
+    frame_paths: list[str],
+    output_size: int = 640,
+    frame_duration_ms: int = 500,
+    *,
+    session: aiohttp.ClientSession,
+    run_in_executor: object = None,
+) -> bytes:
+    """Render an animated GIF compositing multiple radar frames over a static map.
+
+    Parameters
+    ----------
+    session: an aiohttp.ClientSession for fetching tiles.
+    run_in_executor: optional callable (e.g. hass.async_add_executor_job)
+        to offload CPU-bound GIF assembly. If None, rendering runs inline.
+    """
+    vp = _ViewportParams(lat, lon, radius_km, output_size)
+
+    # Fetch map tiles once - they're the same for every frame
+    map_crop = await _fetch_map_crop(session, vp, output_size)
+
+    # Render each frame as an RGBA composite
+    frames: list[Image.Image] = []
+    for frame_path in frame_paths:
+        radar_resized = await _fetch_radar_overlay(session, vp, frame_path, output_size)
+        frame_img = _composite_single_frame(
+            map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size,
+        )
+        frames.append(frame_img)
+
+    if not frames:
+        # Shouldn't happen, but return a blank GIF if no frames
+        blank = Image.new("RGB", (output_size, output_size), (0, 0, 0))
+        buf = BytesIO()
+        blank.save(buf, format="GIF")
+        return buf.getvalue()
+
+    if run_in_executor is not None:
+        return await run_in_executor(_render_gif_sync, frames, frame_duration_ms)
+
+    return _render_gif_sync(frames, frame_duration_ms)

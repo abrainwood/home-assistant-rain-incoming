@@ -15,6 +15,7 @@ from custom_components.incoming_rain.radar.composite import (
     draw_range_rings,
     filter_precipitation_pixels,
     km_per_pixel,
+    render_animated_composite,
     render_composite,
 )
 
@@ -245,3 +246,99 @@ class TestRenderComposite:
         )
 
         assert call_count == first_call_count  # no new map tile fetches
+
+
+class TestRenderAnimatedComposite:
+    @pytest.fixture(autouse=True)
+    def clear_tile_cache(self):
+        _map_tile_cache.clear()
+        yield
+        _map_tile_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_returns_valid_gif_bytes(self):
+        output_size = 256
+        session = _mock_session(
+            map_tile_bytes=_make_tile_png((30, 30, 30, 255)),
+            radar_tile_bytes=_make_tile_png((0, 0, 0, 0)),
+        )
+        frame_paths = ["/v2/radar/frame1", "/v2/radar/frame2", "/v2/radar/frame3"]
+
+        result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=frame_paths,
+            output_size=output_size,
+            frame_duration_ms=500,
+            session=session,
+        )
+
+        assert isinstance(result, bytes)
+        img = Image.open(BytesIO(result))
+        assert img.format == "GIF"
+        assert img.size == (output_size, output_size)
+
+    @pytest.mark.asyncio
+    async def test_gif_has_expected_frame_count(self):
+        """Pillow deduplicates identical GIF frames, so use distinct precipitation colours."""
+        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+
+        output_size = 256
+        map_bytes = _make_tile_png((30, 30, 30, 255))
+        # Build distinct radar tiles keyed by frame path
+        precip_tile_by_frame = {}
+        for i in range(5):
+            r, g, b, _ = PRECIP_COLOURS[i % len(PRECIP_COLOURS)]
+            precip_tile_by_frame[f"frame{i}"] = _make_tile_png((int(r), int(g), int(b), 255))
+
+        def varying_get(url: str):
+            resp = AsyncMock()
+            resp.raise_for_status = MagicMock()
+            if "tilecache" in url or "rainviewer" in url.lower():
+                # Match the frame path from the URL to return the right tile
+                tile_data = _make_tile_png((0, 0, 0, 0))  # fallback
+                for key, data in precip_tile_by_frame.items():
+                    if key in url:
+                        tile_data = data
+                        break
+                resp.read = AsyncMock(return_value=tile_data)
+            else:
+                resp.read = AsyncMock(return_value=map_bytes)
+            return _make_context_manager(resp)
+
+        session = MagicMock()
+        session.get = varying_get
+
+        frame_paths = [f"/v2/radar/frame{i}" for i in range(5)]
+
+        result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=frame_paths,
+            output_size=output_size,
+            frame_duration_ms=500,
+            session=session,
+        )
+
+        img = Image.open(BytesIO(result))
+        assert img.n_frames == 5
+
+    @pytest.mark.asyncio
+    async def test_single_frame_produces_valid_gif(self):
+        output_size = 256
+        session = _mock_session(
+            map_tile_bytes=_make_tile_png((30, 30, 30, 255)),
+            radar_tile_bytes=_make_tile_png((0, 0, 0, 0)),
+        )
+        frame_paths = ["/v2/radar/single_frame"]
+
+        result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=frame_paths,
+            output_size=output_size,
+            frame_duration_ms=500,
+            session=session,
+        )
+
+        assert isinstance(result, bytes)
+        img = Image.open(BytesIO(result))
+        assert img.format == "GIF"
+        assert img.size == (output_size, output_size)

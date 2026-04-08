@@ -11,9 +11,9 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_LOCATION_NAME, DOMAIN, RADAR_RADII_KM
+from .const import CONF_LOCATION_NAME, DOMAIN, RADAR_GIF_FRAME_DURATION_MS, RADAR_RADII_KM
 from .coordinator import RainDetectorCoordinator
-from .radar.composite import render_composite
+from .radar.composite import render_animated_composite
 
 
 async def async_setup_entry(
@@ -32,7 +32,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
     """Image entity showing a radar composite map."""
 
     _attr_has_entity_name = True
-    _attr_content_type = "image/png"
+    _attr_content_type = "image/gif"
 
     def __init__(self, coordinator: RainDetectorCoordinator, entry: ConfigEntry, radius_km: int) -> None:
         super().__init__(coordinator)
@@ -64,20 +64,25 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         if frame_path is None:
             return None
 
-        # Only re-render if the frame path changed
+        # Only re-render if the latest frame path changed
         if frame_path == self._cached_frame_path and self._cached_image is not None:
             return self._cached_image
+
+        frame_paths = self.coordinator.frame_paths
+        if not frame_paths:
+            return None
 
         data = self._entry.data
         lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
         lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
 
         session = async_get_clientsession(self.hass)
-        self._cached_image = await render_composite(
+        self._cached_image = await render_animated_composite(
             lat=lat,
             lon=lon,
             radius_km=self._radius_km,
-            frame_path=frame_path,
+            frame_paths=frame_paths,
+            frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
             session=session,
             run_in_executor=self.hass.async_add_executor_job,
         )

@@ -67,6 +67,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self._provider = RainViewerProvider()
         self._consecutive_failures = 0
         self.latest_frame_path: str | None = None
+        self.frame_paths: list[str] = []
         self.last_update_success_time: datetime | None = None
         self.last_rain_nearby_time: datetime | None = None
 
@@ -118,11 +119,10 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         result = detect(frames=frames, location=(lat, lon), config=config)
 
-        # Store the latest frame path for the radar image entity
-        if frames:
-            latest = frames[-1]
-            if hasattr(latest, "path"):
-                self.latest_frame_path = latest.path
+        # Store frame paths for the radar image entity
+        self.frame_paths = [f.path for f in frames if hasattr(f, "path")]
+        if self.frame_paths:
+            self.latest_frame_path = self.frame_paths[-1]
 
         # Update last_rain_nearby_time when rain is currently at the location
         if (
