@@ -3,24 +3,26 @@ from __future__ import annotations
 import logging
 import math
 import os
+from datetime import datetime
 from io import BytesIO
 
 import aiohttp
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
-from ..const import RAINVIEWER_COLOUR_SCHEME, RAINVIEWER_ZOOM
+from ..const import RAINVIEWER_ZOOM
 from ..providers.rainviewer import (
     TILE_BASE_URL,
     TILE_SIZE,
-    PRECIP_COLOURS,
-    MAX_COLOUR_DISTANCE,
 )
 from .geo import lat_lon_to_tile
 
 _LOGGER = logging.getLogger(__name__)
 
-_MAP_TILE_BASE = os.environ.get("MAP_TILE_URL", "https://basemaps.cartocdn.com/dark_all")
+_MAP_TILE_BASE = os.environ.get(
+    "MAP_TILE_URL", "https://basemaps.cartocdn.com/rastertiles/voyager"
+)
+_RENDER_COLOUR_SCHEME = 2
 _RAINVIEWER_TILE_BASE = TILE_BASE_URL
 
 _CROSSHAIR_RADIUS = 8
@@ -61,24 +63,13 @@ def _lat_lon_to_pixel(lat: float, lon: float, zoom: int) -> tuple[float, float]:
 
 
 def filter_precipitation_pixels(rgba_array: np.ndarray) -> np.ndarray:
-    """Keep only pixels matching known precipitation colours, zero out the rest."""
+    """Keep pixels with alpha > 10 (precipitation), zero out the rest.
+
+    Colour scheme 2 (Universal Blue) uses transparent non-precipitation areas
+    natively, so a simple alpha threshold is sufficient.
+    """
     result = rgba_array.copy()
-    alpha_mask = rgba_array[:, :, 3] >= 10
-
-    if not alpha_mask.any():
-        return result
-
-    colours = np.array(
-        [[r, g, b] for r, g, b, _ in PRECIP_COLOURS], dtype=np.float32
-    )
-    rgb = rgba_array[:, :, :3].astype(np.float32)
-    diff = rgb[:, :, np.newaxis, :] - colours[np.newaxis, np.newaxis, :, :]
-    distances = np.sqrt((diff**2).sum(axis=-1))
-    best_dist = distances.min(axis=-1)
-
-    non_precip = ~alpha_mask | (best_dist > MAX_COLOUR_DISTANCE)
-    result[non_precip, 3] = 0
-
+    result[rgba_array[:, :, 3] <= 10, 3] = 0
     return result
 
 
@@ -113,17 +104,34 @@ def draw_crosshair(img: Image.Image, cx: int, cy: int) -> None:
         draw.line([(x0, y0), (x1, y1)], fill=fill_color, width=1)
 
 
-def draw_range_rings(img: Image.Image, cx: int, cy: int, full_radius_px: int) -> None:
-    """Draw subtle range rings at half-radius and full-radius."""
+def draw_range_rings(
+    img: Image.Image, cx: int, cy: int, full_radius_px: int, radius_km: int,
+) -> None:
+    """Draw subtle range rings at half-radius and full-radius with distance labels."""
     draw = ImageDraw.Draw(img)
     ring_color = (255, 255, 255, 60)
+    try:
+        font = ImageFont.load_default(size=14)
+    except TypeError:
+        font = ImageFont.load_default()
 
-    for factor in (0.5, 1.0):
+    for factor, km in ((0.5, radius_km // 2), (1.0, radius_km)):
         r = int(full_radius_px * factor)
         draw.ellipse(
             [cx - r, cy - r, cx + r, cy + r],
             outline=ring_color, width=1,
         )
+        label = f"{km}km"
+        bbox = font.getbbox(label)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        lx = cx + 4
+        ly = cy - r - th - 2
+        # White outline for readability
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx or dy:
+                    draw.text((lx + dx, ly + dy), label, fill=(255, 255, 255, 160), font=font)
+        draw.text((lx, ly), label, fill=(0, 0, 0, 200), font=font)
 
 
 async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
@@ -148,6 +156,29 @@ async def _fetch_map_tile(
     return tile
 
 
+def _draw_timestamp(img: Image.Image, timestamp: datetime) -> None:
+    """Draw a UTC timestamp in the bottom-left corner."""
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.load_default(size=16)
+    except TypeError:
+        font = ImageFont.load_default()
+
+    label = timestamp.strftime("%H:%M UTC")
+    bbox = font.getbbox(label)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    padding = 8
+    lx = padding
+    ly = img.height - th - padding
+
+    # White outline for readability on any background
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx or dy:
+                draw.text((lx + dx, ly + dy), label, fill=(255, 255, 255, 220), font=font)
+    draw.text((lx, ly), label, fill=(0, 0, 0, 230), font=font)
+
+
 def _composite_single_frame(
     map_crop: Image.Image,
     radar_resized: Image.Image,
@@ -155,6 +186,7 @@ def _composite_single_frame(
     map_zoom: int,
     radius_km: int,
     output_size: int,
+    timestamp: datetime | None = None,
 ) -> Image.Image:
     """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image."""
     composite = Image.alpha_composite(map_crop.convert("RGBA"), radar_resized)
@@ -163,8 +195,11 @@ def _composite_single_frame(
     radius_px = int(radius_km / kpp) if kpp > 0 else output_size // 2
 
     cx, cy = output_size // 2, output_size // 2
-    draw_range_rings(composite, cx, cy, radius_px)
+    draw_range_rings(composite, cx, cy, radius_px, radius_km)
     draw_crosshair(composite, cx, cy)
+
+    if timestamp is not None:
+        _draw_timestamp(composite, timestamp)
 
     return composite
 
@@ -196,12 +231,14 @@ def _render_gif_sync(
     if len(rgb_frames) == 1:
         rgb_frames[0].save(buf, format="GIF")
     else:
+        durations = [frame_duration_ms] * len(rgb_frames)
+        durations[-1] = frame_duration_ms * 4  # hold on last frame
         rgb_frames[0].save(
             buf,
             format="GIF",
             save_all=True,
             append_images=rgb_frames[1:],
-            duration=frame_duration_ms,
+            duration=durations,
             loop=0,
             disposal=2,
         )
@@ -304,7 +341,7 @@ async def _fetch_radar_overlay(
     async def _fetch_one(tx: int, ty: int):
         url = (
             f"{_RAINVIEWER_TILE_BASE}{frame_path}"
-            f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{RAINVIEWER_COLOUR_SCHEME}/0.png"
+            f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{_RENDER_COLOUR_SCHEME}/0.png"
         )
         try:
             return tx, ty, await _fetch_tile(session, url)
@@ -377,6 +414,7 @@ async def render_animated_composite(
     output_size: int = 640,
     frame_duration_ms: int = 500,
     *,
+    frame_timestamps: list[datetime] | None = None,
     session: aiohttp.ClientSession,
     run_in_executor: object = None,
 ) -> bytes:
@@ -384,6 +422,8 @@ async def render_animated_composite(
 
     Parameters
     ----------
+    frame_timestamps: optional list of datetimes matching frame_paths, used for
+        overlaying a timestamp on each frame.
     session: an aiohttp.ClientSession for fetching tiles.
     run_in_executor: optional callable (e.g. hass.async_add_executor_job)
         to offload CPU-bound GIF assembly. If None, rendering runs inline.
@@ -399,11 +439,15 @@ async def render_animated_composite(
         _fetch_radar_overlay(session, vp, fp, output_size) for fp in frame_paths
     ])
 
+    timestamps = frame_timestamps or [None] * len(frame_paths)
+
     # Composite each frame (CPU-bound but fast - no I/O)
     frames: list[Image.Image] = []
-    for radar_resized in radar_overlays:
+    for i, radar_resized in enumerate(radar_overlays):
+        ts = timestamps[i] if i < len(timestamps) else None
         frame_img = _composite_single_frame(
             map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size,
+            timestamp=ts,
         )
         frames.append(frame_img)
 

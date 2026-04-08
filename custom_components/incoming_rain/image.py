@@ -83,6 +83,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
             radius_km=self._radius_km,
             frame_paths=frame_paths,
             frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
+            frame_timestamps=self.coordinator.frame_timestamps,
             session=session,
             run_in_executor=self.hass.async_add_executor_job,
         )

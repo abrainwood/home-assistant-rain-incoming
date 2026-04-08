@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock
 
@@ -57,27 +58,22 @@ class TestCalculateMapZoom:
 
 class TestFilterPrecipitationPixels:
     def test_transparent_pixels_stay_transparent(self):
-        # A fully transparent image should remain transparent
         img = np.zeros((10, 10, 4), dtype=np.uint8)
         result = filter_precipitation_pixels(img)
         assert result.shape == (10, 10, 4)
         assert (result[:, :, 3] == 0).all()
 
-    def test_precipitation_colour_preserved(self):
-        # Create an image with a known precipitation colour
+    def test_opaque_pixel_preserved(self):
         img = np.zeros((10, 10, 4), dtype=np.uint8)
-        # Use the first precip colour: (0, 91, 142) with full alpha
-        img[5, 5] = [0, 91, 142, 255]
+        img[5, 5] = [100, 150, 200, 255]
         result = filter_precipitation_pixels(img)
-        assert result[5, 5, 3] == 255  # alpha preserved
+        assert result[5, 5, 3] == 255
 
-    def test_non_precip_colour_removed(self):
-        # Create a pixel with a non-precipitation colour (land mask)
+    def test_low_alpha_pixel_removed(self):
         img = np.zeros((10, 10, 4), dtype=np.uint8)
-        # Pure white with full alpha - not a precip colour
-        img[5, 5] = [255, 255, 255, 255]
+        img[5, 5] = [255, 255, 255, 5]  # alpha <= 10 threshold
         result = filter_precipitation_pixels(img)
-        assert result[5, 5, 3] == 0  # should be made transparent
+        assert result[5, 5, 3] == 0
 
 
 class TestDrawCrosshair:
@@ -106,7 +102,7 @@ class TestDrawRangeRings:
         img = Image.new("RGBA", (size, size), (0, 0, 0, 255))
         centre_x, centre_y = size // 2, size // 2
         radius_pixels = 50
-        draw_range_rings(img, centre_x, centre_y, radius_pixels)
+        draw_range_rings(img, centre_x, centre_y, radius_pixels, radius_km=128)
         pixels = np.array(img)
         # Check a point on the full-radius ring (top of circle)
         ring_pixel = pixels[centre_y - radius_pixels, centre_x]
@@ -248,6 +244,13 @@ class TestRenderComposite:
         assert call_count == first_call_count  # no new map tile fetches
 
 
+def _make_frame_timestamps(count: int) -> list[datetime]:
+    """Generate UTC timestamps for test frames, 10 minutes apart."""
+    base = datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc)
+    from datetime import timedelta
+    return [base + timedelta(minutes=10 * i) for i in range(count)]
+
+
 class TestRenderAnimatedComposite:
     @pytest.fixture(autouse=True)
     def clear_tile_cache(self):
@@ -263,12 +266,14 @@ class TestRenderAnimatedComposite:
             radar_tile_bytes=_make_tile_png((0, 0, 0, 0)),
         )
         frame_paths = ["/v2/radar/frame1", "/v2/radar/frame2", "/v2/radar/frame3"]
+        timestamps = _make_frame_timestamps(3)
 
         result = await render_animated_composite(
             lat=-33.7, lon=151.2, radius_km=128,
             frame_paths=frame_paths,
             output_size=output_size,
             frame_duration_ms=500,
+            frame_timestamps=timestamps,
             session=session,
         )
 
@@ -284,7 +289,6 @@ class TestRenderAnimatedComposite:
 
         output_size = 256
         map_bytes = _make_tile_png((30, 30, 30, 255))
-        # Build distinct radar tiles keyed by frame path
         precip_tile_by_frame = {}
         for i in range(5):
             r, g, b, _ = PRECIP_COLOURS[i % len(PRECIP_COLOURS)]
@@ -294,8 +298,7 @@ class TestRenderAnimatedComposite:
             resp = AsyncMock()
             resp.raise_for_status = MagicMock()
             if "tilecache" in url or "rainviewer" in url.lower():
-                # Match the frame path from the URL to return the right tile
-                tile_data = _make_tile_png((0, 0, 0, 0))  # fallback
+                tile_data = _make_tile_png((0, 0, 0, 0))
                 for key, data in precip_tile_by_frame.items():
                     if key in url:
                         tile_data = data
@@ -309,12 +312,14 @@ class TestRenderAnimatedComposite:
         session.get = varying_get
 
         frame_paths = [f"/v2/radar/frame{i}" for i in range(5)]
+        timestamps = _make_frame_timestamps(5)
 
         result = await render_animated_composite(
             lat=-33.7, lon=151.2, radius_km=128,
             frame_paths=frame_paths,
             output_size=output_size,
             frame_duration_ms=500,
+            frame_timestamps=timestamps,
             session=session,
         )
 
@@ -329,12 +334,14 @@ class TestRenderAnimatedComposite:
             radar_tile_bytes=_make_tile_png((0, 0, 0, 0)),
         )
         frame_paths = ["/v2/radar/single_frame"]
+        timestamps = _make_frame_timestamps(1)
 
         result = await render_animated_composite(
             lat=-33.7, lon=151.2, radius_km=128,
             frame_paths=frame_paths,
             output_size=output_size,
             frame_duration_ms=500,
+            frame_timestamps=timestamps,
             session=session,
         )
 
@@ -342,3 +349,58 @@ class TestRenderAnimatedComposite:
         img = Image.open(BytesIO(result))
         assert img.format == "GIF"
         assert img.size == (output_size, output_size)
+
+    @pytest.mark.asyncio
+    async def test_last_frame_has_longer_duration(self):
+        """The last GIF frame should hold 4x longer than other frames."""
+        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+
+        output_size = 256
+        map_bytes = _make_tile_png((30, 30, 30, 255))
+        precip_tile_by_frame = {}
+        for i in range(3):
+            r, g, b, _ = PRECIP_COLOURS[i % len(PRECIP_COLOURS)]
+            precip_tile_by_frame[f"frame{i}"] = _make_tile_png((int(r), int(g), int(b), 255))
+
+        def varying_get(url: str):
+            resp = AsyncMock()
+            resp.raise_for_status = MagicMock()
+            if "tilecache" in url or "rainviewer" in url.lower():
+                tile_data = _make_tile_png((0, 0, 0, 0))
+                for key, data in precip_tile_by_frame.items():
+                    if key in url:
+                        tile_data = data
+                        break
+                resp.read = AsyncMock(return_value=tile_data)
+            else:
+                resp.read = AsyncMock(return_value=map_bytes)
+            return _make_context_manager(resp)
+
+        session = MagicMock()
+        session.get = varying_get
+
+        frame_paths = [f"/v2/radar/frame{i}" for i in range(3)]
+        timestamps = _make_frame_timestamps(3)
+        frame_duration_ms = 500
+
+        result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=frame_paths,
+            output_size=output_size,
+            frame_duration_ms=frame_duration_ms,
+            frame_timestamps=timestamps,
+            session=session,
+        )
+
+        img = Image.open(BytesIO(result))
+        # GIF durations are in milliseconds; Pillow reports them per frame
+        durations = []
+        for frame_idx in range(img.n_frames):
+            img.seek(frame_idx)
+            durations.append(img.info.get("duration", 0))
+
+        # All frames except last should be the base duration
+        for d in durations[:-1]:
+            assert d == frame_duration_ms
+        # Last frame should be 4x
+        assert durations[-1] == frame_duration_ms * 4
