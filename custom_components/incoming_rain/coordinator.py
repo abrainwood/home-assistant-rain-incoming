@@ -27,6 +27,7 @@ from .const import (
     RAINVIEWER_TILE_SIZE,
 )
 from .providers.base import BoundingBox
+from .providers.open_meteo import fetch_precipitation_now
 from .providers.rainviewer import RainViewerProvider
 from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
 from .radar.qc import (
@@ -88,6 +89,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.confidence_maps: list = []
         self.last_update_success_time: datetime | None = None
         self.last_rain_nearby_time: datetime | None = None
+        self.model_precipitation_mm: float | None = None
 
         # Clutter map
         import os
@@ -143,13 +145,18 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         # Fetch tile grids BEFORE running detection - get_intensity_grid returns
         # zeros until the tiles have been fetched and stitched.
+        # Also fetch Open-Meteo precipitation concurrently (non-blocking, fail open).
         import aiohttp
         async with aiohttp.ClientSession() as session:
+            open_meteo_task = asyncio.create_task(
+                fetch_precipitation_now(lat, lon, session)
+            )
             for frame in frames:
                 try:
                     await frame._fetch_stitched_grid(bounds, W, H, session)
                 except Exception:
                     _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
+            self.model_precipitation_mm = await open_meteo_task
 
         # Compute per-frame QC confidence maps BEFORE detection so they can
         # be used to gate intensity thresholding in the detector.
@@ -191,6 +198,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                 grids=grids_up_to_i,
                 clutter_freq=clutter_freq,
                 clutter_maturity=clutter_maturity,
+                model_precipitation_mm=self.model_precipitation_mm,
             )
             self.confidence_maps.append(cmap.confidence)
 

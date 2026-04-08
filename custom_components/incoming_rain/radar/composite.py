@@ -285,8 +285,11 @@ def _composite_single_frame(
                 (radar_arr.shape[1], radar_arr.shape[0]), PILImage.BILINEAR
             )
             confidence_map = np.array(conf_img).astype(np.float32) / 255.0
+        # Apply aggressive power curve: conf^3 makes low-confidence pixels
+        # nearly invisible while preserving high-confidence rain
+        adjusted_confidence = confidence_map ** 3
         radar_arr[:, :, 3] = (
-            radar_arr[:, :, 3].astype(np.float32) * confidence_map
+            radar_arr[:, :, 3].astype(np.float32) * adjusted_confidence
         ).astype(np.uint8)
         radar_resized = Image.fromarray(radar_arr)
 

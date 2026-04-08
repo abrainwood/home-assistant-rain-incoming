@@ -8,6 +8,32 @@ from custom_components.incoming_rain.radar.qc.scoring import compute_confidence_
 from custom_components.incoming_rain.radar.qc.types import ConfidenceMap, QCConfig
 
 
+class TestModelPrecipitationModifier:
+    def test_model_zero_precip_penalizes_confidence(self):
+        """0.0mm from the weather model -> confidence * 0.3."""
+        grid = np.full((32, 32), 0.5, dtype=np.float32)
+        result_normal = compute_confidence_map(grid)
+        result_penalized = compute_confidence_map(grid, model_precipitation_mm=0.0)
+        # Every non-zero pixel should be ~0.3x the normal confidence
+        mask = result_normal.confidence > 0
+        ratio = result_penalized.confidence[mask] / result_normal.confidence[mask]
+        np.testing.assert_allclose(ratio, 0.3, atol=0.01)
+
+    def test_model_positive_precip_no_penalty(self):
+        """1.5mm from the weather model -> confidence unchanged."""
+        grid = np.full((32, 32), 0.5, dtype=np.float32)
+        result_normal = compute_confidence_map(grid)
+        result_rain = compute_confidence_map(grid, model_precipitation_mm=1.5)
+        np.testing.assert_array_equal(result_rain.confidence, result_normal.confidence)
+
+    def test_model_none_no_penalty(self):
+        """None (API failure) -> confidence unchanged (fail open)."""
+        grid = np.full((32, 32), 0.5, dtype=np.float32)
+        result_normal = compute_confidence_map(grid)
+        result_none = compute_confidence_map(grid, model_precipitation_mm=None)
+        np.testing.assert_array_equal(result_none.confidence, result_normal.confidence)
+
+
 class TestComputeConfidenceMap:
     def test_returns_confidence_map(self):
         """Should return a ConfidenceMap with correct shape."""

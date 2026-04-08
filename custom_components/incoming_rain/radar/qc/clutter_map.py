@@ -20,7 +20,7 @@ def update_clutter_map(
     clutter: ClutterMap,
     grid: np.ndarray,
     threshold: float = 0.01,
-    decay: float = 0.995,
+    decay: float = 0.99966,
 ) -> None:
     """Update the clutter map in place with exponential decay.
 

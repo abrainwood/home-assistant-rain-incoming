@@ -364,3 +364,85 @@ class TestConfidenceMaps:
         # effective = 0.3 * 0.35 = 0.105 > threshold 0.1 -> cells detected
         # but cell confidence 0.35 < 0.4 -> rain_incoming should be False
         assert result.rain_incoming is False
+
+
+class TestQCDoesNotSuppressRealRain:
+    def test_smooth_persistent_rain_detected_with_qc(self):
+        """A smooth rain cell over the location in all frames should NOT be suppressed by QC."""
+        cfg = default_config()
+        # Create smooth rain blob centered on location (row 32, col 32)
+        frames = []
+        for i in range(3):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[28:36, 28:36] = 0.5  # smooth uniform block over location
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+
+        # Compute confidence maps
+        grids = [np.zeros((64, 64), dtype=np.float32) for _ in range(3)]
+        for g in grids:
+            g[28:36, 28:36] = 0.5
+        from custom_components.incoming_rain.radar.qc import compute_confidence_map
+        confidence_maps = [compute_confidence_map(g, grids=grids).confidence for g in grids]
+
+        result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
+        # The smooth blob should survive QC and be detected as rain at location
+        assert result.rain_incoming is True
+        assert len(result.tracked_cells) > 0
+
+    def test_approaching_rain_not_suppressed_by_model_zero(self):
+        """Even if Open-Meteo says 0mm, a strong approaching cell should still be tracked.
+
+        The model penalty (0.3x) means cell confidence will be < 0.4, so
+        rain_incoming won't fire - but the cell should still be segmented and
+        tracked with a valid velocity, preserving it for rendering.
+        """
+        # Cell must be large enough (>5x5) to survive texture scoring with a 5x5 kernel.
+        cfg = default_config()
+        cell_size = 8
+        frames = []
+        for i, col in enumerate([5, 16, 27]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[28:28 + cell_size, col:col + cell_size] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+
+        grids = [np.zeros((64, 64), dtype=np.float32) for _ in range(3)]
+        for i, col in enumerate([5, 16, 27]):
+            grids[i][28:28 + cell_size, col:col + cell_size] = 0.8
+
+        from custom_components.incoming_rain.radar.qc import compute_confidence_map
+        confidence_maps = [
+            compute_confidence_map(g, grids=grids, model_precipitation_mm=0.0).confidence
+            for g in grids
+        ]
+
+        result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
+        # Cell pixels survive effective intensity gating (0.8 * 0.21 = 0.17 > 0.1)
+        # so the cell is tracked, but its confidence (0.21) is below _MIN_CELL_CONFIDENCE (0.4)
+        # meaning rain_incoming won't fire - the model penalty is working as intended
+        assert len(result.tracked_cells) > 0
+        assert result.tracked_cells[0].velocity_kmh > 0
+
+    def test_model_confirms_rain_full_detection(self):
+        """When Open-Meteo confirms rain (>0mm), approaching cell gets full detection."""
+        cfg = default_config()
+        # Large cell (16x16) so interior pixels have high texture confidence
+        cell_size = 16
+        frames = []
+        for i, col in enumerate([3, 14, 25]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[24:24 + cell_size, col:col + cell_size] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+
+        grids = [np.zeros((64, 64), dtype=np.float32) for _ in range(3)]
+        for i, col in enumerate([3, 14, 25]):
+            grids[i][24:24 + cell_size, col:col + cell_size] = 0.8
+
+        from custom_components.incoming_rain.radar.qc import compute_confidence_map
+        confidence_maps = [
+            compute_confidence_map(g, grids=grids, model_precipitation_mm=2.0).confidence
+            for g in grids
+        ]
+
+        result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
+        # Model confirms rain - no penalty, full confidence, rain_incoming fires
+        assert result.rain_incoming is True

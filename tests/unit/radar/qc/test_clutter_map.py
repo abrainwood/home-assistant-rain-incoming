@@ -33,7 +33,11 @@ class TestUpdateClutterMap:
         assert freq[8, 8] > 0.9
 
     def test_frequency_decays_toward_zero_after_empty_updates(self):
-        """After many empty updates, frequency should decay toward 0.0."""
+        """After many empty updates, frequency should decay toward 0.0.
+
+        With a 14-day half-life (decay=0.99966, ~2016 updates per half-life),
+        we need many more empty updates to see significant decay.
+        """
         cm = ClutterMap(
             echo_count=np.zeros((16, 16), dtype=np.float32),
             update_count=0.0,
@@ -46,9 +50,9 @@ class TestUpdateClutterMap:
         freq_before = get_clutter_frequency(cm)[8, 8]
         assert freq_before > 0.5
 
-        # Now empty updates
+        # Now empty updates - need ~7000 (~5 half-lives) to decay below 0.1
         empty = np.zeros((16, 16), dtype=np.float32)
-        for _ in range(500):
+        for _ in range(7000):
             update_clutter_map(cm, empty)
         freq_after = get_clutter_frequency(cm)[8, 8]
         assert freq_after < 0.1

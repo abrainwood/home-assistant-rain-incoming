@@ -20,6 +20,7 @@ def compute_confidence_map(
     grids: list[np.ndarray] | None = None,
     clutter_freq: np.ndarray | None = None,
     clutter_maturity: float = 0.0,
+    model_precipitation_mm: float | None = None,
 ) -> ConfidenceMap:
     """Compute a per-pixel confidence map by combining QC factor scores.
 
@@ -84,6 +85,11 @@ def compute_confidence_map(
 
     if total_weight > 0:
         confidence /= total_weight
+
+    # Apply model-based penalty: if a weather model says 0mm precipitation,
+    # we're skeptical of everything radar shows
+    if model_precipitation_mm is not None and model_precipitation_mm == 0.0:
+        confidence *= 0.3
 
     return ConfidenceMap(confidence=confidence, factor_scores=factor_scores)
 
