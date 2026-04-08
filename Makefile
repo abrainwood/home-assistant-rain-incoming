@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-e2e dev dev-mock dev-stop dev-logs dev-restart
+.PHONY: test test-unit test-integration test-contract test-e2e dev dev-mock dev-stop dev-logs dev-restart
 
 # --- Tests ---
 
@@ -10,6 +10,9 @@ test-unit:
 
 test-integration:
 	.venv/bin/pytest tests/integration/ -q
+
+test-contract:
+	.venv/bin/pytest tests/contract/ -v --override-ini="asyncio_mode=auto" -p no:socket
 
 test-e2e:
 	.venv/bin/pytest tests/e2e/ -v --tb=short -x

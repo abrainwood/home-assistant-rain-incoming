@@ -7,6 +7,7 @@ look like - transparent (no rain) or coloured (rain).
 Scenarios:
   no_rain          - all tiles transparent
   rain_everywhere  - all tiles filled with light-moderate precipitation
+  rain_approaching - rain cell moving east toward the location (tile 117,76)
 """
 from __future__ import annotations
 
@@ -22,7 +23,11 @@ from PIL import Image
 # RainViewer scheme 6 light-moderate rain colour (intensity ~0.28)
 _RAIN_COLOUR = (0, 154, 213, 255)
 
+# Location tile at zoom 7 (Terry Hills)
+_LOCATION_TILE_X = 117
+
 _current_scenario = "no_rain"
+_manifest_timestamps: list[int] = []
 
 
 def _make_tile(rgba: tuple[int, int, int, int] | None) -> bytes:
@@ -40,13 +45,46 @@ _NO_RAIN_TILE = _make_tile(None)
 _RAIN_TILE = _make_tile(_RAIN_COLOUR)
 
 
+def _parse_tile_url(tail: str) -> tuple[int, int]:
+    """Extract (timestamp, tile_x) from a tile request path.
+
+    Path format: v2/radar/{ts}/{tile_size}/{z}/{x}/{y}/{color}/{smooth}.png
+    """
+    parts = tail.rstrip(".png").split("/")
+    # parts: ['v2', 'radar', ts, tile_size, z, x, y, color, smooth]
+    ts = int(parts[2])
+    x = int(parts[5])
+    return ts, x
+
+
+def _approaching_tile(ts: int, tile_x: int) -> bytes:
+    """Determine whether a tile has rain in the 'approaching' scenario.
+
+    Simulates a rain cell moving east toward the location:
+    - Frame 0 (oldest): rain in tiles x <= location - 2
+    - Frame 1:          rain in tiles x <= location - 1
+    - Frame 2 (newest): rain in tiles x <= location - 1
+
+    The cell front advances one tile between frames 0 and 1, putting it
+    one tile west of the location. The detector projects this motion
+    forward and predicts arrival.
+    """
+    if ts not in _manifest_timestamps:
+        return _NO_RAIN_TILE
+
+    frame_idx = _manifest_timestamps.index(ts)
+    rain_max_x = _LOCATION_TILE_X - 2 + min(frame_idx, 1)  # -2, -1, -1
+
+    return _RAIN_TILE if tile_x <= rain_max_x else _NO_RAIN_TILE
+
+
 async def handle_manifest(request: web.Request) -> web.Response:
+    global _manifest_timestamps
     now = int(time.time())
-    # Serve 3 frames at 10-minute intervals (matching real RainViewer cadence)
+    _manifest_timestamps = [now - 1200, now - 600, now]
     frames = [
-        {"time": now - 1200, "path": f"/v2/radar/{now - 1200}"},
-        {"time": now - 600, "path": f"/v2/radar/{now - 600}"},
-        {"time": now, "path": f"/v2/radar/{now}"},
+        {"time": ts, "path": f"/v2/radar/{ts}"}
+        for ts in _manifest_timestamps
     ]
     manifest = {
         "version": "2.0",
@@ -58,8 +96,15 @@ async def handle_manifest(request: web.Request) -> web.Response:
 
 
 async def handle_tile(request: web.Request) -> web.Response:
-    tile = _RAIN_TILE if _current_scenario == "rain_everywhere" else _NO_RAIN_TILE
-    return web.Response(body=tile, content_type="image/png")
+    if _current_scenario == "rain_everywhere":
+        return web.Response(body=_RAIN_TILE, content_type="image/png")
+
+    if _current_scenario == "rain_approaching":
+        ts, tile_x = _parse_tile_url(request.match_info["tail"])
+        tile = _approaching_tile(ts, tile_x)
+        return web.Response(body=tile, content_type="image/png")
+
+    return web.Response(body=_NO_RAIN_TILE, content_type="image/png")
 
 
 async def handle_set_scenario(request: web.Request) -> web.Response:
@@ -78,7 +123,6 @@ def create_app() -> web.Application:
     app.router.add_get("/public/weather-maps.json", handle_manifest)
     app.router.add_post("/__scenario", handle_set_scenario)
     app.router.add_get("/__scenario", handle_get_scenario)
-    # Catch-all for tile requests
     app.router.add_get("/{tail:.+\\.png}", handle_tile)
     return app
 

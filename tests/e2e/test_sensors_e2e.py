@@ -43,6 +43,25 @@ class TestNoRainScenario:
         assert state["state"] in ("unknown", "unavailable", "None")
 
 
+class TestRainApproachingScenario:
+    def test_rain_approaching_detected(self, ha_client):
+        """Rain cell moving east toward the location should trigger rain_incoming."""
+        ha_client.set_mock_scenario("rain_approaching")
+        ha_client.update_entity(BINARY_SENSOR)
+        time.sleep(15)
+
+        state = ha_client.get_state(BINARY_SENSOR)
+        assert state is not None
+        assert state["state"] == "on", f"Expected on, got {state['state']}"
+
+    def test_arrival_time_in_future(self, ha_client):
+        """Approaching rain should have an arrival time set."""
+        state = ha_client.get_state(ARRIVAL_SENSOR)
+        assert state is not None
+        assert state["state"] not in ("unknown", "unavailable", "None"), \
+            f"Expected a timestamp, got {state['state']}"
+
+
 class TestRainEverywhereScenario:
     def test_rain_detected_overhead(self, ha_client):
         ha_client.set_mock_scenario("rain_everywhere")
