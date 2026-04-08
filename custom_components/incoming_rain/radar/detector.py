@@ -25,6 +25,16 @@ class Confidence(Enum):
 
 
 @dataclass
+class TrackedCell:
+    """A rain cell identified as real by the detection pipeline."""
+
+    lat: float
+    lon: float
+    velocity_kmh: float  # speed in km/h
+    bearing: float  # direction in degrees (0=N, 90=E, 180=S, 270=W)
+
+
+@dataclass
 class DetectorConfig:
     lookahead_seconds: int
     intensity_threshold: float
@@ -45,6 +55,11 @@ class DetectionResult:
     confidence: Confidence
     frame_count: int
     max_approaching_intensity: float = 0.0
+    tracked_cells: list[TrackedCell] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.tracked_cells is None:
+            self.tracked_cells = []
 
 
 def _location_to_pixel(
@@ -54,6 +69,15 @@ def _location_to_pixel(
     col = int((lon - bounds.lon_min) / (bounds.lon_max - bounds.lon_min) * width)
     row = int((bounds.lat_max - lat) / (bounds.lat_max - bounds.lat_min) * height)
     return row, col
+
+
+def _pixel_to_location(
+    row: float, col: float, bounds: BoundingBox, width: int, height: int
+) -> tuple[float, float]:
+    """Convert (row, col) in the analysis grid back to (lat, lon)."""
+    lat = bounds.lat_max - (row / height) * (bounds.lat_max - bounds.lat_min)
+    lon = bounds.lon_min + (col / width) * (bounds.lon_max - bounds.lon_min)
+    return lat, lon
 
 
 def _pixel_size_km(bounds: BoundingBox, width: int, height: int) -> tuple[float, float]:
@@ -69,6 +93,37 @@ def _pixel_size_km(bounds: BoundingBox, width: int, height: int) -> tuple[float,
 
 # A track entry: (frame_index, cell_label_in_that_frame, centroid)
 _TrackEntry = tuple[int, int, tuple[float, float]]
+
+
+def _track_velocity_kmh_bearing(
+    track: list[_TrackEntry],
+    frames: list[RadarFrame],
+    km_per_row: float,
+    km_per_col: float,
+) -> tuple[float, float]:
+    """Compute mean speed (km/h) and bearing (degrees) for a track.
+
+    Returns (0.0, 0.0) if velocity cannot be computed.
+    """
+    velocities: list[tuple[float, float]] = []
+    for i in range(len(track) - 1):
+        fi, _, ci = track[i]
+        fj, _, cj = track[i + 1]
+        t_delta = (frames[fj].timestamp - frames[fi].timestamp).total_seconds()
+        if t_delta > 0:
+            velocities.append(estimate_velocity(ci, cj, t_delta))
+
+    if not velocities:
+        return 0.0, 0.0
+
+    vy = sum(v[0] for v in velocities) / len(velocities)
+    vx = sum(v[1] for v in velocities) / len(velocities)
+
+    vy_km_s = vy * km_per_row
+    vx_km_s = vx * km_per_col
+    speed_kmh = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
+    bearing = math.degrees(math.atan2(vx_km_s, -vy_km_s)) % 360
+    return speed_kmh, bearing
 
 
 def _build_cell_tracks(
@@ -193,6 +248,7 @@ def detect(
     max_intensity: float = 0.0
     last_grid = grids[-1]
     last_labeled = per_frame_labeled[-1]
+    tracked_cells: list[TrackedCell] = []
 
     for track in valid_tracks:
         # Check current position first - overhead rain triggers immediately
@@ -208,6 +264,16 @@ def detect(
             cell_pixels = last_grid[last_labeled == last_label]
             if cell_pixels.size > 0:
                 max_intensity = max(max_intensity, float(cell_pixels.max()))
+
+            # Build TrackedCell - compute velocity if we have enough track points
+            cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
+            speed_kmh, bearing = _track_velocity_kmh_bearing(
+                track, frames, km_per_row, km_per_col,
+            )
+            tracked_cells.append(TrackedCell(
+                lat=cell_lat, lon=cell_lon,
+                velocity_kmh=speed_kmh, bearing=bearing,
+            ))
             continue
 
         # For cells not yet overhead, compute velocity and require directional coherence
@@ -250,6 +316,18 @@ def detect(
             if cell_pixels.size > 0:
                 max_intensity = max(max_intensity, float(cell_pixels.max()))
 
+        # All coherent tracks become tracked cells (even if they won't arrive
+        # within the lookahead - they're still real rain the user should see)
+        cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
+        vy_km_s = vy * km_per_row
+        vx_km_s = vx * km_per_col
+        speed_kmh_val = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
+        bearing_val = math.degrees(math.atan2(vx_km_s, -vy_km_s)) % 360
+        tracked_cells.append(TrackedCell(
+            lat=cell_lat, lon=cell_lon,
+            velocity_kmh=speed_kmh_val, bearing=bearing_val,
+        ))
+
     rain_incoming = earliest_arrival is not None
     return DetectionResult(
         rain_incoming=rain_incoming,
@@ -257,4 +335,5 @@ def detect(
         confidence=confidence,
         frame_count=frame_count,
         max_approaching_intensity=max_intensity if rain_incoming else 0.0,
+        tracked_cells=tracked_cells,
     )

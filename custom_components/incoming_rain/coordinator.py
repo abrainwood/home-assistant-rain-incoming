@@ -28,7 +28,7 @@ from .const import (
 )
 from .providers.base import BoundingBox
 from .providers.rainviewer import RainViewerProvider
-from .radar.detector import Confidence, DetectionResult, DetectorConfig, detect
+from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.latest_frame_path: str | None = None
         self.frame_paths: list[str] = []
         self.frame_timestamps: list[datetime] = []
+        self.tracked_cells: list[TrackedCell] = []
         self.last_update_success_time: datetime | None = None
         self.last_rain_nearby_time: datetime | None = None
 
@@ -120,9 +121,10 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         result = detect(frames=frames, location=(lat, lon), config=config)
 
-        # Store frame paths and timestamps for the radar image entity
+        # Store frame paths, timestamps, and tracked cells for the radar image entity
         self.frame_paths = [f.path for f in frames if hasattr(f, "path")]
         self.frame_timestamps = [f.timestamp for f in frames]
+        self.tracked_cells = result.tracked_cells
         if self.frame_paths:
             self.latest_frame_path = self.frame_paths[-1]
 

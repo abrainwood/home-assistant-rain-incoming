@@ -1,4 +1,4 @@
-from .detector import Confidence, DetectionResult, detect
+from .detector import Confidence, DetectionResult, TrackedCell, detect
 from .filters import filter_by_area, filter_by_temporal_persistence, threshold_intensity
 from .motion import (
     estimate_velocity,
@@ -10,6 +10,7 @@ from .motion import (
 __all__ = [
     "Confidence",
     "DetectionResult",
+    "TrackedCell",
     "detect",
     "filter_by_area",
     "filter_by_temporal_persistence",

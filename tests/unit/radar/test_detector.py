@@ -11,6 +11,7 @@ from custom_components.incoming_rain.radar.detector import (
     Confidence,
     DetectionResult,
     DetectorConfig,
+    TrackedCell,
     detect,
 )
 
@@ -208,3 +209,72 @@ class TestMaxApproachingIntensity:
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.rain_incoming is True
         assert result.max_approaching_intensity == pytest.approx(0.9, abs=0.05)
+
+
+class TestTrackedCells:
+    def test_tracked_cells_populated_for_approaching_rain(self):
+        """When rain is approaching, tracked_cells should have at least one entry."""
+        cfg = default_config()
+        frames = []
+        for i, col_offset in enumerate([10, 18, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert len(result.tracked_cells) >= 1
+
+    def test_tracked_cells_empty_for_no_rain(self):
+        """When there's no rain, tracked_cells should be empty."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.tracked_cells == []
+
+    def test_tracked_cell_has_valid_lat_lon(self):
+        """TrackedCell lat/lon should be within the analysis bounds."""
+        cfg = default_config()
+        frames = []
+        for i, col_offset in enumerate([10, 18, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        bounds = cfg.analysis_bounds
+        for cell in result.tracked_cells:
+            assert bounds.lat_min <= cell.lat <= bounds.lat_max
+            assert bounds.lon_min <= cell.lon <= bounds.lon_max
+
+    def test_tracked_cell_has_reasonable_speed_and_bearing(self):
+        """TrackedCell speed should be positive and bearing should be 0-360."""
+        cfg = default_config()
+        frames = []
+        # Cell moving east
+        for i, col_offset in enumerate([10, 18, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert len(result.tracked_cells) >= 1
+        cell = result.tracked_cells[0]
+        assert cell.velocity_kmh > 0
+        assert 0 <= cell.bearing < 360
+        # Cell is moving east, so bearing should be ~90 degrees
+        assert 45 < cell.bearing < 135
+
+    def test_tracked_cells_empty_when_fewer_than_two_frames(self):
+        """With < 2 frames, no detection runs, so tracked_cells should be empty."""
+        cfg = default_config()
+        result = detect(frames=[], location=(LAT, LON), config=cfg)
+        assert result.tracked_cells == []
+
+    def test_overhead_rain_produces_tracked_cell(self):
+        """Rain already at the location should also appear in tracked_cells."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.9
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert len(result.tracked_cells) >= 1

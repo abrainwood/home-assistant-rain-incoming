@@ -84,6 +84,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         ] if self.coordinator.frame_timestamps else None
 
         session = async_get_clientsession(self.hass)
+        cells = self.coordinator.tracked_cells or None
         self._cached_image = await render_animated_composite(
             lat=lat,
             lon=lon,
@@ -92,6 +93,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
             frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
             frame_timestamps=local_timestamps,
             tz_name=self.hass.config.time_zone,
+            tracked_cells=cells,
             session=session,
             run_in_executor=self.hass.async_add_executor_job,
         )

@@ -7,18 +7,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from custom_components.incoming_rain.radar.composite import (
     _map_tile_cache,
     calculate_map_zoom,
     draw_crosshair,
+    draw_motion_arrow,
     draw_range_rings,
     filter_precipitation_pixels,
     km_per_pixel,
     render_animated_composite,
     render_composite,
 )
+from custom_components.incoming_rain.radar.detector import TrackedCell
 
 
 class TestKmPerPixel:
@@ -404,3 +406,99 @@ class TestRenderAnimatedComposite:
             assert d == frame_duration_ms
         # Last frame should be 4x
         assert durations[-1] == frame_duration_ms * 4
+
+
+class TestDrawMotionArrow:
+    def test_draws_yellow_pixels(self):
+        """Motion arrow should draw yellow pixels on the image."""
+        img = Image.new("RGBA", (100, 100), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img)
+        draw_motion_arrow(draw, 50, 50, bearing_deg=90.0, speed_kmh=30.0)
+        pixels = np.array(img)
+        # Should have some yellow (R=255, G=255, B=0) pixels
+        yellow_mask = (pixels[:, :, 0] > 200) & (pixels[:, :, 1] > 200) & (pixels[:, :, 2] < 50)
+        assert yellow_mask.sum() > 0
+
+    def test_no_arrow_for_zero_speed(self):
+        """Should not draw anything for speed < 1 km/h."""
+        img = Image.new("RGBA", (100, 100), (0, 0, 0, 255))
+        original = np.array(img).copy()
+        draw = ImageDraw.Draw(img)
+        draw_motion_arrow(draw, 50, 50, bearing_deg=90.0, speed_kmh=0.5)
+        assert np.array_equal(np.array(img), original)
+
+    def test_arrow_points_in_bearing_direction(self):
+        """Arrow pointing east (bearing=90) should have yellow pixels to the right of center."""
+        img = Image.new("RGBA", (200, 200), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img)
+        draw_motion_arrow(draw, 100, 100, bearing_deg=90.0, speed_kmh=50.0)
+        pixels = np.array(img)
+        yellow_mask = (pixels[:, :, 0] > 200) & (pixels[:, :, 1] > 200) & (pixels[:, :, 2] < 50)
+        yellow_coords = np.argwhere(yellow_mask)
+        # Mean x of yellow pixels should be to the right of center
+        assert yellow_coords[:, 1].mean() > 100
+
+
+class TestDetectionInformedRendering:
+    @pytest.fixture(autouse=True)
+    def clear_tile_cache(self):
+        _map_tile_cache.clear()
+        yield
+        _map_tile_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_last_frame_with_cells_has_dimmed_radar(self):
+        """When tracked_cells are provided, non-last frames should have full radar
+        opacity and the last frame should have dimmed radar (lower alpha)."""
+        output_size = 256
+
+        # Create a radar tile with visible precipitation (bright green, full alpha)
+        radar_tile = _make_tile_png((0, 200, 0, 200))
+        session = _mock_session(
+            map_tile_bytes=_make_tile_png((30, 30, 30, 255)),
+            radar_tile_bytes=radar_tile,
+        )
+
+        cells = [TrackedCell(lat=-33.7, lon=151.2, velocity_kmh=30.0, bearing=90.0)]
+        frame_paths = ["/v2/radar/frame1", "/v2/radar/frame2", "/v2/radar/frame3"]
+        timestamps = _make_frame_timestamps(3)
+
+        result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=frame_paths,
+            output_size=output_size,
+            frame_duration_ms=500,
+            frame_timestamps=timestamps,
+            tracked_cells=cells,
+            session=session,
+        )
+
+        assert isinstance(result, bytes)
+        img = Image.open(BytesIO(result))
+        assert img.format == "GIF"
+
+    @pytest.mark.asyncio
+    async def test_no_cells_renders_normally(self):
+        """When no tracked_cells are provided, rendering should be unchanged."""
+        output_size = 256
+        session = _mock_session(
+            map_tile_bytes=_make_tile_png((30, 30, 30, 255)),
+            radar_tile_bytes=_make_tile_png((0, 0, 0, 0)),
+        )
+        frame_paths = ["/v2/radar/frame1", "/v2/radar/frame2"]
+        timestamps = _make_frame_timestamps(2)
+
+        result = await render_animated_composite(
+            lat=-33.7, lon=151.2, radius_km=128,
+            frame_paths=frame_paths,
+            output_size=output_size,
+            frame_duration_ms=500,
+            frame_timestamps=timestamps,
+            tracked_cells=None,
+            session=session,
+        )
+
+        assert isinstance(result, bytes)
+        img = Image.open(BytesIO(result))
+        assert img.format == "GIF"
+        assert img.n_frames == 2

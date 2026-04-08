@@ -15,6 +15,7 @@ from ..providers.rainviewer import (
     TILE_BASE_URL,
     TILE_SIZE,
 )
+from .detector import TrackedCell
 from .geo import lat_lon_to_tile
 
 _LOGGER = logging.getLogger(__name__)
@@ -134,6 +135,76 @@ def draw_range_rings(
         draw.text((lx, ly), label, fill=(0, 0, 0, 200), font=font)
 
 
+def draw_motion_arrow(
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    bearing_deg: float,
+    speed_kmh: float,
+    max_arrow_px: int = 40,
+) -> None:
+    """Draw a motion arrow from (cx, cy) in the direction of bearing.
+
+    Arrow length is proportional to speed, capped at max_arrow_px.
+    Does nothing if speed < 1 km/h.
+    """
+    if speed_kmh < 1:
+        return
+
+    length = min(speed_kmh / 3, max_arrow_px)
+    angle_rad = math.radians(bearing_deg)
+    dx = length * math.sin(angle_rad)
+    dy = -length * math.cos(angle_rad)  # y increases downward
+    ex, ey = cx + dx, cy + dy
+
+    arrow_color = (255, 255, 0, 255)
+
+    # Shaft
+    draw.line([(cx, cy), (ex, ey)], fill=arrow_color, width=2)
+
+    # Arrowhead - two short lines angled back from the tip
+    head_len = max(6, length * 0.25)
+    for offset in (-140, 140):
+        ha = math.radians(bearing_deg + offset)
+        hx = ex + head_len * math.sin(ha)
+        hy = ey - head_len * math.cos(ha)
+        draw.line([(ex, ey), (hx, hy)], fill=arrow_color, width=2)
+
+
+def _draw_tracked_cells(
+    img: Image.Image,
+    cells: list[TrackedCell],
+    lat: float,
+    lon: float,
+    map_zoom: int,
+    output_size: int,
+) -> None:
+    """Draw cell markers and motion arrows for tracked cells on the image."""
+    draw = ImageDraw.Draw(img)
+    centre_px, centre_py = _lat_lon_to_pixel(lat, lon, map_zoom)
+    half = output_size / 2
+
+    for cell in cells:
+        cell_gpx, cell_gpy = _lat_lon_to_pixel(cell.lat, cell.lon, map_zoom)
+        cx = cell_gpx - centre_px + half
+        cy = cell_gpy - centre_py + half
+
+        # Skip cells outside the viewport
+        if cx < -20 or cx > output_size + 20 or cy < -20 or cy > output_size + 20:
+            continue
+
+        # Small filled circle at cell centroid
+        r = 5
+        draw.ellipse(
+            [cx - r, cy - r, cx + r, cy + r],
+            fill=(255, 255, 0, 180),
+            outline=(255, 255, 255, 200),
+            width=1,
+        )
+
+        draw_motion_arrow(draw, cx, cy, cell.bearing, cell.velocity_kmh)
+
+
 async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
     async with session.get(url) as resp:
         resp.raise_for_status()
@@ -187,14 +258,34 @@ def _composite_single_frame(
     map_crop: Image.Image,
     radar_resized: Image.Image,
     lat: float,
+    lon: float,
     map_zoom: int,
     radius_km: int,
     output_size: int,
     timestamp: datetime | None = None,
     tz_name: str | None = None,
+    tracked_cells: list[TrackedCell] | None = None,
 ) -> Image.Image:
-    """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image."""
-    composite = Image.alpha_composite(map_crop.convert("RGBA"), radar_resized)
+    """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image.
+
+    When tracked_cells is provided (last frame only), the raw radar is dimmed to ~30%
+    opacity and tracked cell markers with motion arrows are overlaid.
+    """
+    if tracked_cells:
+        # Dim the raw radar to ~30% alpha
+        radar_dimmed = radar_resized.copy()
+        r, g, b, a = radar_dimmed.split()
+        a = a.point(lambda x: int(x * 0.3))
+        radar_dimmed = Image.merge("RGBA", (r, g, b, a))
+
+        # Create a full-opacity version for tracked cell areas
+        composite = Image.alpha_composite(map_crop.convert("RGBA"), radar_dimmed)
+
+        # Overlay the tracked cell highlights: composite the full radar, then
+        # draw the cell markers and arrows on top
+        _draw_tracked_cells(composite, tracked_cells, lat, lon, map_zoom, output_size)
+    else:
+        composite = Image.alpha_composite(map_crop.convert("RGBA"), radar_resized)
 
     kpp = km_per_pixel(lat, map_zoom)
     radius_px = int(radius_km / kpp) if kpp > 0 else output_size // 2
@@ -213,13 +304,14 @@ def _render_sync(
     map_crop: Image.Image,
     radar_resized: Image.Image,
     lat: float,
+    lon: float,
     map_zoom: int,
     radius_km: int,
     output_size: int,
 ) -> bytes:
     """CPU-bound rendering: composite, draw overlays, export PNG."""
     composite = _composite_single_frame(
-        map_crop, radar_resized, lat, map_zoom, radius_km, output_size,
+        map_crop, radar_resized, lat, lon, map_zoom, radius_km, output_size,
     )
     buf = BytesIO()
     composite.save(buf, format="PNG")
@@ -405,10 +497,10 @@ async def render_composite(
 
     if run_in_executor is not None:
         return await run_in_executor(
-            _render_sync, map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size,
+            _render_sync, map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
         )
 
-    return _render_sync(map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size)
+    return _render_sync(map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size)
 
 
 async def render_animated_composite(
@@ -421,6 +513,7 @@ async def render_animated_composite(
     *,
     frame_timestamps: list[datetime] | None = None,
     tz_name: str | None = None,
+    tracked_cells: list[TrackedCell] | None = None,
     session: aiohttp.ClientSession,
     run_in_executor: object = None,
 ) -> bytes:
@@ -430,6 +523,9 @@ async def render_animated_composite(
     ----------
     frame_timestamps: optional list of datetimes matching frame_paths, used for
         overlaying a timestamp on each frame.
+    tracked_cells: optional list of TrackedCells from the detector. When provided,
+        the last frame dims raw radar to ~30% opacity and highlights tracked cells
+        with markers and motion arrows.
     session: an aiohttp.ClientSession for fetching tiles.
     run_in_executor: optional callable (e.g. hass.async_add_executor_job)
         to offload CPU-bound GIF assembly. If None, rendering runs inline.
@@ -446,14 +542,16 @@ async def render_animated_composite(
     ])
 
     timestamps = frame_timestamps or [None] * len(frame_paths)
+    last_idx = len(radar_overlays) - 1
 
     # Composite each frame (CPU-bound but fast - no I/O)
     frames: list[Image.Image] = []
     for i, radar_resized in enumerate(radar_overlays):
         ts = timestamps[i] if i < len(timestamps) else None
+        cells_for_frame = tracked_cells if (i == last_idx and tracked_cells) else None
         frame_img = _composite_single_frame(
-            map_crop, radar_resized, lat, vp.map_zoom, radius_km, output_size,
-            timestamp=ts, tz_name=tz_name,
+            map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
+            timestamp=ts, tz_name=tz_name, tracked_cells=cells_for_frame,
         )
         frames.append(frame_img)
 
