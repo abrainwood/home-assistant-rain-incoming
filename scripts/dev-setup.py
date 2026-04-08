@@ -73,29 +73,72 @@ def wait_for_ha(timeout: int = 120) -> None:
     sys.exit(1)
 
 
+def _login(token_file: str = TOKEN_FILE) -> str:
+    """Log in with existing credentials and return a fresh auth token."""
+    print("Logging in with existing credentials...")
+    # Start login flow
+    flow = _request("POST", "/auth/login_flow", {
+        "client_id": f"{HA_URL}/",
+        "handler": ["homeassistant", None],
+        "redirect_uri": f"{HA_URL}/",
+    })
+    if not flow or "flow_id" not in flow:
+        print("Failed to start login flow")
+        sys.exit(1)
+
+    # Submit credentials
+    result = _request("POST", f"/auth/login_flow/{flow['flow_id']}", {
+        "username": DEV_USER["username"],
+        "password": DEV_USER["password"],
+        "client_id": f"{HA_URL}/",
+    })
+    if not result or result.get("type") != "create_entry":
+        print(f"Login failed: {result}")
+        sys.exit(1)
+
+    auth_code = result["result"]
+
+    # Exchange for token
+    token_resp = _request("POST", "/auth/token", {
+        "client_id": f"{HA_URL}/",
+        "grant_type": "authorization_code",
+        "code": auth_code,
+    }, form=True)
+    if not token_resp or "access_token" not in token_resp:
+        print("Failed to get token")
+        sys.exit(1)
+
+    token = token_resp["access_token"]
+    with open(token_file, "w") as f:
+        f.write(token)
+    print(f"Token saved to {token_file}")
+    return token
+
+
 def onboard(token_file: str = TOKEN_FILE) -> str:
     """Create account, get token, complete onboarding. Returns auth token."""
-    # Check if already onboarded
+    # Try existing token first
+    try:
+        with open(token_file) as f:
+            token = f.read().strip()
+        # Verify it still works
+        resp = _request("GET", "/api/", token=token)
+        if resp is not None:
+            print("Using saved token")
+            return token
+    except FileNotFoundError:
+        pass
+
+    # Check if onboarding is needed
     result = _request("GET", "/api/onboarding")
     if not result:
-        # Already onboarded - try loading existing token
-        try:
-            with open(token_file) as f:
-                token = f.read().strip()
-            print("Already onboarded, using saved token")
-            return token
-        except FileNotFoundError:
-            print("Already onboarded but no saved token - cannot continue")
-            sys.exit(1)
+        # Already onboarded, no valid token - log in
+        return _login(token_file)
 
-    remaining = [step["step"] for step in result]
+    remaining = [step["step"] for step in result if not step.get("done", False)]
     if "user" not in remaining:
-        try:
-            with open(token_file) as f:
-                return f.read().strip()
-        except FileNotFoundError:
-            print("User step already completed but no saved token")
-            sys.exit(1)
+        # User already created - log in
+        return _login(token_file)
 
     print("Creating dev account...")
     payload = {**DEV_USER, "client_id": f"{HA_URL}/"}

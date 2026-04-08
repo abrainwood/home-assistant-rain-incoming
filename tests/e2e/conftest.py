@@ -166,8 +166,7 @@ def ha_client(ha_container) -> HAClient:
     except (FileNotFoundError, RuntimeError):
         pass
 
-    # Need to onboard
-    # Inline minimal onboarding
+    # Need to onboard or log in
     def _raw_request(method, path, data=None, token=None, form=False):
         url = f"{HA_URL}{path}"
         headers = {}
@@ -186,29 +185,49 @@ def ha_client(ha_container) -> HAClient:
             raw = resp.read()
             return json.loads(raw) if raw else {}
 
-    # Create user
-    resp = _raw_request("POST", "/api/onboarding/users", {
-        "client_id": f"{HA_URL}/",
-        "name": "E2E Test",
-        "username": "dev",
-        "password": "devdevdev",
-        "language": "en",
-    })
-    auth_code = resp["auth_code"]
+    def _get_token_via_login():
+        """Log in with known credentials when onboarding is already done."""
+        flow = _raw_request("POST", "/auth/login_flow", {
+            "client_id": f"{HA_URL}/",
+            "handler": ["homeassistant", None],
+            "redirect_uri": f"{HA_URL}/",
+        })
+        result = _raw_request("POST", f"/auth/login_flow/{flow['flow_id']}", {
+            "username": "dev", "password": "devdevdev",
+            "client_id": f"{HA_URL}/",
+        })
+        token_resp = _raw_request("POST", "/auth/token", {
+            "client_id": f"{HA_URL}/",
+            "grant_type": "authorization_code",
+            "code": result["result"],
+        }, form=True)
+        return token_resp["access_token"]
 
-    # Get token
-    token_resp = _raw_request("POST", "/auth/token", {
-        "client_id": f"{HA_URL}/",
-        "grant_type": "authorization_code",
-        "code": auth_code,
-    }, form=True)
-    token = token_resp["access_token"]
+    # Check if onboarding is needed
+    try:
+        onboarding = _raw_request("GET", "/api/onboarding")
+    except Exception:
+        onboarding = None
 
-    # Complete onboarding
-    _raw_request("POST", "/api/onboarding/core_config", {}, token=token)
-    _raw_request("POST", "/api/onboarding/analytics", {}, token=token)
+    if onboarding and "user" in [s["step"] for s in onboarding]:
+        # Fresh instance - create user
+        resp = _raw_request("POST", "/api/onboarding/users", {
+            "client_id": f"{HA_URL}/",
+            "name": "E2E Test", "username": "dev",
+            "password": "devdevdev", "language": "en",
+        })
+        token_resp = _raw_request("POST", "/auth/token", {
+            "client_id": f"{HA_URL}/",
+            "grant_type": "authorization_code",
+            "code": resp["auth_code"],
+        }, form=True)
+        token = token_resp["access_token"]
+        _raw_request("POST", "/api/onboarding/core_config", {}, token=token)
+        _raw_request("POST", "/api/onboarding/analytics", {}, token=token)
+    else:
+        # Already onboarded - log in
+        token = _get_token_via_login()
 
-    # Save token
     with open(TOKEN_FILE, "w") as f:
         f.write(token)
 

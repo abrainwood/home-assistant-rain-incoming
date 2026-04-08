@@ -21,10 +21,10 @@ test-e2e:
 
 dev:
 	docker compose -f docker-compose.dev.yml up -d
-	python scripts/dev-setup.py
+	.venv/bin/python scripts/dev-setup.py
 
 dev-mock:
-	python scripts/dev-setup.py --mock
+	.venv/bin/python scripts/dev-setup.py --mock
 
 dev-stop:
 	docker compose -f docker-compose.dev.yml down
