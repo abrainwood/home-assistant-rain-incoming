@@ -95,6 +95,13 @@ class HAClient:
         self.request("POST", "/api/services/homeassistant/update_entity",
                       {"entity_id": entity_id})
 
+    def get_text(self, path: str) -> str:
+        """Fetch a plain-text endpoint (e.g. /api/error_log)."""
+        url = f"{HA_URL}{path}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.token}"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read().decode()
+
     def set_mock_scenario(self, scenario: str) -> None:
         """Switch the mock RainViewer server's active scenario."""
         body = json.dumps({"scenario": scenario}).encode()

@@ -85,3 +85,32 @@ class TestRainEverywhereScenario:
         assert state is not None
         assert state["state"] not in ("unknown", "unavailable", "None"), \
             f"Expected a timestamp, got {state['state']}"
+
+
+class TestSystemLogs:
+    """Run last - checks HA system logs for unexpected warnings from our integration."""
+
+    def test_no_unexpected_warnings_from_integration(self, ha_client):
+        """Our integration should not produce WARNING or ERROR level logs."""
+        log_text = ha_client.get_text("/api/error_log")
+
+        our_lines = [
+            line for line in log_text.split("\n")
+            if "incoming_rain" in line
+            and ("WARNING" in line or "ERROR" in line)
+        ]
+
+        # Exclude known/expected warnings we can't control
+        expected_patterns = [
+            "custom integration incoming_rain which has not been tested",  # HA standard warning
+        ]
+
+        unexpected = [
+            line for line in our_lines
+            if not any(pattern in line for pattern in expected_patterns)
+        ]
+
+        assert not unexpected, (
+            f"Found {len(unexpected)} unexpected warning(s) from incoming_rain:\n"
+            + "\n".join(unexpected)
+        )
