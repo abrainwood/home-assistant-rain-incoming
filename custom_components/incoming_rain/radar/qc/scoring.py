@@ -128,18 +128,14 @@ def refine_confidence_post_detection(
     speed = score_speed(cells, labeled)
     motion = score_motion_consistency(cells, labeled)
 
-    # Get pre-detection weight total and post-detection weight total
-    pre_factor_names = {"texture", "temporal", "clutter"}
-    post_factor_names = {"speed", "motion"}
-
-    pre_weight = sum(config.weights.get(k, 0.0) for k in pre_factor_names)
+    # Pre-detection weights from config.weights, post from config.post_weights
+    pre_weight = sum(config.weights.values())
     post_scores = {"speed": speed, "motion": motion}
 
     post_weight = 0.0
     post_combined = np.zeros_like(pre_confidence, dtype=np.float32)
-    for name in post_factor_names:
-        w = config.weights.get(name, 0.0)
-        if w > 0:
+    for name, w in config.post_weights.items():
+        if name in post_scores and w > 0:
             post_combined += w * post_scores[name]
             post_weight += w
 

@@ -12,9 +12,17 @@ class QCConfig:
     texture_kernel_size: int = 5
     texture_high_threshold: float = 0.15
     texture_low_threshold: float = 0.05
+    # Pre-detection factor weights (texture, temporal, clutter).
+    # Speed and motion are post-detection factors handled separately
+    # by refine_confidence_post_detection().
     weights: dict[str, float] = field(
         default_factory=lambda: {
-            "texture": 0.30, "temporal": 0.25, "clutter": 0.20,
+            "texture": 0.45, "temporal": 0.35, "clutter": 0.20,
+        }
+    )
+    # Post-detection factor weights
+    post_weights: dict[str, float] = field(
+        default_factory=lambda: {
             "speed": 0.15, "motion": 0.10,
         }
     )
