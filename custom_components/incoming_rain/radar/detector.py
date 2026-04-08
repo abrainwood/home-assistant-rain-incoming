@@ -44,6 +44,7 @@ class DetectionResult:
     arrival_time: datetime | None
     confidence: Confidence
     frame_count: int
+    max_approaching_intensity: float = 0.0
 
 
 def _location_to_pixel(
@@ -139,6 +140,7 @@ def detect(
             arrival_time=None,
             confidence=Confidence.UNAVAILABLE,
             frame_count=frame_count,
+            max_approaching_intensity=0.0,
         )
 
     confidence = Confidence.DEGRADED if frame_count < 3 else Confidence.NORMAL
@@ -155,8 +157,10 @@ def detect(
 
     # 3. Label each frame independently
     per_frame_centroids: list[dict[int, tuple[float, float]]] = []
+    per_frame_labeled: list[np.ndarray] = []
     for mask in masks:
         labeled, _ = ndimage.label(mask)
+        per_frame_labeled.append(labeled)
         per_frame_centroids.append(extract_cell_centroids(labeled))
 
     # 4. Build cell tracks across frames
@@ -176,6 +180,7 @@ def detect(
             arrival_time=None,
             confidence=confidence,
             frame_count=frame_count,
+            max_approaching_intensity=0.0,
         )
 
     # 6. For each valid track: compute velocity, check coherence, project forward
@@ -185,10 +190,13 @@ def detect(
     last_frame_time = frames[-1].timestamp
 
     earliest_arrival: datetime | None = None
+    max_intensity: float = 0.0
+    last_grid = grids[-1]
+    last_labeled = per_frame_labeled[-1]
 
     for track in valid_tracks:
         # Check current position first - overhead rain triggers immediately
-        _, _, final_centroid = track[-1]
+        _, last_label, final_centroid = track[-1]
         cur_row, cur_col = final_centroid
         dist_to_loc = math.sqrt((cur_row - loc_row) ** 2 + (cur_col - loc_col) ** 2)
 
@@ -197,6 +205,9 @@ def detect(
             arrival_dt = last_frame_time
             if earliest_arrival is None or arrival_dt < earliest_arrival:
                 earliest_arrival = arrival_dt
+            cell_pixels = last_grid[last_labeled == last_label]
+            if cell_pixels.size > 0:
+                max_intensity = max(max_intensity, float(cell_pixels.max()))
             continue
 
         # For cells not yet overhead, compute velocity and require directional coherence
@@ -235,6 +246,9 @@ def detect(
             arrival_dt = last_frame_time + timedelta(seconds=arrival_seconds)
             if earliest_arrival is None or arrival_dt < earliest_arrival:
                 earliest_arrival = arrival_dt
+            cell_pixels = last_grid[last_labeled == last_label]
+            if cell_pixels.size > 0:
+                max_intensity = max(max_intensity, float(cell_pixels.max()))
 
     rain_incoming = earliest_arrival is not None
     return DetectionResult(
@@ -242,4 +256,5 @@ def detect(
         arrival_time=earliest_arrival,
         confidence=confidence,
         frame_count=frame_count,
+        max_approaching_intensity=max_intensity if rain_incoming else 0.0,
     )

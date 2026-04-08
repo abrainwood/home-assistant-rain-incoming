@@ -20,6 +20,7 @@ MOCK_RESULT_UNAVAILABLE = DetectionResult(
     arrival_time=None,
     confidence=Confidence.UNAVAILABLE,
     frame_count=0,
+    max_approaching_intensity=0.0,
 )
 
 MOCK_RESULT_RAIN_COMING = DetectionResult(
@@ -27,6 +28,7 @@ MOCK_RESULT_RAIN_COMING = DetectionResult(
     arrival_time=datetime(2026, 4, 7, 10, 30, tzinfo=timezone.utc),
     confidence=Confidence.NORMAL,
     frame_count=6,
+    max_approaching_intensity=0.65,
 )
 
 MOCK_RESULT_NO_RAIN = DetectionResult(
@@ -34,6 +36,7 @@ MOCK_RESULT_NO_RAIN = DetectionResult(
     arrival_time=None,
     confidence=Confidence.NORMAL,
     frame_count=6,
+    max_approaching_intensity=0.0,
 )
 
 
@@ -275,3 +278,80 @@ def test_strings_json_has_location_name_in_config():
 def test_strings_json_has_location_name_in_options():
     strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
     assert "location_name" in strings["options"]["step"]["init"]["data"]
+
+
+# --- Intensity sensor ---
+
+
+MOCK_RESULT_RAIN_OVERHEAD = DetectionResult(
+    rain_incoming=True,
+    arrival_time=datetime(2026, 4, 7, 10, 0, tzinfo=timezone.utc),
+    confidence=Confidence.NORMAL,
+    frame_count=6,
+    max_approaching_intensity=0.65,
+)
+
+
+@pytest.mark.asyncio
+async def test_intensity_sensor_exists(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("sensor.incoming_rain_intensity")
+    assert state is not None, (
+        f"Intensity sensor not found. Available: {[s.entity_id for s in hass.states.async_all()]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_intensity_sensor_none_when_no_rain(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("sensor.incoming_rain_intensity")
+    assert state.state == "none"
+
+
+@pytest.mark.asyncio
+async def test_intensity_sensor_shows_level_when_rain(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get("sensor.incoming_rain_intensity")
+    # 0.65 maps to "heavy"
+    assert state.state == "heavy"
+
+
+@pytest.mark.asyncio
+async def test_intensity_sensor_has_raw_attribute(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get("sensor.incoming_rain_intensity")
+    assert "intensity_raw" in state.attributes
+    assert state.attributes["intensity_raw"] == pytest.approx(0.65, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_intensity_sensor_icon_sunny_when_none(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("sensor.incoming_rain_intensity")
+    assert state.attributes["icon"] == "mdi:weather-sunny"
+
+
+@pytest.mark.asyncio
+async def test_intensity_sensor_icon_pouring_when_heavy(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+    state = hass.states.get("sensor.incoming_rain_intensity")
+    assert state.attributes["icon"] == "mdi:weather-pouring"
+
+
+# --- Last rain sensor ---
+
+
+@pytest.mark.asyncio
+async def test_last_rain_sensor_exists(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("sensor.incoming_rain_last_rain")
+    assert state is not None, (
+        f"Last rain sensor not found. Available: {[s.entity_id for s in hass.states.async_all()]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_last_rain_sensor_unknown_when_no_rain_history(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("sensor.incoming_rain_last_rain")
+    assert state.state in ("unknown", "None")

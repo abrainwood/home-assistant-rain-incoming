@@ -68,6 +68,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self._consecutive_failures = 0
         self.latest_frame_path: str | None = None
         self.last_update_success_time: datetime | None = None
+        self.last_rain_nearby_time: datetime | None = None
 
     def _build_config(self) -> DetectorConfig:
         data = self._entry.data
@@ -122,6 +123,15 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             latest = frames[-1]
             if hasattr(latest, "path"):
                 self.latest_frame_path = latest.path
+
+        # Update last_rain_nearby_time when rain is currently at the location
+        if (
+            result.rain_incoming
+            and result.arrival_time is not None
+            and frames
+            and result.arrival_time == frames[-1].timestamp
+        ):
+            self.last_rain_nearby_time = datetime.now(timezone.utc)
 
         self._consecutive_failures = 0
         self.last_update_success_time = datetime.now(timezone.utc)

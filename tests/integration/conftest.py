@@ -18,6 +18,7 @@ _MOCK_RESULT_UNAVAILABLE = DetectionResult(
     arrival_time=None,
     confidence=Confidence.UNAVAILABLE,
     frame_count=0,
+    max_approaching_intensity=0.0,
 )
 
 

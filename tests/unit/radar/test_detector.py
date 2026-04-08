@@ -179,3 +179,32 @@ class TestDetectParallelMiss:
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.rain_incoming is False
         assert result.arrival_time is None
+
+
+class TestMaxApproachingIntensity:
+    def test_no_rain_returns_zero_intensity(self):
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.max_approaching_intensity == 0.0
+
+    def test_approaching_rain_records_max_intensity(self):
+        cfg = default_config()
+        frames = []
+        for i, col in enumerate([10, 18, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col:col + 3] = 0.6
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert result.max_approaching_intensity == pytest.approx(0.6, abs=0.05)
+
+    def test_overhead_rain_sets_intensity(self):
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.9
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert result.max_approaching_intensity == pytest.approx(0.9, abs=0.05)
