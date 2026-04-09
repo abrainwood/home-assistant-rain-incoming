@@ -19,6 +19,9 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
+# Set up git hooks (blocks push if tests fail)
+git config core.hooksPath .githooks
+
 # Run tests
 make test          # unit + integration (~75s)
 make test-e2e      # E2E against Docker HA (~45s)
