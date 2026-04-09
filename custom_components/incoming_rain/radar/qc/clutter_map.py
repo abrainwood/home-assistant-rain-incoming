@@ -61,6 +61,12 @@ def load_clutter_map(path: str) -> ClutterMap | None:
             echo_count=data["echo_count"].astype(np.float32),
             update_count=float(data["update_count"]),
         )
-    except (FileNotFoundError, OSError, KeyError):
-        _LOGGER.debug("Could not load clutter map from %s", path)
+    except FileNotFoundError:
+        _LOGGER.debug("No existing clutter map at %s (first run)", path)
+        return None
+    except (OSError, KeyError) as e:
+        _LOGGER.warning(
+            "Could not load clutter map from %s: %s: %s",
+            path, type(e).__name__, e,
+        )
         return None

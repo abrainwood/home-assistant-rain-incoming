@@ -4,6 +4,8 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
+import aiohttp
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import HomeAssistant
@@ -106,8 +108,11 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                 await self.hass.async_add_executor_job(
                     save_clutter_map, self._clutter_map, self._clutter_path
                 )
-            except Exception:
-                _LOGGER.debug("Failed to save clutter map on shutdown")
+            except Exception as e:
+                _LOGGER.warning(
+                    "Failed to save clutter map on shutdown: %s: %s",
+                    type(e).__name__, e,
+                )
 
     def _build_config(self) -> DetectorConfig:
         data = self._entry.data
@@ -159,8 +164,16 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         async def _fetch_frame(frame):
             try:
                 await frame._fetch_stitched_grid(bounds, W, H, session)
-            except Exception:
-                _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
+            except aiohttp.ClientResponseError as e:
+                _LOGGER.warning(
+                    "Radar grid fetch failed: HTTP %d for frame %s",
+                    e.status, frame.timestamp,
+                )
+            except Exception as e:
+                _LOGGER.warning(
+                    "Radar grid fetch failed: %s: %s for frame %s",
+                    type(e).__name__, e, frame.timestamp,
+                )
 
         await asyncio.gather(*[_fetch_frame(frame) for frame in frames])
 
@@ -187,8 +200,11 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                     await self.hass.async_add_executor_job(
                         save_clutter_map, self._clutter_map, self._clutter_path
                     )
-                except Exception:
-                    _LOGGER.debug("Failed to save clutter map")
+                except Exception as e:
+                    _LOGGER.warning(
+                        "Failed to save clutter map: %s: %s",
+                        type(e).__name__, e,
+                    )
 
         # Get clutter frequency and maturity for QC scoring
         clutter_freq = None

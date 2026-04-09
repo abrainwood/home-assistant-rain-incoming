@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime, timezone
 from io import BytesIO
@@ -9,9 +10,12 @@ import numpy as np
 from PIL import Image
 
 from .base import BoundingBox, RadarFrame, RadarProvider
+from ..http_retry import fetch_with_retry
 from ..radar.geo import lat_lon_to_tile
 
 import os
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _resolve_url(env_key: str, default: str) -> str:
@@ -194,9 +198,8 @@ class RainViewerFrame(RadarFrame):
                 f"{TILE_BASE_URL}{self._path}"
                 f"/{TILE_SIZE}/{self._zoom}/{tx}/{ty}/{self._colour_scheme}/0.png"
             )
-            async with session.get(url) as resp:
-                resp.raise_for_status()
-                tile_bytes = await resp.read()
+            resp = await fetch_with_retry(session, url)
+            tile_bytes = await resp.read()
 
             tile_arr = _tile_to_intensity_array(tile_bytes)
             px = (tx - min_tx) * TILE_SIZE
@@ -262,6 +265,5 @@ class RainViewerProvider(RadarProvider):
 
     async def _fetch_manifest(self) -> dict:
         async with aiohttp.ClientSession() as session:
-            async with session.get(MANIFEST_URL) as resp:
-                resp.raise_for_status()
-                return await resp.json(content_type=None)
+            resp = await fetch_with_retry(session, MANIFEST_URL)
+            return await resp.json(content_type=None)

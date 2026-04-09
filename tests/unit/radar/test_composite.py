@@ -11,6 +11,7 @@ from PIL import Image
 
 from custom_components.incoming_rain.radar.composite import (
     _map_tile_cache,
+    _radar_tile_cache,
     calculate_map_zoom,
     draw_crosshair,
     draw_range_rings,
@@ -120,37 +121,36 @@ def _make_tile_png(colour: tuple[int, int, int, int] = (0, 0, 0, 255)) -> bytes:
     return buf.getvalue()
 
 
-def _make_context_manager(resp):
-    """Wrap a mock response in an async context manager."""
-    cm = MagicMock()
-    cm.__aenter__ = AsyncMock(return_value=resp)
-    cm.__aexit__ = AsyncMock(return_value=False)
-    return cm
-
-
 def _mock_session(map_tile_bytes: bytes | None = None, radar_tile_bytes: bytes | None = None):
     """Return a mock aiohttp.ClientSession that serves tiles from bytes.
+
+    session.get is an async function returning a mock response directly
+    (matching fetch_with_retry's await session.get(url) pattern).
 
     If radar_tile_bytes is None, radar fetches raise an exception to simulate failure.
     """
     map_bytes = map_tile_bytes if map_tile_bytes is not None else _make_tile_png()
     radar_bytes = radar_tile_bytes if radar_tile_bytes is not None else _make_tile_png((0, 0, 0, 0))
 
-    def fake_get(url: str):
-        resp = AsyncMock()
+    async def fake_get(url: str, **kwargs):
+        resp = MagicMock()
+        resp.status = 200
 
         if "tilecache" in url or "rainviewer" in url.lower():
             if radar_tile_bytes is None:
+                resp.status = 500
                 resp.raise_for_status = MagicMock(side_effect=Exception("radar fetch failed"))
                 resp.read = AsyncMock(return_value=b"")
             else:
                 resp.read = AsyncMock(return_value=radar_bytes)
                 resp.raise_for_status = MagicMock()
+                resp.headers = {}
         else:
             resp.read = AsyncMock(return_value=map_bytes)
             resp.raise_for_status = MagicMock()
+            resp.headers = {}
 
-        return _make_context_manager(resp)
+        return resp
 
     session = MagicMock()
     session.get = fake_get
@@ -160,10 +160,12 @@ def _mock_session(map_tile_bytes: bytes | None = None, radar_tile_bytes: bytes |
 class TestRenderComposite:
     @pytest.fixture(autouse=True)
     def clear_tile_cache(self):
-        """Clear the map tile cache before each test."""
+        """Clear tile caches before each test."""
         _map_tile_cache.clear()
+        _radar_tile_cache.clear()
         yield
         _map_tile_cache.clear()
+        _radar_tile_cache.clear()
 
     @pytest.mark.asyncio
     async def test_happy_path_produces_png_with_expected_size(self):
@@ -210,16 +212,18 @@ class TestRenderComposite:
         call_count = 0
         tile_bytes = _make_tile_png((30, 30, 30, 255))
 
-        def counting_get(url: str):
+        async def counting_get(url: str, **kwargs):
             nonlocal call_count
-            resp = AsyncMock()
+            resp = MagicMock()
+            resp.status = 200
+            resp.headers = {}
             resp.raise_for_status = MagicMock()
             if "tilecache" in url or "rainviewer" in url.lower():
                 resp.read = AsyncMock(return_value=_make_tile_png((0, 0, 0, 0)))
             else:
                 call_count += 1
                 resp.read = AsyncMock(return_value=tile_bytes)
-            return _make_context_manager(resp)
+            return resp
 
         session = MagicMock()
         session.get = counting_get
@@ -294,8 +298,10 @@ class TestRenderAnimatedComposite:
             r, g, b, _ = PRECIP_COLOURS[i % len(PRECIP_COLOURS)]
             precip_tile_by_frame[f"frame{i}"] = _make_tile_png((int(r), int(g), int(b), 255))
 
-        def varying_get(url: str):
-            resp = AsyncMock()
+        async def varying_get(url: str, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.headers = {}
             resp.raise_for_status = MagicMock()
             if "tilecache" in url or "rainviewer" in url.lower():
                 tile_data = _make_tile_png((0, 0, 0, 0))
@@ -306,7 +312,7 @@ class TestRenderAnimatedComposite:
                 resp.read = AsyncMock(return_value=tile_data)
             else:
                 resp.read = AsyncMock(return_value=map_bytes)
-            return _make_context_manager(resp)
+            return resp
 
         session = MagicMock()
         session.get = varying_get
@@ -362,8 +368,10 @@ class TestRenderAnimatedComposite:
             r, g, b, _ = PRECIP_COLOURS[i % len(PRECIP_COLOURS)]
             precip_tile_by_frame[f"frame{i}"] = _make_tile_png((int(r), int(g), int(b), 255))
 
-        def varying_get(url: str):
-            resp = AsyncMock()
+        async def varying_get(url: str, **kwargs):
+            resp = MagicMock()
+            resp.status = 200
+            resp.headers = {}
             resp.raise_for_status = MagicMock()
             if "tilecache" in url or "rainviewer" in url.lower():
                 tile_data = _make_tile_png((0, 0, 0, 0))
@@ -374,7 +382,7 @@ class TestRenderAnimatedComposite:
                 resp.read = AsyncMock(return_value=tile_data)
             else:
                 resp.read = AsyncMock(return_value=map_bytes)
-            return _make_context_manager(resp)
+            return resp
 
         session = MagicMock()
         session.get = varying_get

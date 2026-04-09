@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -11,6 +12,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from ..const import RAINVIEWER_ZOOM
+from ..http_retry import rate_limited_fetch
 from ..providers.rainviewer import (
     TILE_BASE_URL,
     TILE_SIZE,
@@ -31,6 +33,29 @@ _CROSSHAIR_LINE_GAP = 12
 
 # Module-level cache for static map tiles: (zoom, x, y) -> RGBA Image
 _map_tile_cache: dict[tuple[int, int, int], Image.Image] = {}
+
+# Module-level cache for radar tiles: (frame_path, zoom, x, y, scheme) -> RGBA Image
+_radar_tile_cache: dict[tuple[str, int, int, int, int], Image.Image] = {}
+_radar_tile_cache_frame: str | None = None
+
+# Semaphore to limit concurrent tile fetches (shared across map + radar)
+_tile_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_tile_semaphore() -> asyncio.Semaphore:
+    """Lazily create the tile semaphore (must be called inside a running event loop)."""
+    global _tile_semaphore
+    if _tile_semaphore is None:
+        _tile_semaphore = asyncio.Semaphore(10)
+    return _tile_semaphore
+
+
+def _clear_radar_cache_if_stale(current_frame_path: str) -> None:
+    """Clear the radar tile cache when the frame path changes."""
+    global _radar_tile_cache, _radar_tile_cache_frame
+    if _radar_tile_cache_frame != current_frame_path:
+        _radar_tile_cache.clear()
+        _radar_tile_cache_frame = current_frame_path
 
 
 def km_per_pixel(lat: float, zoom: int) -> float:
@@ -135,9 +160,8 @@ def draw_range_rings(
 
 
 async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
-    async with session.get(url) as resp:
-        resp.raise_for_status()
-        data = await resp.read()
+    resp = await rate_limited_fetch(session, url, semaphore=_get_tile_semaphore())
+    data = await resp.read()
     return Image.open(BytesIO(data)).convert("RGBA")
 
 
@@ -346,8 +370,6 @@ async def _fetch_map_crop(
     output_size: int,
 ) -> Image.Image:
     """Fetch and stitch map tiles (in parallel), then crop to viewport."""
-    import asyncio
-
     coords = [
         (tx, ty)
         for ty in range(vp.tile_y_min, vp.tile_y_max + 1)
@@ -357,8 +379,17 @@ async def _fetch_map_crop(
     async def _fetch_one(tx: int, ty: int):
         try:
             return tx, ty, await _fetch_map_tile(session, vp.map_zoom, tx, ty)
-        except Exception:
-            _LOGGER.debug("Failed to fetch map tile z=%d x=%d y=%d", vp.map_zoom, tx, ty)
+        except aiohttp.ClientResponseError as e:
+            _LOGGER.warning(
+                "Map tile fetch failed: HTTP %d for z=%d x=%d y=%d",
+                e.status, vp.map_zoom, tx, ty,
+            )
+            return tx, ty, None
+        except Exception as e:
+            _LOGGER.warning(
+                "Map tile fetch failed: %s: %s (z=%d x=%d y=%d)",
+                type(e).__name__, e, vp.map_zoom, tx, ty,
+            )
             return tx, ty, None
 
     results = await asyncio.gather(*[_fetch_one(tx, ty) for tx, ty in coords])
@@ -383,7 +414,6 @@ async def _fetch_radar_overlay(
     output_size: int,
 ) -> Image.Image:
     """Fetch radar tiles for one frame (in parallel), filter, crop, and resize to viewport."""
-    import asyncio
     radar_zoom = RAINVIEWER_ZOOM
 
     coords = [
@@ -392,15 +422,34 @@ async def _fetch_radar_overlay(
         for tx in range(vp.radar_tx_min, vp.radar_tx_max + 1)
     ]
 
+    # Clear stale radar tile cache when frame changes
+    _clear_radar_cache_if_stale(frame_path)
+
     async def _fetch_one(tx: int, ty: int):
+        cache_key = (frame_path, radar_zoom, tx, ty, _RENDER_COLOUR_SCHEME)
+        cached = _radar_tile_cache.get(cache_key)
+        if cached is not None:
+            return tx, ty, cached
+
         url = (
             f"{_RAINVIEWER_TILE_BASE}{frame_path}"
             f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{_RENDER_COLOUR_SCHEME}/0.png"
         )
         try:
-            return tx, ty, await _fetch_tile(session, url)
-        except Exception:
-            _LOGGER.debug("Failed to fetch radar tile z=%d x=%d y=%d", radar_zoom, tx, ty)
+            tile = await _fetch_tile(session, url)
+            _radar_tile_cache[cache_key] = tile
+            return tx, ty, tile
+        except aiohttp.ClientResponseError as e:
+            _LOGGER.warning(
+                "Radar tile fetch failed: HTTP %d for z=%d x=%d y=%d (%s)",
+                e.status, radar_zoom, tx, ty, frame_path,
+            )
+            return tx, ty, None
+        except Exception as e:
+            _LOGGER.warning(
+                "Radar tile fetch failed: %s: %s (z=%d x=%d y=%d)",
+                type(e).__name__, e, radar_zoom, tx, ty,
+            )
             return tx, ty, None
 
     results = await asyncio.gather(*[_fetch_one(tx, ty) for tx, ty in coords])
@@ -494,7 +543,6 @@ async def render_animated_composite(
     map_crop = await _fetch_map_crop(session, vp, output_size)
 
     # Fetch all radar overlays in parallel
-    import asyncio
     radar_overlays = await asyncio.gather(*[
         _fetch_radar_overlay(session, vp, fp, output_size) for fp in frame_paths
     ])
