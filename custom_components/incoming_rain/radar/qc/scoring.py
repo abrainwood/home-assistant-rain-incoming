@@ -99,6 +99,14 @@ def compute_confidence_map(
         else:
             confidence *= 0.85  # model says dry - mild skepticism only
 
+    # Cold-start: when clutter map is immature, be more conservative.
+    # Raise the effective threshold by reducing confidence slightly.
+    if clutter_maturity < 0.5:
+        cold_start_penalty = 1.0 - (0.15 * (1.0 - clutter_maturity * 2))
+        # At maturity=0: penalty = 0.85 (15% reduction)
+        # At maturity=0.5: penalty = 1.0 (no reduction)
+        confidence *= cold_start_penalty
+
     return ConfidenceMap(confidence=confidence, factor_scores=factor_scores)
 
 
