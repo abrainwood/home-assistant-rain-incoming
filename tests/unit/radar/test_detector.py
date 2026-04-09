@@ -540,3 +540,67 @@ class TestOverheadRainDetection:
         result = detect(frames, (shep_lat, shep_lon), config)
         # Rain was confirmed over Shepparton by BOM, Apple Weather, Weatherzone
         assert result.rain_incoming is True
+
+
+class TestClosingDistanceFallback:
+    """Tests for the closing-distance fallback path in the detector.
+
+    The fallback triggers when velocity projection doesn't predict arrival
+    but the cell's track history shows it consistently closing distance.
+    """
+
+    def _make_oblique_frames(
+        self, cfg: DetectorConfig, positions: list[tuple[int, int]]
+    ) -> list[RadarFrame]:
+        """Build frames with a cell at each (row, col) position, 10 min apart."""
+        frames = []
+        for i, (r, c) in enumerate(positions):
+            grid = np.zeros((cfg.grid_height, cfg.grid_width), dtype=np.float32)
+            grid[r : r + 3, c : c + 3] = 0.8
+            frames.append(make_frame(ts(-10 * (len(positions) - 1 - i)), grid, cfg.analysis_bounds))
+        return frames
+
+    def test_oblique_approach_detected_via_closing_distance(self):
+        """Cell moving obliquely but consistently closing distance should trigger.
+
+        The cell moves NE from the SW quadrant. Its velocity vector doesn't
+        intersect the proximity circle, but each frame is closer to the
+        location than the last - the closing-distance fallback should fire.
+        """
+        cfg = default_config()
+        # Location at pixel (32, 32). Cell starts far SW and moves NE.
+        # Velocity vector points NE but passes well west of location.
+        positions = [
+            (50, 14),
+            (47, 15),
+            (44, 16),
+            (41, 17),
+            (38, 18),
+            (35, 19),
+        ]
+        frames = self._make_oblique_frames(cfg, positions)
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert result.arrival_time is not None
+
+    def test_cell_that_reverses_not_detected(self):
+        """Cell that approached then reversed should NOT trigger.
+
+        The cell closes ~25 km over the first frames then starts moving away.
+        Overall first-vs-last distance still shows closing, but the most
+        recent frame is farther than the previous one.
+        """
+        cfg = default_config()
+        # Location at pixel (32, 32).
+        # Cell approaches from SW then reverses direction in the last frame.
+        positions = [
+            (50, 14),
+            (47, 15),
+            (44, 16),
+            (41, 17),
+            (38, 18),
+            (41, 17),  # reversed - now moving away
+        ]
+        frames = self._make_oblique_frames(cfg, positions)
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is False
