@@ -8,11 +8,14 @@ A Home Assistant integration that detects whether rain is approaching your locat
 |---|---|---|
 | `binary_sensor.incoming_rain_status` | Binary | `on` when rain is approaching or overhead |
 | `sensor.incoming_rain_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
+| `sensor.incoming_rain_intensity` | Sensor | Precipitation intensity (none/light/moderate/heavy/extreme) |
+| `sensor.incoming_rain_last_rain` | Timestamp | Last time rain was detected nearby |
 | `image.incoming_rain_radar_64km` | Image | Radar composite map - 64km radius |
 | `image.incoming_rain_radar_128km` | Image | Radar composite map - 128km radius |
 | `image.incoming_rain_radar_256km` | Image | Radar composite map - 256km radius |
+| `image.incoming_rain_radar_512km` | Image | Radar composite map - 512km radius |
 
-Both sensors expose these attributes for debugging and automation:
+The binary sensor and arrival time sensor expose these attributes for debugging and automation:
 
 | Attribute | Description |
 |---|---|
@@ -63,6 +66,64 @@ Changes take effect immediately - the coordinator will refetch radar data on the
 - Recall a robotic lawnmower before it gets wet
 - Send a notification when rain will arrive within 30 minutes
 - Trigger automations based on confidence level (normal vs degraded)
+
+## Example automations
+
+### Close pergola cover when rain is incoming
+
+```yaml
+automation:
+  - alias: "Close pergola cover - rain incoming"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.incoming_rain_status
+        to: "on"
+    action:
+      - service: cover.close_cover
+        target:
+          entity_id: cover.pergola
+```
+
+### Return lawnmower before rain arrives
+
+```yaml
+automation:
+  - alias: "Return lawnmower - rain incoming"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.incoming_rain_status
+        to: "on"
+    condition:
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: sensor.incoming_rain_intensity
+            state: "light"
+    action:
+      - service: vacuum.return_to_base
+        target:
+          entity_id: vacuum.lawnmower
+```
+
+## Troubleshooting
+
+### Confidence levels
+
+- **normal** - 3 or more radar frames available. Detection is running at full accuracy.
+- **degraded** - only 2 frames available. Detection still works but motion tracking is less reliable. This can happen when the RainViewer API is temporarily returning fewer frames.
+- **unavailable** - fewer than 2 frames. The sensors will show as unavailable until more data arrives.
+
+### Cold-start period
+
+The integration learns your local clutter patterns over 12+ hours. During this period you may see slightly reduced accuracy.
+
+### False positives
+
+Anomalous propagation (AP) - radar artifacts that appear during clear, still nights. The QC system progressively filters these as it learns.
+
+### No rain detected when it's clearly raining
+
+Check that your configured latitude and longitude are correct. The crosshair on the radar image entities shows the monitored location - verify it matches where you expect.
 
 ## Requirements
 

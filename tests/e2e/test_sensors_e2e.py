@@ -14,9 +14,12 @@ import pytest
 
 BINARY_SENSOR = "binary_sensor.incoming_rain_status"
 ARRIVAL_SENSOR = "sensor.incoming_rain_arrival_time"
+INTENSITY_SENSOR = "sensor.incoming_rain_intensity"
+LAST_RAIN_SENSOR = "sensor.incoming_rain_last_rain"
 IMAGE_64 = "image.incoming_rain_radar_64km"
 IMAGE_128 = "image.incoming_rain_radar_128km"
 IMAGE_256 = "image.incoming_rain_radar_256km"
+IMAGE_512 = "image.incoming_rain_radar_512km"
 
 
 class TestIntegrationLoaded:
@@ -29,7 +32,16 @@ class TestIntegrationLoaded:
         state = ha_client.get_state(ARRIVAL_SENSOR)
         assert state is not None, f"Entity {ARRIVAL_SENSOR} not found"
 
-    @pytest.mark.parametrize("entity_id", [IMAGE_64, IMAGE_128, IMAGE_256])
+    def test_intensity_sensor_exists(self, ha_client):
+        state = ha_client.get_state(INTENSITY_SENSOR)
+        assert state is not None, f"Entity {INTENSITY_SENSOR} not found"
+        assert state["state"] in ("none", "light", "moderate", "heavy", "extreme", "unavailable")
+
+    def test_last_rain_sensor_exists(self, ha_client):
+        state = ha_client.get_state(LAST_RAIN_SENSOR)
+        assert state is not None, f"Entity {LAST_RAIN_SENSOR} not found"
+
+    @pytest.mark.parametrize("entity_id", [IMAGE_64, IMAGE_128, IMAGE_256, IMAGE_512])
     def test_image_entities_exist(self, ha_client, entity_id):
         state = ha_client.get_state(entity_id)
         assert state is not None, f"Entity {entity_id} not found"
@@ -85,6 +97,15 @@ class TestRainEverywhereScenario:
         assert state is not None
         assert state["state"] not in ("unknown", "unavailable", "None"), \
             f"Expected a timestamp, got {state['state']}"
+
+    def test_intensity_shows_level_with_rain(self, ha_client):
+        """When rain is everywhere, intensity should not be 'none'."""
+        state = ha_client.get_state(INTENSITY_SENSOR)
+        assert state is not None
+        assert state["state"] != "none", \
+            f"Expected a rain intensity level, got {state['state']}"
+        assert state["state"] in ("light", "moderate", "heavy", "extreme"), \
+            f"Unexpected intensity value: {state['state']}"
 
 
 class TestSystemLogs:
