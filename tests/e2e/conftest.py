@@ -102,6 +102,16 @@ class HAClient:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.read().decode()
 
+    def get_image(self, entity_id: str) -> bytes | None:
+        """Download an image entity's content via the HA image proxy."""
+        url = f"{HA_URL}/api/image_proxy/{entity_id}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return resp.read()
+        except Exception:
+            return None
+
     def set_mock_scenario(self, scenario: str) -> None:
         """Switch the mock RainViewer server's active scenario."""
         body = json.dumps({"scenario": scenario}).encode()
