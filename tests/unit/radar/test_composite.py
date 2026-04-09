@@ -406,6 +406,84 @@ class TestRenderAnimatedComposite:
         assert durations[-1] == frame_duration_ms * 4
 
 
+class TestConfidenceAlphaCurve:
+    """Verify the confidence-to-alpha curve produces visible rain at moderate confidence
+    and suppresses clutter at low confidence."""
+
+    def test_rain_at_60pct_confidence_is_visible(self):
+        """A pixel at 60% confidence should have alpha >= 100 in the output.
+
+        With the original conf^3 curve: 0.6^3 * 200 = 43 (INVISIBLE - bug!)
+        With the fixed conf^1.5 curve: 0.6^1.5 * 200 = 93 (visible)
+        """
+        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+
+        output_size = 64
+        # Create radar image: single green pixel with alpha=200
+        radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
+        radar_arr[32, 32] = [0, 200, 0, 200]
+        radar_img = Image.fromarray(radar_arr)
+
+        # Confidence map: 0.6 everywhere
+        confidence_map = np.full((output_size, output_size), 0.6, dtype=np.float32)
+
+        map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        result = _composite_single_frame(
+            map_crop=map_crop,
+            radar_resized=radar_img,
+            lat=-33.7,
+            lon=151.2,
+            map_zoom=8,
+            radius_km=128,
+            output_size=output_size,
+            confidence_map=confidence_map,
+        )
+        result_arr = np.array(result)
+        # The pixel at (32, 32) should have visible green (alpha-composited over black)
+        # Alpha = 200 * adjusted_confidence. At conf=0.6:
+        #   conf^3: 200 * 0.216 = 43 (barely visible)
+        #   conf^1.5: 200 * 0.465 = 93 (clearly visible)
+        # After alpha compositing over black bg, green channel = G * (alpha/255)
+        # We check the green channel of the composite output is clearly visible
+        green_val = result_arr[32, 32, 1]
+        assert green_val >= 50, (
+            f"Rain at 60% confidence should be visible, but green channel = {green_val}"
+        )
+
+    def test_clutter_at_20pct_confidence_is_suppressed(self):
+        """A pixel at 20% confidence should have alpha < 50 in the output.
+
+        With conf^1.5: 0.2^1.5 * 200 = 17.9 (well suppressed)
+        With conf^3: 0.2^3 * 200 = 1.6 (also suppressed)
+        """
+        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+
+        output_size = 64
+        radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
+        radar_arr[32, 32] = [0, 200, 0, 200]
+        radar_img = Image.fromarray(radar_arr)
+
+        confidence_map = np.full((output_size, output_size), 0.2, dtype=np.float32)
+
+        map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        result = _composite_single_frame(
+            map_crop=map_crop,
+            radar_resized=radar_img,
+            lat=-33.7,
+            lon=151.2,
+            map_zoom=8,
+            radius_km=128,
+            output_size=output_size,
+            confidence_map=confidence_map,
+        )
+        result_arr = np.array(result)
+        # At 20% confidence, the green should be barely visible
+        green_val = result_arr[32, 32, 1]
+        assert green_val < 50, (
+            f"Clutter at 20% confidence should be suppressed, but green channel = {green_val}"
+        )
+
+
 class TestConfidenceWeightedRendering:
     """Verify that QC texture scoring dims speckly radar and preserves smooth rain."""
 

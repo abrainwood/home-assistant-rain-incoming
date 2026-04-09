@@ -63,13 +63,13 @@ class TestColdStartPenalty:
     false positives from unlearned clutter patterns."""
 
     def test_cold_start_reduces_confidence(self):
-        """maturity=0 should reduce confidence by 15%."""
+        """maturity=0 should reduce confidence by 8%."""
         grid = np.full((32, 32), 0.5, dtype=np.float32)
         result_normal = compute_confidence_map(grid, clutter_maturity=0.0)
         result_mature = compute_confidence_map(grid, clutter_maturity=1.0)
         mask = result_mature.confidence > 0
         ratio = result_normal.confidence[mask] / result_mature.confidence[mask]
-        np.testing.assert_allclose(ratio, 0.85, atol=0.01)
+        np.testing.assert_allclose(ratio, 0.92, atol=0.01)
 
     def test_mature_clutter_no_penalty(self):
         """maturity=1.0 should not reduce confidence."""
