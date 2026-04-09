@@ -1,0 +1,78 @@
+{
+  "version": "2.0",
+  "generated": 1775722829,
+  "host": "https://tilecache.rainviewer.com",
+  "radar": {
+    "past": [
+      {
+        "time": 1775715600,
+        "path": "/v2/radar/315e1c51d80e",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775716200,
+        "path": "/v2/radar/deba92f720b3",
+        "classification": "rain_incoming"
+      },
+      {
+        "time": 1775716800,
+        "path": "/v2/radar/d40a56fd4e7d",
+        "classification": "rain_incoming"
+      },
+      {
+        "time": 1775717400,
+        "path": "/v2/radar/907bc9dd0eb5",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775718000,
+        "path": "/v2/radar/3d7d2dacc946",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775718600,
+        "path": "/v2/radar/8e10de10fa7e",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775719200,
+        "path": "/v2/radar/491895071e18",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775719800,
+        "path": "/v2/radar/aa3adab0ff55",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775720400,
+        "path": "/v2/radar/6bd100b7ac0a",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775721000,
+        "path": "/v2/radar/2936ec7bd2d3",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775721600,
+        "path": "/v2/radar/4a71e5e4f32f",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775722200,
+        "path": "/v2/radar/5343710601c1",
+        "classification": "rain_overhead"
+      },
+      {
+        "time": 1775722800,
+        "path": "/v2/radar/037fbae1b921",
+        "classification": "rain_overhead"
+      }
+    ],
+    "nowcast": []
+  },
+  "satellite": {
+    "infrared": []
+  }
+}
