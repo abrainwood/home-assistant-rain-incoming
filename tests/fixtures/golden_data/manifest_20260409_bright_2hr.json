@@ -1,0 +1,131 @@
+{
+  "captured_at": "2026-04-09T01:16:40.487436+00:00",
+  "location": {
+    "lat": -36.731,
+    "lon": 146.96,
+    "name": "Bright"
+  },
+  "ground_truth": {
+    "conditions": "TO BE CLASSIFIED BY ANDREW",
+    "open_meteo": "0.0mm"
+  },
+  "frames": [
+    {
+      "index": 0,
+      "time": 1775689800,
+      "path": "/v2/radar/44f727a8d236",
+      "timestamp_utc": "2026-04-08 23:10 UTC",
+      "echo_pixels": 10294,
+      "max_intensity": 0.7686274647712708,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 1,
+      "time": 1775690400,
+      "path": "/v2/radar/ffd74163da91",
+      "timestamp_utc": "2026-04-08 23:20 UTC",
+      "echo_pixels": 11076,
+      "max_intensity": 1.0,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 2,
+      "time": 1775691000,
+      "path": "/v2/radar/828ae3d56208",
+      "timestamp_utc": "2026-04-08 23:30 UTC",
+      "echo_pixels": 12778,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 3,
+      "time": 1775691600,
+      "path": "/v2/radar/016201651cc0",
+      "timestamp_utc": "2026-04-08 23:40 UTC",
+      "echo_pixels": 14484,
+      "max_intensity": 1.0,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 4,
+      "time": 1775692200,
+      "path": "/v2/radar/be3c44353943",
+      "timestamp_utc": "2026-04-08 23:50 UTC",
+      "echo_pixels": 14574,
+      "max_intensity": 1.0,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 5,
+      "time": 1775692800,
+      "path": "/v2/radar/2b560a3c8cab",
+      "timestamp_utc": "2026-04-09 00:00 UTC",
+      "echo_pixels": 13245,
+      "max_intensity": 0.7686274647712708,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 6,
+      "time": 1775693400,
+      "path": "/v2/radar/2ef5ffa1fc15",
+      "timestamp_utc": "2026-04-09 00:10 UTC",
+      "echo_pixels": 13771,
+      "max_intensity": 0.7686274647712708,
+      "classification": "rain_incoming"
+    },
+    {
+      "index": 7,
+      "time": 1775694000,
+      "path": "/v2/radar/a6b37917e914",
+      "timestamp_utc": "2026-04-09 00:20 UTC",
+      "echo_pixels": 15122,
+      "max_intensity": 0.9803921580314636,
+      "classification": "rain_incoming"
+    },
+    {
+      "index": 8,
+      "time": 1775694600,
+      "path": "/v2/radar/9d52c73ff079",
+      "timestamp_utc": "2026-04-09 00:30 UTC",
+      "echo_pixels": 13163,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 9,
+      "time": 1775695200,
+      "path": "/v2/radar/11f1253e5154",
+      "timestamp_utc": "2026-04-09 00:40 UTC",
+      "echo_pixels": 12545,
+      "max_intensity": 0.7686274647712708,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 10,
+      "time": 1775695800,
+      "path": "/v2/radar/417c4d66b5e4",
+      "timestamp_utc": "2026-04-09 00:50 UTC",
+      "echo_pixels": 12901,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 11,
+      "time": 1775696400,
+      "path": "/v2/radar/4c4fa070fe65",
+      "timestamp_utc": "2026-04-09 01:00 UTC",
+      "echo_pixels": 13056,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_overhead"
+    },
+    {
+      "index": 12,
+      "time": 1775697000,
+      "path": "/v2/radar/96ecff318a82",
+      "timestamp_utc": "2026-04-09 01:10 UTC",
+      "echo_pixels": 12022,
+      "max_intensity": 1.0,
+      "classification": "rain_overhead"
+    }
+  ]
+}

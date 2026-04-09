@@ -1,0 +1,130 @@
+{
+  "captured_at": "2026-04-09T02:00:46.309707+00:00",
+  "location": {
+    "lat": -36.081,
+    "lon": 146.916,
+    "name": "Albury"
+  },
+  "ground_truth": {
+    "conditions": "TO BE CLASSIFIED BY ANDREW"
+  },
+  "frames": [
+    {
+      "index": 0,
+      "time": 1775692800,
+      "path": "/v2/radar/2b560a3c8cab",
+      "timestamp_utc": "2026-04-09 00:00 UTC",
+      "echo_pixels": 13243,
+      "max_intensity": 0.7686274647712708,
+      "classification": "rain_receeding"
+    },
+    {
+      "index": 1,
+      "time": 1775693400,
+      "path": "/v2/radar/2ef5ffa1fc15",
+      "timestamp_utc": "2026-04-09 00:10 UTC",
+      "echo_pixels": 14185,
+      "max_intensity": 0.7686274647712708,
+      "classification": "rain_receeding"
+    },
+    {
+      "index": 2,
+      "time": 1775694000,
+      "path": "/v2/radar/a6b37917e914",
+      "timestamp_utc": "2026-04-09 00:20 UTC",
+      "echo_pixels": 15463,
+      "max_intensity": 0.9725490212440491,
+      "classification": "none"
+    },
+    {
+      "index": 3,
+      "time": 1775694600,
+      "path": "/v2/radar/9d52c73ff079",
+      "timestamp_utc": "2026-04-09 00:30 UTC",
+      "echo_pixels": 13553,
+      "max_intensity": 0.8784313797950745,
+      "classification": "none"
+    },
+    {
+      "index": 4,
+      "time": 1775695200,
+      "path": "/v2/radar/11f1253e5154",
+      "timestamp_utc": "2026-04-09 00:40 UTC",
+      "echo_pixels": 12954,
+      "max_intensity": 0.7686274647712708,
+      "classification": "rain_incoming (not the little cream coloured block - we might even ignore that - It's the darker cell coming in currently crossing the 64km circle"
+    },
+    {
+      "index": 5,
+      "time": 1775695800,
+      "path": "/v2/radar/417c4d66b5e4",
+      "timestamp_utc": "2026-04-09 00:50 UTC",
+      "echo_pixels": 13199,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_incoming"
+    },
+    {
+      "index": 6,
+      "time": 1775696400,
+      "path": "/v2/radar/4c4fa070fe65",
+      "timestamp_utc": "2026-04-09 01:00 UTC",
+      "echo_pixels": 13385,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_incoming"
+    },
+    {
+      "index": 7,
+      "time": 1775697000,
+      "path": "/v2/radar/96ecff318a82",
+      "timestamp_utc": "2026-04-09 01:10 UTC",
+      "echo_pixels": 12691,
+      "max_intensity": 1.0,
+      "classification": "rain_incoming"
+    },
+    {
+      "index": 8,
+      "time": 1775697600,
+      "path": "/v2/radar/b2e1880b870b",
+      "timestamp_utc": "2026-04-09 01:20 UTC",
+      "echo_pixels": 14407,
+      "max_intensity": 0.9921568632125854,
+      "classification": "rain_incoming"
+    },
+    {
+      "index": 9,
+      "time": 1775698200,
+      "path": "/v2/radar/66585045de64",
+      "timestamp_utc": "2026-04-09 01:30 UTC",
+      "echo_pixels": 13545,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_incoming"
+    },
+    {
+      "index": 10,
+      "time": 1775698800,
+      "path": "/v2/radar/056f2aa9e3cd",
+      "timestamp_utc": "2026-04-09 01:40 UTC",
+      "echo_pixels": 14216,
+      "max_intensity": 1.0,
+      "classification": "rain_overhead (by proximity)"
+    },
+    {
+      "index": 11,
+      "time": 1775699400,
+      "path": "/v2/radar/3f1c985f0723",
+      "timestamp_utc": "2026-04-09 01:50 UTC",
+      "echo_pixels": 17299,
+      "max_intensity": 1.0,
+      "classification": "rain_overhead (by proximity)"
+    },
+    {
+      "index": 12,
+      "time": 1775700000,
+      "path": "/v2/radar/6a622e51ad40",
+      "timestamp_utc": "2026-04-09 02:00 UTC",
+      "echo_pixels": 16452,
+      "max_intensity": 0.8784313797950745,
+      "classification": "rain_overhead"
+    }
+  ]
+}
