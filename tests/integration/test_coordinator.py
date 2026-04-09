@@ -43,10 +43,6 @@ async def test_coordinator_returns_detection_result(hass: HomeAssistant):
             "custom_components.incoming_rain.coordinator.async_get_clientsession",
             return_value=mock_session,
         ),
-        patch(
-            "custom_components.incoming_rain.coordinator.fetch_precipitation_now",
-            new=AsyncMock(return_value=None),
-        ),
     ):
         result = await coordinator._async_update_data()
 

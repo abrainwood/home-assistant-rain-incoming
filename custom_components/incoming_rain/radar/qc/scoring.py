@@ -20,7 +20,6 @@ def compute_confidence_map(
     grids: list[np.ndarray] | None = None,
     clutter_freq: np.ndarray | None = None,
     clutter_maturity: float = 0.0,
-    model_precipitation_mm: float | None = None,
 ) -> ConfidenceMap:
     """Compute a per-pixel confidence map by combining QC factor scores.
 
@@ -85,19 +84,6 @@ def compute_confidence_map(
 
     if total_weight > 0:
         confidence /= total_weight
-
-    # Model-based modifier: asymmetric treatment.
-    # "Model says rain" is a strong positive (boost). "Model says dry" is a
-    # weak negative (mild skepticism) - radar might see virga or cells about
-    # to reach the ground that the model hasn't picked up yet.
-    if model_precipitation_mm is not None:
-        if model_precipitation_mm >= 0.5:
-            confidence *= 1.15  # model confirms rain - boost
-            np.clip(confidence, 0, 1, out=confidence)
-        elif model_precipitation_mm > 0.01:
-            pass  # trace amounts - no change either way
-        else:
-            confidence *= 0.85  # model says dry - mild skepticism only
 
     # Cold-start: when clutter map is immature, be more conservative.
     # Raise the effective threshold by reducing confidence slightly.

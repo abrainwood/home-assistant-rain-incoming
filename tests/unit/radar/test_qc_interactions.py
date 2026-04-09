@@ -1,5 +1,5 @@
 """
-Three-way interaction tests: Radar signal x QC factors x Open-Meteo model.
+Interaction tests: Radar signal x QC factors.
 
 These test the decision boundaries where false positives and negatives live.
 Each scenario runs synthetic data through the full QC + detection pipeline.
@@ -52,7 +52,6 @@ GRID_SHAPE = (64, 64)
 
 def _run_pipeline(
     grids: list[np.ndarray],
-    model_precipitation_mm: float | None,
     clutter_freq: np.ndarray | None = None,
     clutter_maturity: float = 1.0,
     config=None,
@@ -72,7 +71,6 @@ def _run_pipeline(
             grids=grids,
             clutter_freq=clutter_freq,
             clutter_maturity=clutter_maturity,
-            model_precipitation_mm=model_precipitation_mm,
         ).confidence
         for g in grids
     ]
@@ -83,85 +81,31 @@ def _run_pipeline(
 # ---- 1. Strong smooth rain + QC high + model confirms ----
 
 
-class TestRadarHighQC_HighMeteoConfirms:
-    """Strong smooth rain, QC says high confidence, model confirms rain."""
+class TestRadarHighQC_Detected:
+    """Strong smooth rain, QC says high confidence - should be detected."""
 
     def test_detected_with_full_confidence(self):
         # 10x10 smooth rain blob centred on location (row 32, col 32),
-        # present in all 3 frames, model says 2.0mm
+        # present in all 3 frames
         blob = slice(27, 37), slice(27, 37)
         grids = [_smooth_blob(GRID_SHAPE, *blob, intensity=0.5) for _ in range(3)]
 
-        result = _run_pipeline(grids, model_precipitation_mm=2.0)
+        result = _run_pipeline(grids)
 
         assert result.rain_incoming is True
         assert len(result.tracked_cells) >= 1
-        # Cell confidence should be high (no penalty from model)
         assert result.tracked_cells[0].confidence > 0.6
 
 
-# ---- 2. Strong smooth rain + QC high + model says 0mm ----
+# ---- 4. Weak speckly returns + low QC ----
 
 
-class TestRadarHighQC_HighMeteoZero:
-    """Strong smooth rain, QC says high confidence, but model says 0mm."""
-
-    def _make_grids(self):
-        # Use a large blob (20x20) so interior pixels have max texture score.
-        # With a 5x5 kernel, pixels >2 from edge get near-zero local std.
-        blob = slice(22, 42), slice(22, 42)
-        return [_smooth_blob(GRID_SHAPE, *blob, intensity=0.5) for _ in range(3)]
-
-    def test_still_detected_despite_model_penalty(self):
-        # Same smooth blob, model says 0.0mm
-        # 0.85x penalty, but high base confidence (texture~1.0, temporal=1.0)
-        # still passes 0.35 threshold
-        grids = self._make_grids()
-        result = _run_pipeline(grids, model_precipitation_mm=0.0)
-
-        assert result.rain_incoming is True
-        assert len(result.tracked_cells) >= 1
-
-    def test_cell_confidence_reduced(self):
-        # Cell confidence should be lower than the confirms-rain case
-        grids = self._make_grids()
-        result_confirm = _run_pipeline(grids, model_precipitation_mm=2.0)
-        result_zero = _run_pipeline(grids, model_precipitation_mm=0.0)
-
-        conf_confirm = result_confirm.tracked_cells[0].confidence
-        conf_zero = result_zero.tracked_cells[0].confidence
-        assert conf_zero < conf_confirm
-
-
-# ---- 3. Strong smooth rain + QC high + model down (None) ----
-
-
-class TestRadarHighQC_HighMeteoDown:
-    """Strong smooth rain, QC says high confidence, model API unreachable."""
-
-    def test_detected_with_fail_open(self):
-        # Same smooth blob, model returns None -> no penalty applied (fail open)
-        blob = slice(27, 37), slice(27, 37)
-        grids = [_smooth_blob(GRID_SHAPE, *blob, intensity=0.5) for _ in range(3)]
-
-        result = _run_pipeline(grids, model_precipitation_mm=None)
-
-        assert result.rain_incoming is True
-        assert len(result.tracked_cells) >= 1
-        # Full confidence - no model penalty
-        assert result.tracked_cells[0].confidence > 0.6
-
-
-# ---- 4. Weak speckly returns + low QC + model confirms ----
-
-
-class TestRadarWeakQC_LowMeteoConfirms:
-    """Weak speckly returns, low QC score, but model confirms rain."""
+class TestRadarWeakQC_SpeckleVsSmooth:
+    """Weak speckly returns get lower confidence than smooth rain."""
 
     def test_speckle_has_lower_confidence_than_smooth(self):
-        # The model confirming rain (no penalty) doesn't fix bad texture.
         # Compare: speckle confidence vs smooth blob confidence -
-        # speckle should be significantly lower even with model confirmation.
+        # speckle should be significantly lower due to texture penalty.
         grids_speckle = [
             _speckle_grid(GRID_SHAPE, density=0.05, intensity=0.3, seed=42 + i)
             for i in range(3)
@@ -172,127 +116,84 @@ class TestRadarWeakQC_LowMeteoConfirms:
         ]
 
         cm_speckle = compute_confidence_map(
-            grids_speckle[-1], grids=grids_speckle, model_precipitation_mm=1.5,
+            grids_speckle[-1], grids=grids_speckle,
         )
         cm_smooth = compute_confidence_map(
-            grids_smooth[-1], grids=grids_smooth, model_precipitation_mm=1.5,
+            grids_smooth[-1], grids=grids_smooth,
         )
 
         speckle_mean = float(cm_speckle.confidence[cm_speckle.confidence > 0].mean())
         smooth_mean = float(cm_smooth.confidence[22:42, 22:42].mean())
 
-        # Model confirms both, but speckle's texture penalty should dominate
+        # Speckle's texture penalty should dominate
         assert speckle_mean < smooth_mean
 
 
-# ---- 5. Weak speckly returns + low QC + model says 0mm ----
+# ---- 5. Weak speckly returns + low QC ----
 
 
-class TestRadarWeakQC_LowMeteoZero:
-    """Weak speckly returns, low QC score, model says zero."""
+class TestRadarWeakQC_NoiseSuppressed:
+    """Weak speckly returns, low QC score - noise should be suppressed."""
 
-    def test_noise_suppressed_by_double_penalty(self):
-        # Sparse speckle + 0mm model = very low confidence
-        # Double penalty (bad texture + 0.85x model) kills it
-        grids = [_speckle_grid(GRID_SHAPE, density=0.05, intensity=0.3, seed=42 + i) for i in range(3)]
+    def test_noise_suppressed_by_texture_penalty(self):
+        # Very sparse speckle with weak intensity = low effective intensity.
+        # Even with moderate texture scores, the combination of weak raw
+        # intensity and texture penalty keeps effective intensity near threshold,
+        # and speckle cells are too small/incoherent to pass tracking filters.
+        grids = [_speckle_grid(GRID_SHAPE, density=0.01, intensity=0.12, seed=42 + i) for i in range(3)]
 
-        result = _run_pipeline(grids, model_precipitation_mm=0.0)
+        result = _run_pipeline(grids)
 
         assert result.rain_incoming is False
 
 
-# ---- 6. THE critical scenario: AP noise (smooth + persistent) + model says 0mm ----
+# ---- 6. AP noise (smooth + persistent) ----
 
 
-class TestAPNoise_SmoothPersistent_MeteoZero:
-    """THE critical scenario: AP noise that looks smooth and persists across frames,
-    but model says 0mm. This is the clear-sky-with-stars situation."""
+class TestAPNoise_SmoothPersistent:
+    """AP noise that looks smooth and persists across frames.
+    Without the clutter map, this is hard to distinguish from real rain.
+    The clutter map (after maturing over days) will catch it."""
 
     def _make_ap_grids(self):
         """Large smooth area of weak returns, present in all frames."""
         blob = slice(20, 44), slice(20, 44)  # 24x24 area
         return [_smooth_blob(GRID_SHAPE, *blob, intensity=0.15) for _ in range(3)]
 
-    def test_ap_confidence_reduced_when_model_says_dry(self):
-        # Model says dry -> 0.85x penalty. Smooth persistent AP gets high texture
-        # and temporal scores, so confidence is only mildly reduced.
-        # This is a known trade-off: mild model penalty doesn't kill AP noise,
-        # but the clutter map (after maturing over days) will catch it.
+    def test_ap_confidence_not_perfect(self):
+        # AP passes texture+temporal, but confidence is NOT 1.0
+        # (edge effects in texture scoring reduce it slightly)
         grids = self._make_ap_grids()
 
-        cm_dry = compute_confidence_map(grids[-1], grids=grids, model_precipitation_mm=0.0)
-        cm_none = compute_confidence_map(grids[-1], grids=grids, model_precipitation_mm=None)
-
-        ap_region_dry = cm_dry.confidence[20:44, 20:44]
-        ap_region_none = cm_none.confidence[20:44, 20:44]
-        # Model penalty should reduce confidence vs no-model baseline
-        assert ap_region_dry[ap_region_dry > 0].mean() < ap_region_none[ap_region_none > 0].mean()
-
-    def test_ap_renders_dimmer_with_model_dry(self):
-        # With 0.85x penalty, AP confidence is reduced. After cubing for
-        # rendering, the visual difference is noticeable.
-        grids = self._make_ap_grids()
-
-        cm = compute_confidence_map(grids[-1], grids=grids, model_precipitation_mm=0.0)
-        ap_region = cm.confidence[20:44, 20:44]
-        mean_conf = float(ap_region[ap_region > 0].mean()) if np.any(ap_region > 0) else 0.0
-
-        # Confidence reduced but not obliterated (mild penalty)
-        assert mean_conf < 0.95
-        # Cubed opacity still visible but dimmed
-        assert mean_conf ** 3 < 0.85
-
-
-# ---- 7. AP noise (smooth + persistent) + model down ----
-
-
-class TestAPNoise_SmoothPersistent_MeteoDown:
-    """AP noise, looks real to radar QC, and model API is unreachable."""
-
-    def test_ap_may_detect_without_model_check(self):
-        # Worst case: AP passes texture+temporal, no model to penalise.
-        # This is a known limitation. We verify:
-        # - It may detect (we don't assert rain_incoming=False)
-        # - But confidence is NOT 1.0 (some factors should still reduce it)
-        blob = slice(20, 44), slice(20, 44)
-        grids = [_smooth_blob(GRID_SHAPE, *blob, intensity=0.15) for _ in range(3)]
-
-        result = _run_pipeline(grids, model_precipitation_mm=None)
-
-        # Without the model check, the AP noise might be detected or not
-        # depending on whether effective intensity (0.15 * conf) exceeds 0.1.
-        # Key assertion: even without model, confidence is not maxed out.
-        cm = compute_confidence_map(grids[-1], grids=grids, model_precipitation_mm=None)
+        cm = compute_confidence_map(grids[-1], grids=grids)
         ap_region = cm.confidence[20:44, 20:44]
         mean_conf = float(ap_region[ap_region > 0].mean())
-        # Confidence should be high but not perfect 1.0 (edge effects in texture)
+        # Confidence should be high but not perfect 1.0
         assert mean_conf < 1.0
 
 
-# ---- 8. No radar returns + model confirms rain ----
+# ---- 8. No radar returns ----
 
 
-class TestNoRadar_MeteoConfirms:
-    """No radar returns at all, but model says it's raining."""
+class TestNoRadar:
+    """No radar returns at all - nothing to detect."""
 
     def test_no_detection_without_radar_signal(self):
-        # Empty grids, model says 5.0mm
-        # Model can't create phantom cells - nothing to track
         grids = [np.zeros(GRID_SHAPE, dtype=np.float32) for _ in range(3)]
 
-        result = _run_pipeline(grids, model_precipitation_mm=5.0)
+        result = _run_pipeline(grids)
 
         assert result.rain_incoming is False
         assert result.tracked_cells == []
 
 
-# ---- 9. Stationary clutter + matured clutter map + model says 0mm ----
+# ---- 9. Stationary clutter + matured clutter map ----
 
 
-class TestStationaryClutter_MaturedMap_MeteoZero:
-    """Ground clutter at fixed pixels, clutter map has matured, model says 0mm."""
+class TestStationaryClutter_MaturedMap:
+    """Ground clutter at fixed pixels, clutter map has matured."""
 
-    def test_clutter_suppressed_by_map_and_model(self):
+    def test_clutter_suppressed_by_map(self):
         # Same pixels lit in every grid (simulating ground clutter)
         # Ground clutter is typically weak. With matured clutter map driving
         # confidence down, the effective intensity falls below threshold.
@@ -305,14 +206,11 @@ class TestStationaryClutter_MaturedMap_MeteoZero:
 
         result = _run_pipeline(
             grids,
-            model_precipitation_mm=0.0,
             clutter_freq=clutter_freq,
             clutter_maturity=1.0,
         )
 
         # Clutter score = 1 - 0.95 = 0.05 for those pixels (very low)
-        # Model penalty 0.85x on top of that
-        # Combined: very low conf -> effective intensity = 0.2 * conf
         # The clutter factor alone should drive this below threshold
         assert result.rain_incoming is False
 
@@ -351,7 +249,7 @@ class TestMovingCell_PlusStationaryNoise:
         # the cell overlaps the location pixel. High intensity * moderate
         # confidence exceeds thresholds.
         grids = self._make_grids()
-        result = _run_pipeline(grids, model_precipitation_mm=2.0)
+        result = _run_pipeline(grids)
 
         assert result.rain_incoming is True
         assert len(result.tracked_cells) >= 1
@@ -364,7 +262,7 @@ class TestMovingCell_PlusStationaryNoise:
         # tracking (velocity, coherence) not by per-pixel temporal score.
         grids = self._make_grids()
 
-        cm = compute_confidence_map(grids[-1], grids=grids, model_precipitation_mm=2.0)
+        cm = compute_confidence_map(grids[-1], grids=grids)
 
         # Moving cell at col 16 in last frame: temporal ~1/3 (only in last frame
         # at those pixels)
@@ -376,31 +274,26 @@ class TestMovingCell_PlusStationaryNoise:
         assert static_temporal == pytest.approx(1.0, abs=0.01)
 
 
-# ---- 11. AP noise + cold start (maturity=0) + model says 0mm ----
+# ---- 11. AP noise + cold start (maturity=0) ----
 
 
-class TestAPNoise_ColdStart_MeteoZero:
-    """AP noise on a fresh installation with zero clutter maturity and model
-    saying dry. The cold-start penalty (0.85x) stacks with the model-dry
-    penalty (0.85x) giving ~0.72x total confidence reduction."""
+class TestAPNoise_ColdStart:
+    """AP noise on a fresh installation with zero clutter maturity.
+    The cold-start penalty (0.85x) provides some confidence reduction."""
 
-    def test_cold_start_plus_model_dry_suppresses_weak_ap(self):
-        """Weak AP returns should be suppressed by double penalty on cold start."""
+    def test_cold_start_reduces_ap_confidence(self):
+        """Weak AP returns should have reduced confidence on cold start."""
         # Weak AP-like smooth blob at location
         blob = slice(20, 44), slice(20, 44)
         grids = [_smooth_blob(GRID_SHAPE, *blob, intensity=0.15) for _ in range(3)]
 
         result = _run_pipeline(
             grids,
-            model_precipitation_mm=0.0,
             clutter_maturity=0.0,  # fresh install
         )
 
-        # Cold-start (0.85x) + model-dry (0.85x) = ~0.72x confidence
-        # With base confidence ~0.99 for smooth blob, effective conf ~0.72
-        # effective intensity = 0.15 * ~0.72 = ~0.108, just above threshold
-        # Should be suppressed or at minimum have notably reduced confidence
+        # Cold-start (0.85x) confidence reduction
+        # With base confidence ~0.99 for smooth blob, effective conf ~0.85
         if result.rain_incoming:
-            # Double penalty means confidence is well below a mature system
             for cell in result.tracked_cells:
-                assert cell.confidence < 0.75
+                assert cell.confidence < 0.90

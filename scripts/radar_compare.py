@@ -39,7 +39,6 @@ from custom_components.incoming_rain.const import (
     RAINVIEWER_ZOOM,
 )
 from custom_components.incoming_rain.providers.base import BoundingBox
-from custom_components.incoming_rain.providers.open_meteo import fetch_precipitation_now
 from custom_components.incoming_rain.providers.rainviewer import (
     MANIFEST_URL,
     RainViewerFrame,
@@ -113,7 +112,6 @@ def _build_report(
     lat: float,
     lon: float,
     local_time: datetime,
-    precip_mm: float | None,
     grids: list[np.ndarray],
     confidence_maps: list[np.ndarray],
     detection_result,
@@ -135,7 +133,6 @@ def _build_report(
     cubed_mean = float(cubed_echo.mean()) if cubed_echo.size > 0 else 0.0
 
     tz_label = local_time.strftime("%Z") or "UTC"
-    precip_str = f"{precip_mm:.1f} mm" if precip_mm is not None else "unavailable"
 
     intensity_label = _classify_intensity(detection_result.max_approaching_intensity)
     arrival_str = (
@@ -147,7 +144,6 @@ def _build_report(
     lines = [
         f"Location: {name} ({lat}, {lon})",
         f"Time: {local_time.strftime('%Y-%m-%d %H:%M')} {tz_label}",
-        f"Open-Meteo: {precip_str}",
         "",
         "Raw Radar:",
         f"  Echo pixels: {echo_count} / {total_pixels}",
@@ -211,19 +207,18 @@ async def run_comparison(lat: float, lon: float, name: str) -> None:
             print("  ERROR: Not enough frames for analysis")
             return
 
-        # 2. Fetch tile grids + Open-Meteo concurrently
+        # 2. Fetch tile grids
         config = _build_detector_config(lat, lon)
         bounds = config.analysis_bounds
         W, H = config.grid_width, config.grid_height
 
-        print("  Fetching intensity grids + Open-Meteo...")
-        fetch_tasks = []
-        for frame in frames:
-            fetch_tasks.append(frame._fetch_stitched_grid(bounds, W, H, session))
-        fetch_tasks.append(fetch_precipitation_now(lat, lon, session))
+        print("  Fetching intensity grids...")
+        fetch_tasks = [
+            frame._fetch_stitched_grid(bounds, W, H, session)
+            for frame in frames
+        ]
 
-        results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
-        precip_mm = results[-1] if not isinstance(results[-1], Exception) else None
+        await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
         # 3. Extract grids and run QC
         print("  Running QC pipeline...")
@@ -237,7 +232,6 @@ async def run_comparison(lat: float, lon: float, name: str) -> None:
                 grid,
                 config=qc_config,
                 grids=grids_up_to_i,
-                model_precipitation_mm=precip_mm if isinstance(precip_mm, (int, float)) else None,
             )
             confidence_maps.append(cmap.confidence)
 
@@ -287,7 +281,7 @@ async def run_comparison(lat: float, lon: float, name: str) -> None:
         # 6. Build report
         now_local = datetime.now(local_tz)
         report = _build_report(
-            name, lat, lon, now_local, precip_mm, grids, confidence_maps, result,
+            name, lat, lon, now_local, grids, confidence_maps, result,
         )
 
     # 7. Write output

@@ -28,7 +28,6 @@ from .const import (
     RAINVIEWER_TILE_SIZE,
 )
 from .providers.base import BoundingBox
-from .providers.open_meteo import fetch_precipitation_now
 from .providers.rainviewer import RainViewerProvider
 from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
 from .radar.qc import (
@@ -90,7 +89,6 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.confidence_maps: list = []
         self.last_update_success_time: datetime | None = None
         self.last_rain_nearby_time: datetime | None = None
-        self.model_precipitation_mm: float | None = None
 
         # Clutter map - loaded lazily in _async_update_data to avoid blocking I/O
         import os
@@ -156,7 +154,6 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         # Fetch tile grids BEFORE running detection - get_intensity_grid returns
         # zeros until the tiles have been fetched and stitched.
-        # Also fetch Open-Meteo precipitation concurrently (non-blocking, fail open).
         session = async_get_clientsession(self.hass)
 
         async def _fetch_frame(frame):
@@ -165,12 +162,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             except Exception:
                 _LOGGER.debug("Failed to fetch grid for frame %s", frame.timestamp)
 
-        results = await asyncio.gather(
-            *[_fetch_frame(frame) for frame in frames],
-            fetch_precipitation_now(lat, lon, session),
-        )
-        # Last result is the Open-Meteo precipitation value
-        self.model_precipitation_mm = results[-1] if results else None
+        await asyncio.gather(*[_fetch_frame(frame) for frame in frames])
 
         # Compute per-frame QC confidence maps BEFORE detection so they can
         # be used to gate intensity thresholding in the detector.
@@ -214,7 +206,6 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                 grids=grids_up_to_i,
                 clutter_freq=clutter_freq,
                 clutter_maturity=clutter_maturity,
-                model_precipitation_mm=self.model_precipitation_mm,
             )
             self.confidence_maps.append(cmap.confidence)
 

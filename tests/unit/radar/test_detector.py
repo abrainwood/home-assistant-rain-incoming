@@ -400,13 +400,8 @@ class TestQCDoesNotSuppressRealRain:
         assert result.rain_incoming is True
         assert len(result.tracked_cells) > 0
 
-    def test_approaching_rain_not_suppressed_by_model_zero(self):
-        """Even if Open-Meteo says 0mm, a strong approaching cell should still be
-        tracked AND trigger rain_incoming with the softened 0.5x penalty.
-
-        With the graduated penalty (0.5x for 0mm), a cell with high pre-penalty
-        confidence can still exceed the _MIN_CELL_CONFIDENCE threshold (0.35).
-        """
+    def test_approaching_rain_detected_with_qc(self):
+        """A strong approaching cell with QC confidence maps should be tracked."""
         # Cell must be large enough (>5x5) to survive texture scoring with a 5x5 kernel.
         cfg = default_config()
         cell_size = 8
@@ -422,18 +417,16 @@ class TestQCDoesNotSuppressRealRain:
 
         from custom_components.incoming_rain.radar.qc import compute_confidence_map
         confidence_maps = [
-            compute_confidence_map(g, grids=grids, model_precipitation_mm=0.0).confidence
+            compute_confidence_map(g, grids=grids).confidence
             for g in grids
         ]
 
         result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
-        # Cell pixels survive effective intensity gating and the softened 0.5x penalty
-        # means cell confidence can exceed 0.35 threshold
         assert len(result.tracked_cells) > 0
         assert result.tracked_cells[0].velocity_kmh > 0
 
-    def test_model_confirms_rain_full_detection(self):
-        """When Open-Meteo confirms rain (>0mm), approaching cell gets full detection."""
+    def test_large_approaching_cell_full_detection(self):
+        """A large approaching cell should get full detection with QC."""
         cfg = default_config()
         # Large cell (16x16) so interior pixels have high texture confidence
         cell_size = 16
@@ -449,12 +442,11 @@ class TestQCDoesNotSuppressRealRain:
 
         from custom_components.incoming_rain.radar.qc import compute_confidence_map
         confidence_maps = [
-            compute_confidence_map(g, grids=grids, model_precipitation_mm=2.0).confidence
+            compute_confidence_map(g, grids=grids).confidence
             for g in grids
         ]
 
         result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
-        # Model confirms rain - no penalty, full confidence, rain_incoming fires
         assert result.rain_incoming is True
 
 
