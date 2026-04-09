@@ -30,14 +30,20 @@ async def fetch_with_retry(
         if resp.status == 429:
             if attempt < max_retries:
                 retry_after = resp.headers.get("Retry-After")
+                delay = base_delay * (2 ** attempt)
                 if retry_after:
-                    delay = float(retry_after)
-                else:
-                    delay = base_delay * (2 ** attempt)
+                    try:
+                        delay = float(retry_after)
+                    except ValueError:
+                        _LOGGER.debug(
+                            "Non-numeric Retry-After header '%s', using exponential backoff",
+                            retry_after,
+                        )
                 _LOGGER.warning(
                     "Rate limited (429) on %s, retrying in %.1fs (attempt %d/%d)",
                     url, delay, attempt + 1, max_retries,
                 )
+                resp.release()
                 await asyncio.sleep(delay)
                 continue
             # All retries exhausted on 429
@@ -53,6 +59,7 @@ async def fetch_with_retry(
                     "Server error (%d) on %s, retrying in %.1fs (attempt %d/%d)",
                     resp.status, url, delay, attempt + 1, max_retries,
                 )
+                resp.release()
                 await asyncio.sleep(delay)
                 continue
             # All retries exhausted on 5xx

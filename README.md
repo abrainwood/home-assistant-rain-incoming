@@ -19,9 +19,6 @@ The binary sensor and arrival time sensor expose these attributes for debugging 
 
 | Attribute | Description |
 |---|---|
-| `latitude` | Monitored location latitude |
-| `longitude` | Monitored location longitude |
-| `lookahead_minutes` | How far ahead the integration is looking |
 | `confidence` | `normal` (3+ frames), `degraded` (2 frames), or `unavailable` |
 | `frame_count` | Number of radar frames used in the analysis |
 

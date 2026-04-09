@@ -280,14 +280,8 @@ class TestMelbourneGoldenV2:
             _save_gif(mixed_gif, "/tmp/golden_v2_melbourne_mixed.gif")
 
         # With 12/13 dry frames, the sensor should be off
-        # (but this depends on how the detector weights recent vs old frames)
-        # We test the actual behavior honestly
-        actual_state = state["state"]
-        assert actual_state in ("on", "off"), (
-            f"Unexpected state: '{actual_state}'"
-        )
-        # Log what we got for the report
-        print(
-            f"Melbourne 0-12 (1 overhead + 12 none): sensor={actual_state}, "
-            f"attrs={state.get('attributes', {})}"
+        assert state["state"] == "off", (
+            f"Melbourne frames 0-12 (1 overhead + 12 none) but sensor says '{state['state']}'. "
+            f"With 12/13 dry frames the system should classify this as dry. "
+            f"Attributes: {state.get('attributes', {})}"
         )

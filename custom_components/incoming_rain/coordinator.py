@@ -180,10 +180,17 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # Compute per-frame QC confidence maps BEFORE detection so they can
         # be used to gate intensity thresholding in the detector.
         grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
+
+        # If ALL grids are zero, every fetch failed - raise so sensors show
+        # unavailable instead of a false "no rain".
+        import numpy as np
+        if grids and all(np.count_nonzero(g) == 0 for g in grids):
+            raise UpdateFailed(
+                "All radar tile fetches failed - all grids are empty"
+            )
         qc_config = QCConfig()
 
         # Update clutter map with the latest frame
-        import numpy as np
         latest_grid = grids[-1] if grids else None
         if latest_grid is not None:
             if self._clutter_map is None:
