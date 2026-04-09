@@ -64,17 +64,46 @@ class TestFilterPrecipitationPixels:
         assert result.shape == (10, 10, 4)
         assert (result[:, :, 3] == 0).all()
 
-    def test_opaque_pixel_preserved(self):
+    def test_precipitation_colour_preserved(self):
+        """A pixel matching a known RainViewer precipitation colour keeps its alpha."""
+        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+        r, g, b, _ = PRECIP_COLOURS[2]  # (0, 154, 213) - light-moderate rain
         img = np.zeros((10, 10, 4), dtype=np.uint8)
-        img[5, 5] = [100, 150, 200, 255]
+        img[5, 5] = [r, g, b, 255]
         result = filter_precipitation_pixels(img)
         assert result[5, 5, 3] == 255
+
+    def test_khaki_land_mask_removed(self):
+        """Khaki/beige land-mask pixels (not in documented colour table) become transparent."""
+        img = np.zeros((10, 10, 4), dtype=np.uint8)
+        img[5, 5] = [170, 158, 121, 255]  # khaki land mask colour
+        result = filter_precipitation_pixels(img)
+        assert result[5, 5, 3] == 0
 
     def test_low_alpha_pixel_removed(self):
         img = np.zeros((10, 10, 4), dtype=np.uint8)
         img[5, 5] = [255, 255, 255, 5]  # alpha <= 10 threshold
         result = filter_precipitation_pixels(img)
         assert result[5, 5, 3] == 0
+
+    def test_all_documented_colours_pass_filter(self):
+        """Every colour in the documented scheme 2 table should pass the filter."""
+        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+        img = np.zeros((len(PRECIP_COLOURS), 1, 4), dtype=np.uint8)
+        for i, (r, g, b, _) in enumerate(PRECIP_COLOURS):
+            img[i, 0] = [r, g, b, 200]
+        result = filter_precipitation_pixels(img)
+        for i in range(len(PRECIP_COLOURS)):
+            assert result[i, 0, 3] == 200, (
+                f"Precipitation colour index {i} was incorrectly filtered out"
+            )
+
+    def test_arbitrary_non_precip_colour_removed(self):
+        """A random colour far from any precipitation colour is removed."""
+        img = np.zeros((10, 10, 4), dtype=np.uint8)
+        img[3, 3] = [128, 128, 128, 200]  # grey - not a precipitation colour
+        result = filter_precipitation_pixels(img)
+        assert result[3, 3, 3] == 0
 
 
 class TestDrawCrosshair:
@@ -565,19 +594,23 @@ class TestConfidenceWeightedRendering:
     async def test_speckle_is_dimmed_vs_smooth_rain(self):
         """Speckly radar tile should have lower mean alpha than smooth rain tile
         after confidence-weighted rendering."""
-        output_size = 256
+        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
 
-        # Create a smooth rain radar tile: solid green with full alpha
-        smooth_img = Image.new("RGBA", (256, 256), (0, 200, 0, 200))
+        output_size = 256
+        # Use a real precipitation colour so the colour filter doesn't strip it
+        pr, pg, pb, _ = PRECIP_COLOURS[3]  # moderate rain (81, 197, 232)
+
+        # Create a smooth rain radar tile: solid precipitation colour with full alpha
+        smooth_img = Image.new("RGBA", (256, 256), (int(pr), int(pg), int(pb), 200))
         smooth_buf = BytesIO()
         smooth_img.save(smooth_buf, format="PNG")
         smooth_bytes = smooth_buf.getvalue()
 
-        # Create a speckly radar tile: random scattered pixels
+        # Create a speckly radar tile: random scattered pixels using same colour
         rng = np.random.default_rng(42)
         speckle_arr = np.zeros((256, 256, 4), dtype=np.uint8)
         mask = rng.random((256, 256)) > 0.7
-        speckle_arr[mask] = [0, 200, 0, 200]
+        speckle_arr[mask] = [int(pr), int(pg), int(pb), 200]
         speckle_img = Image.fromarray(speckle_arr)
         speckle_buf = BytesIO()
         speckle_img.save(speckle_buf, format="PNG")

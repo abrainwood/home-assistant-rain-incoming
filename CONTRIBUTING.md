@@ -126,3 +126,8 @@ The dev instance and E2E tests use separate Docker containers, volumes, and port
 - Start with what changed, not what you did ("Add cell tracking" not "I added cell tracking")
 - Keep the first line under 72 characters
 - Use the body for why, not what (the diff shows what)
+
+## References
+
+- [RainViewer API documentation](https://www.rainviewer.com/api.html)
+- [RainViewer colour schemes](https://www.rainviewer.com/api/color-schemes.html) - we use scheme 2 (Universal Blue), the only available scheme

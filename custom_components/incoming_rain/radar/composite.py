@@ -14,12 +14,22 @@ from PIL import Image, ImageDraw, ImageFont
 from ..const import RAINVIEWER_ZOOM
 from ..http_retry import rate_limited_fetch
 from ..providers.rainviewer import (
+    PRECIP_COLOURS,
     TILE_BASE_URL,
     TILE_SIZE,
 )
 from .geo import lat_lon_to_tile
 
 _LOGGER = logging.getLogger(__name__)
+
+# RainViewer Universal Blue colour scheme (scheme 2, the only available scheme)
+# Reference: https://www.rainviewer.com/api/color-schemes.html
+# Build a numpy array of known precipitation RGB values for vectorized filtering.
+_PRECIP_RGB = np.array(
+    [[r, g, b] for r, g, b, _ in PRECIP_COLOURS], dtype=np.float32
+)
+# Maximum L2 colour distance to accept a pixel as precipitation.
+_FILTER_MAX_COLOUR_DISTANCE = 30.0
 
 _MAP_TILE_BASE = os.environ.get(
     "MAP_TILE_URL", "https://basemaps.cartocdn.com/rastertiles/voyager"
@@ -90,13 +100,46 @@ def _lat_lon_to_pixel(lat: float, lon: float, zoom: int) -> tuple[float, float]:
 
 
 def filter_precipitation_pixels(rgba_array: np.ndarray) -> np.ndarray:
-    """Keep pixels with alpha > 10 (precipitation), zero out the rest.
+    """Keep only pixels matching the documented RainViewer precipitation colours.
 
-    RainViewer scheme 2 uses transparency to indicate no-data areas.
-    All non-transparent pixels are real precipitation data.
+    RainViewer tiles contain two kinds of non-transparent pixels:
+    - Precipitation colours (blues, cyans, yellows, reds, magentas) from the
+      documented Universal Blue scheme 2 colour table.
+    - Land-mask / ground-clutter colours (khaki/beige, e.g. 170,158,121) that
+      are NOT in the documented scheme.
+
+    We match each pixel's RGB against the known precipitation colours using L2
+    distance. Pixels that don't match any known colour (distance > threshold)
+    are made fully transparent.
+
+    Uses numpy vectorized operations - no Python loops over pixels.
     """
     result = rgba_array.copy()
-    result[rgba_array[:, :, 3] <= 10, 3] = 0
+
+    # Transparent pixels stay transparent - skip them from colour matching
+    alpha_mask = rgba_array[:, :, 3] > 10
+
+    if not alpha_mask.any():
+        # No opaque pixels to colour-match, but still zero out low-alpha pixels
+        result[:, :, 3] = 0
+        return result
+
+    # Extract RGB as float for distance calculation
+    rgb = rgba_array[:, :, :3].astype(np.float32)
+
+    # Compute L2 distance from each pixel to each known precipitation colour
+    # rgb: (H, W, 3), _PRECIP_RGB: (N, 3) -> diff: (H, W, N, 3)
+    diff = rgb[:, :, np.newaxis, :] - _PRECIP_RGB[np.newaxis, np.newaxis, :, :]
+    distances = np.sqrt((diff ** 2).sum(axis=-1))  # (H, W, N)
+    best_dist = distances.min(axis=-1)  # (H, W)
+
+    # Pixels that are non-transparent but don't match any precipitation colour
+    non_precip = alpha_mask & (best_dist > _FILTER_MAX_COLOUR_DISTANCE)
+    result[non_precip, 3] = 0
+
+    # Also zero out truly transparent pixels
+    result[~alpha_mask, 3] = 0
+
     return result
 
 

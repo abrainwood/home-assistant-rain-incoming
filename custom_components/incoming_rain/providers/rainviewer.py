@@ -29,7 +29,8 @@ MANIFEST_URL = f"{_API_BASE}/public/weather-maps.json"
 TILE_BASE_URL = _TILE_BASE
 TILE_SIZE = 256
 
-# RainViewer precipitation colour table for colour scheme 6 (ordered light→heavy).
+# RainViewer Universal Blue colour scheme (scheme 2, the only available scheme)
+# Reference: https://www.rainviewer.com/api/color-schemes.html
 # Each entry: (R, G, B, intensity 0.0-1.0).
 # Intensities are calibrated against approximate dBZ equivalents.
 PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
@@ -246,7 +247,7 @@ class RainViewerProvider(RadarProvider):
     """Fetches radar frames from the RainViewer public API."""
 
     ZOOM = 7
-    COLOUR_SCHEME = 6
+    COLOUR_SCHEME = 2
 
     async def get_frames(self, lat: float, lon: float, count: int) -> list[RadarFrame]:
         """Fetch the most recent `count` frames, oldest-first."""
