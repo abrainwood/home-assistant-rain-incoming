@@ -440,6 +440,44 @@ def detect(
                 break
             t += step_s
 
+        # Fallback: if velocity projection didn't find arrival, check whether
+        # the cell has been consistently closing distance to the location across
+        # its track history. Storm cells can approach obliquely (the centroid
+        # velocity vector doesn't point at the location) while the cell edge
+        # still advances toward it.
+        if arrival_seconds is None and len(track) >= config.min_temporal_frames:
+            per_step_dists = [
+                math.sqrt(
+                    (entry[2][0] - loc_row) ** 2 + (entry[2][1] - loc_col) ** 2
+                )
+                * ((km_per_row + km_per_col) / 2)
+                for entry in track
+            ]
+            first_dist_km = per_step_dists[0]
+            final_dist_km = per_step_dists[-1]
+            track_duration_s = (
+                frames[track[-1][0]].timestamp - frames[track[0][0]].timestamp
+            ).total_seconds()
+
+            if track_duration_s > 0 and first_dist_km > final_dist_km:
+                closing_km = first_dist_km - final_dist_km
+                closing_rate_kmh = (closing_km / track_duration_s) * 3600
+                # Only trust the closing-distance signal when:
+                # - cell has closed at least 20 km over its track
+                # - closing rate is physically plausible (under the speed cap)
+                # - estimated arrival is within the lookahead
+                if (
+                    closing_km >= 20.0
+                    and closing_rate_kmh <= config.max_storm_speed_kmh
+                ):
+                    remaining_km = final_dist_km - config.proximity_radius_km
+                    if remaining_km <= 0:
+                        arrival_seconds = 0.0
+                    else:
+                        eta_s = (remaining_km / closing_rate_kmh) * 3600
+                        if eta_s <= config.lookahead_seconds:
+                            arrival_seconds = eta_s
+
         if arrival_seconds is not None and cell_conf >= _MIN_CELL_CONFIDENCE:
             arrival_dt = last_frame_time + timedelta(seconds=arrival_seconds)
             if earliest_arrival is None or arrival_dt < earliest_arrival:
