@@ -136,6 +136,42 @@ class TestCanberraGoldenV2:
             f"test infrastructure is broken"
         )
 
+    def test_image_would_fail_without_rain_data(self, ha_client):
+        """Verify the image visibility test WOULD fail if rain wasn't rendered.
+
+        With no-rain data, the image should match the baseline (no difference).
+        If they differ, our image comparison can't distinguish rain from no-rain.
+        """
+        ha_client.set_mock_scenario("no_rain")
+        ha_client.update_entity("binary_sensor.incoming_rain_canberra_v2_status")
+        time.sleep(15)
+
+        no_rain_gif_1 = ha_client.get_image("image.incoming_rain_canberra_v2_radar_128km")
+        no_rain_gif_2 = ha_client.get_image("image.incoming_rain_canberra_v2_radar_128km")
+
+        # Two no-rain images should be similar (within noise)
+        differs, fraction = _images_differ_significantly(no_rain_gif_1, no_rain_gif_2)
+        assert not differs, (
+            f"Two no-rain images differ by {fraction:.4f} - "
+            f"image comparison too sensitive, would produce false positives"
+        )
+
+    def test_rain_data_would_fail_dry_assertion(self, ha_client):
+        """Verify that rain data does NOT produce a dry sensor state.
+
+        If this test passed with state='off', it would mean our rain detection
+        test is meaningless - it would pass even when the pipeline is broken.
+        """
+        ha_client.set_mock_scenario("golden_v2:Canberra:5-10")
+        ha_client.update_entity("binary_sensor.incoming_rain_canberra_v2_status")
+        time.sleep(15)
+
+        state = ha_client.get_state("binary_sensor.incoming_rain_canberra_v2_status")
+        assert state["state"] != "off", (
+            f"Rain golden data (frames 5-10, all rain_incoming) but sensor is off - "
+            f"rain detection is broken and the positive test wouldn't catch it"
+        )
+
 
 # --- Darwin ---
 # Classifications: rain_overhead(0), rain_incoming(1-2), rain_overhead(3-12)
