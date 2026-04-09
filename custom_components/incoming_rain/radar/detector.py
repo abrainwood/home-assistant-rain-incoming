@@ -374,6 +374,15 @@ def detect(
         cell_conf = _cell_mean_confidence(last_label)
 
         if dist_to_loc <= proximity_px:
+            # Compute velocity for this overhead cell
+            speed_kmh_oh, bearing_oh = _track_velocity_kmh_bearing(
+                track, frames, km_per_row, km_per_col,
+            )
+
+            # Skip cells exceeding the speed cap - likely tracking artefacts
+            if speed_kmh_oh > config.max_storm_speed_kmh:
+                continue
+
             # Rain is already at the location - report as arriving now
             if cell_conf >= _MIN_CELL_CONFIDENCE:
                 arrival_dt = last_frame_time
@@ -383,14 +392,11 @@ def detect(
                 if cell_pixels.size > 0:
                     max_intensity = max(max_intensity, float(cell_pixels.max()))
 
-            # Build TrackedCell - compute velocity if we have enough track points
+            # Build TrackedCell
             cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
-            speed_kmh, bearing = _track_velocity_kmh_bearing(
-                track, frames, km_per_row, km_per_col,
-            )
             tracked_cells.append(TrackedCell(
                 lat=cell_lat, lon=cell_lon,
-                velocity_kmh=speed_kmh, bearing=bearing,
+                velocity_kmh=speed_kmh_oh, bearing=bearing_oh,
                 confidence=cell_conf,
             ))
             continue
@@ -412,6 +418,13 @@ def detect(
 
         vy = sum(v[0] for v in velocities) / len(velocities)
         vx = sum(v[1] for v in velocities) / len(velocities)
+
+        # Speed cap - skip cells that are unrealistically fast
+        vy_km_s = vy * km_per_row
+        vx_km_s = vx * km_per_col
+        speed_kmh_val = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
+        if speed_kmh_val > config.max_storm_speed_kmh:
+            continue
 
         # Project cell forward in 60-second steps up to the lookahead limit
         step_s = 60.0
@@ -438,9 +451,6 @@ def detect(
         # All coherent tracks become tracked cells (even if they won't arrive
         # within the lookahead - they're still real rain the user should see)
         cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
-        vy_km_s = vy * km_per_row
-        vx_km_s = vx * km_per_col
-        speed_kmh_val = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
         bearing_val = math.degrees(math.atan2(vx_km_s, -vy_km_s)) % 360
         tracked_cells.append(TrackedCell(
             lat=cell_lat, lon=cell_lon,

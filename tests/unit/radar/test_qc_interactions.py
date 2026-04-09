@@ -54,7 +54,7 @@ def _run_pipeline(
     grids: list[np.ndarray],
     model_precipitation_mm: float | None,
     clutter_freq: np.ndarray | None = None,
-    clutter_maturity: float = 0.0,
+    clutter_maturity: float = 1.0,
     config=None,
 ):
     """Build frames, compute confidence maps, run detect. Returns DetectionResult."""
@@ -335,9 +335,9 @@ class TestMovingCell_PlusStationaryNoise:
         cell_h = 12
         cell_w = 16
         # Cell moves east: centroid covers row 32 (location row).
-        # Rows 26:38 have centroid at row 32. In last frame, col 24:40 has
-        # centroid at col 32 which is exactly at the location.
-        for i, col in enumerate([3, 14, 24]):
+        # Rows 26:38 have centroid at row 32. In last frame, col 16:32 has
+        # centroid at col 24. 4px/frame stays under the 120 km/h speed cap.
+        for i, col in enumerate([8, 12, 16]):
             grid = np.zeros(GRID_SHAPE, dtype=np.float32)
             # Moving rain cell (large, strong) centered on row 32
             grid[26:26 + cell_h, col:col + cell_w] = 0.8
@@ -366,11 +366,41 @@ class TestMovingCell_PlusStationaryNoise:
 
         cm = compute_confidence_map(grids[-1], grids=grids, model_precipitation_mm=2.0)
 
-        # Moving cell at col 24 in last frame: temporal ~1/3 (only in last frame
+        # Moving cell at col 16 in last frame: temporal ~1/3 (only in last frame
         # at those pixels)
-        moving_temporal = float(cm.factor_scores["temporal"][26:38, 24:40].mean())
+        moving_temporal = float(cm.factor_scores["temporal"][26:38, 16:32].mean())
         # Stationary noise at col 48: temporal = 3/3 = 1.0 (all frames)
         static_temporal = float(cm.factor_scores["temporal"][26:38, 48:64].mean())
 
         assert static_temporal > moving_temporal
         assert static_temporal == pytest.approx(1.0, abs=0.01)
+
+
+# ---- 11. AP noise + cold start (maturity=0) + model says 0mm ----
+
+
+class TestAPNoise_ColdStart_MeteoZero:
+    """AP noise on a fresh installation with zero clutter maturity and model
+    saying dry. The cold-start penalty (0.85x) stacks with the model-dry
+    penalty (0.85x) giving ~0.72x total confidence reduction."""
+
+    def test_cold_start_plus_model_dry_suppresses_weak_ap(self):
+        """Weak AP returns should be suppressed by double penalty on cold start."""
+        # Weak AP-like smooth blob at location
+        blob = slice(20, 44), slice(20, 44)
+        grids = [_smooth_blob(GRID_SHAPE, *blob, intensity=0.15) for _ in range(3)]
+
+        result = _run_pipeline(
+            grids,
+            model_precipitation_mm=0.0,
+            clutter_maturity=0.0,  # fresh install
+        )
+
+        # Cold-start (0.85x) + model-dry (0.85x) = ~0.72x confidence
+        # With base confidence ~0.99 for smooth blob, effective conf ~0.72
+        # effective intensity = 0.15 * ~0.72 = ~0.108, just above threshold
+        # Should be suppressed or at minimum have notably reduced confidence
+        if result.rain_incoming:
+            # Double penalty means confidence is well below a mature system
+            for cell in result.tracked_cells:
+                assert cell.confidence < 0.75

@@ -111,11 +111,12 @@ class TestDetectRainApproaching:
     def _make_approaching_frames(self, cfg: DetectorConfig) -> list[RadarFrame]:
         """
         Simulate a rain cell moving east toward Terry Hills.
-        Location is at pixel (32, 32). Cell starts at col 10 and moves right by 8 px/frame.
-        It will reach the location by frame 3, within the lookahead window.
+        Location is at pixel (32, 32). Cell starts at col 18 and moves right by 4 px/frame.
+        At ~104 km/h this stays under the 120 km/h speed cap.
+        It will reach the location within the lookahead window.
         """
         frames = []
-        for i, col_offset in enumerate([10, 18, 26]):
+        for i, col_offset in enumerate([18, 22, 26]):
             grid = np.zeros((64, 64), dtype=np.float32)
             # 3x3 rain cell
             grid[30:33, col_offset:col_offset + 3] = 0.8
@@ -140,8 +141,9 @@ class TestDetectRainReceding:
     def test_rain_moving_away_not_detected(self):
         cfg = default_config()
         # Cell starts at col 32 (near location) and moves west (away)
+        # 4px/frame = ~104 km/h, under speed cap
         frames = []
-        for i, col_offset in enumerate([32, 24, 16]):
+        for i, col_offset in enumerate([32, 28, 24]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[30:33, col_offset:col_offset + 3] = 0.8
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
@@ -173,7 +175,8 @@ class TestDetectParallelMiss:
         cfg = default_config()
         frames = []
         # Cell at rows 5-7 (far north of location at row 32), moving east
-        for i, col in enumerate([20, 28, 36]):
+        # 4px/frame = ~104 km/h, under speed cap
+        for i, col in enumerate([20, 24, 28]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[5:8, col:col + 3] = 0.8
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
@@ -193,7 +196,7 @@ class TestMaxApproachingIntensity:
     def test_approaching_rain_records_max_intensity(self):
         cfg = default_config()
         frames = []
-        for i, col in enumerate([10, 18, 26]):
+        for i, col in enumerate([18, 22, 26]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[30:33, col:col + 3] = 0.6
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
@@ -216,7 +219,7 @@ class TestTrackedCells:
         """When rain is approaching, tracked_cells should have at least one entry."""
         cfg = default_config()
         frames = []
-        for i, col_offset in enumerate([10, 18, 26]):
+        for i, col_offset in enumerate([18, 22, 26]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[30:33, col_offset:col_offset + 3] = 0.8
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
@@ -236,7 +239,7 @@ class TestTrackedCells:
         """TrackedCell lat/lon should be within the analysis bounds."""
         cfg = default_config()
         frames = []
-        for i, col_offset in enumerate([10, 18, 26]):
+        for i, col_offset in enumerate([18, 22, 26]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[30:33, col_offset:col_offset + 3] = 0.8
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
@@ -251,7 +254,7 @@ class TestTrackedCells:
         cfg = default_config()
         frames = []
         # Cell moving east
-        for i, col_offset in enumerate([10, 18, 26]):
+        for i, col_offset in enumerate([18, 22, 26]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[30:33, col_offset:col_offset + 3] = 0.8
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
@@ -278,6 +281,22 @@ class TestTrackedCells:
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.rain_incoming is True
         assert len(result.tracked_cells) >= 1
+
+
+class TestSpeedCap:
+    def test_fast_cell_rejected_by_speed_cap(self):
+        """A cell moving at 200+ km/h should NOT trigger rain_incoming."""
+        cfg = default_config()  # max_storm_speed_kmh=120
+        # Cell moves 8 px/frame at 10-min intervals -> ~208 km/h (exceeds 120)
+        # Cell is far north (row 8) so rain-at-location check won't fire
+        frames = []
+        for i, col_offset in enumerate([10, 18, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[8:11, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is False
+        assert result.tracked_cells == []
 
 
 class TestConfidenceMaps:
@@ -392,13 +411,13 @@ class TestQCDoesNotSuppressRealRain:
         cfg = default_config()
         cell_size = 8
         frames = []
-        for i, col in enumerate([5, 16, 27]):
+        for i, col in enumerate([16, 20, 24]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[28:28 + cell_size, col:col + cell_size] = 0.8
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
 
         grids = [np.zeros((64, 64), dtype=np.float32) for _ in range(3)]
-        for i, col in enumerate([5, 16, 27]):
+        for i, col in enumerate([16, 20, 24]):
             grids[i][28:28 + cell_size, col:col + cell_size] = 0.8
 
         from custom_components.incoming_rain.radar.qc import compute_confidence_map
@@ -419,13 +438,13 @@ class TestQCDoesNotSuppressRealRain:
         # Large cell (16x16) so interior pixels have high texture confidence
         cell_size = 16
         frames = []
-        for i, col in enumerate([3, 14, 25]):
+        for i, col in enumerate([8, 12, 16]):
             grid = np.zeros((64, 64), dtype=np.float32)
             grid[24:24 + cell_size, col:col + cell_size] = 0.8
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
 
         grids = [np.zeros((64, 64), dtype=np.float32) for _ in range(3)]
-        for i, col in enumerate([3, 14, 25]):
+        for i, col in enumerate([8, 12, 16]):
             grids[i][24:24 + cell_size, col:col + cell_size] = 0.8
 
         from custom_components.incoming_rain.radar.qc import compute_confidence_map
