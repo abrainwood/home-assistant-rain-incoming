@@ -35,8 +35,10 @@ _CROSSHAIR_LINE_GAP = 12
 _map_tile_cache: dict[tuple[int, int, int], Image.Image] = {}
 
 # Module-level cache for radar tiles: (frame_path, zoom, x, y, scheme) -> RGBA Image
+# The cache key includes frame_path, so stale data can never be served.
+# We cap size at 500 entries and evict the oldest half when exceeded.
 _radar_tile_cache: dict[tuple[str, int, int, int, int], Image.Image] = {}
-_radar_tile_cache_frame: str | None = None
+_RADAR_CACHE_MAX = 500
 
 # Semaphore to limit concurrent tile fetches (shared across map + radar)
 _tile_semaphore: asyncio.Semaphore | None = None
@@ -50,12 +52,12 @@ def _get_tile_semaphore() -> asyncio.Semaphore:
     return _tile_semaphore
 
 
-def _clear_radar_cache_if_stale(current_frame_path: str) -> None:
-    """Clear the radar tile cache when the frame path changes."""
-    global _radar_tile_cache, _radar_tile_cache_frame
-    if _radar_tile_cache_frame != current_frame_path:
-        _radar_tile_cache.clear()
-        _radar_tile_cache_frame = current_frame_path
+def _evict_radar_cache_if_full() -> None:
+    """Evict oldest half of radar tile cache when it exceeds the size limit."""
+    if len(_radar_tile_cache) > _RADAR_CACHE_MAX:
+        keys = list(_radar_tile_cache.keys())
+        for k in keys[: len(keys) // 2]:
+            del _radar_tile_cache[k]
 
 
 def km_per_pixel(lat: float, zoom: int) -> float:
@@ -422,8 +424,8 @@ async def _fetch_radar_overlay(
         for tx in range(vp.radar_tx_min, vp.radar_tx_max + 1)
     ]
 
-    # Clear stale radar tile cache when frame changes
-    _clear_radar_cache_if_stale(frame_path)
+    # Evict old entries if cache is too large
+    _evict_radar_cache_if_full()
 
     async def _fetch_one(tx: int, ty: int):
         cache_key = (frame_path, radar_zoom, tx, ty, _RENDER_COLOUR_SCHEME)
