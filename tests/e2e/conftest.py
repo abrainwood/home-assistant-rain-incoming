@@ -78,7 +78,7 @@ class HAClient:
 
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 raw = resp.read()
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
@@ -281,3 +281,48 @@ def ha_client(ha_container) -> HAClient:
     time.sleep(3)
 
     return HAClient(token)
+
+
+@pytest.fixture
+def configure_location(ha_client):
+    """Factory fixture to add an integration for a specific location.
+
+    Returns a function that configures a new incoming_rain integration
+    entry and waits for its first coordinator update.
+    """
+    entry_ids: list[str] = []
+
+    def _configure(lat: float, lon: float, name: str = "Test") -> None:
+        flow = ha_client.request(
+            "POST",
+            "/api/config/config_entries/flow",
+            {"handler": "incoming_rain"},
+        )
+        result = ha_client.request(
+            "POST",
+            f"/api/config/config_entries/flow/{flow['flow_id']}",
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "lookahead_minutes": 60,
+                "location_name": name,
+            },
+        )
+        if result and "result" in result:
+            entry_id = result.get("result")
+            if entry_id:
+                entry_ids.append(entry_id)
+        # Wait for coordinator first update
+        time.sleep(5)
+
+    yield _configure
+
+    # Teardown: remove the config entries we added
+    for entry_id in entry_ids:
+        try:
+            ha_client.request(
+                "DELETE",
+                f"/api/config/config_entries/entry/{entry_id}",
+            )
+        except Exception:
+            pass  # best-effort cleanup

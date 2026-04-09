@@ -79,7 +79,8 @@ async def capture(lat: float, lon: float, name: str) -> None:
     print(f"Capturing golden data for {name} ({lat}, {lon})")
     print(f"  Output: {base_dir}")
 
-    connector = aiohttp.TCPConnector(resolver=aiohttp.resolver.ThreadedResolver())
+    # Limit concurrent connections to avoid RainViewer rate limiting
+    connector = aiohttp.TCPConnector(resolver=aiohttp.resolver.ThreadedResolver(), limit=5)
     async with aiohttp.ClientSession(connector=connector) as session:
         # 1. Fetch manifest
         print("  Fetching manifest...")
@@ -122,6 +123,8 @@ async def capture(lat: float, lon: float, name: str) -> None:
         info_path.write_text(json.dumps(capture_info, indent=2))
 
         # 4. Fetch and save all tiles for every frame
+        # RainViewer rate limits at ~500 requests. With 13 frames x 50 tiles = 650,
+        # we need to pace requests. Fetch tiles sequentially per-tile with small delays.
         for i, frame_entry in enumerate(all_frames):
             ts = frame_entry["time"]
             path = frame_entry["path"]
@@ -131,52 +134,32 @@ async def capture(lat: float, lon: float, name: str) -> None:
 
             print(f"  Frame {i + 1}/{len(all_frames)} (ts={ts}, {frame_type}): ", end="", flush=True)
 
-            # Fetch detection scheme tiles (scheme 6)
-            detection_tasks = [
-                _fetch_tile_bytes(session, path, ZOOM, tx, ty, DETECTION_SCHEME)
-                for tx, ty in tile_coords
-            ]
-            # Fetch render scheme tiles (scheme 2)
-            render_tasks = [
-                _fetch_tile_bytes(session, path, ZOOM, tx, ty, RENDER_SCHEME)
-                for tx, ty in tile_coords
-            ]
-
-            all_tile_results = await asyncio.gather(
-                *detection_tasks, *render_tasks, return_exceptions=True,
-            )
-
-            n_tiles = len(tile_coords)
-            detection_results = all_tile_results[:n_tiles]
-            render_results = all_tile_results[n_tiles:]
-
             saved = 0
             errors = 0
-            for j, (tx, ty) in enumerate(tile_coords):
-                # Detection scheme tile
-                det_data = detection_results[j]
-                if isinstance(det_data, Exception):
-                    errors += 1
-                    print(f"E", end="", flush=True)
-                else:
-                    tile_file = tile_dir / f"{ZOOM}_{tx}_{ty}_s{DETECTION_SCHEME}.png"
-                    tile_file.write_bytes(det_data)
-                    saved += 1
-
-                # Render scheme tile
-                ren_data = render_results[j]
-                if isinstance(ren_data, Exception):
-                    errors += 1
-                    print(f"E", end="", flush=True)
-                else:
-                    tile_file = tile_dir / f"{ZOOM}_{tx}_{ty}_s{RENDER_SCHEME}.png"
-                    tile_file.write_bytes(ren_data)
-                    saved += 1
+            for tx, ty in tile_coords:
+                for scheme, label in [(DETECTION_SCHEME, "s6"), (RENDER_SCHEME, "s2")]:
+                    tile_file = tile_dir / f"{ZOOM}_{tx}_{ty}_s{scheme}.png"
+                    for attempt in range(3):  # retry up to 3 times
+                        try:
+                            data = await _fetch_tile_bytes(session, path, ZOOM, tx, ty, scheme)
+                            tile_file.write_bytes(data)
+                            saved += 1
+                            break
+                        except Exception as e:
+                            if attempt < 2:
+                                # Back off on 429
+                                await asyncio.sleep(2 ** attempt)
+                            else:
+                                errors += 1
+                                print("E", end="", flush=True)
 
             print(f" {saved} tiles saved", end="")
             if errors:
                 print(f", {errors} errors", end="")
             print()
+
+            # Pace between frames to avoid 429
+            await asyncio.sleep(3)
 
         # 5. Render silver frames (visual composites WITHOUT QC)
         silver_dir.mkdir(parents=True, exist_ok=True)
