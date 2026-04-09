@@ -210,13 +210,25 @@ def _composite_single_frame(
                 (radar_arr.shape[1], radar_arr.shape[0]), PILImage.BILINEAR
             )
             confidence_map = np.array(conf_img).astype(np.float32) / 255.0
-        # Apply a moderate power curve: conf^1.5 suppresses low-confidence
-        # clutter while keeping moderate-confidence rain visible.
-        # At 0.6 confidence: 0.6^1.5 = 0.46 (visible)
-        # At 0.2 confidence: 0.2^1.5 = 0.09 (strongly suppressed)
-        adjusted_confidence = np.power(confidence_map, 1.5)
+        # Binary detection mask: mirrors the detector's own threshold logic.
+        # Compute effective intensity = luminance * QC_confidence. Pixels at
+        # or above the detection threshold render at full opacity; below it
+        # they're dimmed to 25% (still faintly visible as context, but clearly
+        # distinguished from "real" rain).
+        _INTENSITY_THRESHOLD = 0.1
+        _DIM_FACTOR = 0.25
+        r, g, b = (
+            radar_arr[:, :, 0].astype(np.float32),
+            radar_arr[:, :, 1].astype(np.float32),
+            radar_arr[:, :, 2].astype(np.float32),
+        )
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+        effective = luminance * confidence_map
+        alpha_multiplier = np.where(
+            effective >= _INTENSITY_THRESHOLD, 1.0, _DIM_FACTOR
+        )
         radar_arr[:, :, 3] = (
-            radar_arr[:, :, 3].astype(np.float32) * adjusted_confidence
+            radar_arr[:, :, 3].astype(np.float32) * alpha_multiplier
         ).astype(np.uint8)
         radar_resized = Image.fromarray(radar_arr)
 

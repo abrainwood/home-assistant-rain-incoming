@@ -406,25 +406,122 @@ class TestRenderAnimatedComposite:
         assert durations[-1] == frame_duration_ms * 4
 
 
-class TestConfidenceAlphaCurve:
-    """Verify the confidence-to-alpha curve produces visible rain at moderate confidence
-    and suppresses clutter at low confidence."""
+class TestBinaryThresholdRendering:
+    """Verify binary detection threshold mask: above threshold = full opacity,
+    below threshold = dimmed (25% alpha)."""
 
-    def test_rain_at_60pct_confidence_is_visible(self):
-        """A pixel at 60% confidence should have alpha >= 100 in the output.
+    def test_above_threshold_gets_full_opacity(self):
+        """Rain with effective intensity >= 0.1 should render at full alpha.
 
-        With the original conf^3 curve: 0.6^3 * 200 = 43 (INVISIBLE - bug!)
-        With the fixed conf^1.5 curve: 0.6^1.5 * 200 = 93 (visible)
+        Pixel: green=200 (luminance ~0.46), confidence=0.5
+        Effective intensity: 0.46 * 0.5 = 0.23 >= 0.1 -> full alpha (200 unchanged)
+        After compositing over black: green = 200 * (200/255) ~ 157
         """
         from custom_components.incoming_rain.radar.composite import _composite_single_frame
 
         output_size = 64
-        # Create radar image: single green pixel with alpha=200
         radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
         radar_arr[32, 32] = [0, 200, 0, 200]
         radar_img = Image.fromarray(radar_arr)
 
-        # Confidence map: 0.6 everywhere
+        confidence_map = np.full((output_size, output_size), 0.5, dtype=np.float32)
+
+        map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        result = _composite_single_frame(
+            map_crop=map_crop,
+            radar_resized=radar_img,
+            lat=-33.7,
+            lon=151.2,
+            map_zoom=8,
+            radius_km=128,
+            output_size=output_size,
+            confidence_map=confidence_map,
+        )
+        result_arr = np.array(result)
+        # Full alpha (200) composited over black: green = 200 * (200/255) ~ 157
+        green_val = result_arr[32, 32, 1]
+        assert green_val >= 140, (
+            f"Above-threshold rain should render at full opacity, but green = {green_val}"
+        )
+
+    def test_below_threshold_gets_dimmed(self):
+        """Noise with effective intensity < 0.1 should render dimmed to 25% alpha.
+
+        Pixel: green=30 (luminance ~0.069), confidence=0.5
+        Effective intensity: 0.069 * 0.5 = 0.035 < 0.1 -> dimmed (alpha * 0.25)
+        Original alpha=200, dimmed to 50. After compositing: green = 30 * (50/255) ~ 6
+        """
+        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+
+        output_size = 64
+        radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
+        # Low intensity pixel - luminance will be low
+        radar_arr[32, 32] = [0, 30, 0, 200]
+        radar_img = Image.fromarray(radar_arr)
+
+        confidence_map = np.full((output_size, output_size), 0.5, dtype=np.float32)
+
+        map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        result = _composite_single_frame(
+            map_crop=map_crop,
+            radar_resized=radar_img,
+            lat=-33.7,
+            lon=151.2,
+            map_zoom=8,
+            radius_km=128,
+            output_size=output_size,
+            confidence_map=confidence_map,
+        )
+        result_arr = np.array(result)
+        # Dimmed to 25% alpha: 200 * 0.25 = 50, composited: 30 * (50/255) ~ 6
+        green_val = result_arr[32, 32, 1]
+        assert green_val < 20, (
+            f"Below-threshold noise should be dimmed, but green = {green_val}"
+        )
+
+    def test_no_confidence_renders_full(self):
+        """Without confidence map, all radar renders at full alpha."""
+        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+
+        output_size = 64
+        radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
+        radar_arr[32, 32] = [0, 200, 0, 200]
+        radar_img = Image.fromarray(radar_arr)
+
+        map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        result = _composite_single_frame(
+            map_crop=map_crop,
+            radar_resized=radar_img,
+            lat=-33.7,
+            lon=151.2,
+            map_zoom=8,
+            radius_km=128,
+            output_size=output_size,
+            confidence_map=None,
+        )
+        result_arr = np.array(result)
+        green_val = result_arr[32, 32, 1]
+        # Full alpha (200) composited: 200 * (200/255) ~ 157
+        assert green_val >= 140, (
+            f"No confidence map should render full opacity, but green = {green_val}"
+        )
+
+    def test_high_confidence_rain_at_60pct_is_fully_visible(self):
+        """Rain at 60% confidence with bright pixels gets full opacity (not dimmed).
+
+        This verifies the fix: the old conf^1.5 curve would give 0.6^1.5=0.46 alpha
+        multiplier, making rain invisible. Binary threshold gives full opacity.
+
+        Pixel: green=200 (luminance ~0.46), confidence=0.6
+        Effective: 0.46 * 0.6 = 0.28 >= 0.1 -> full alpha
+        """
+        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+
+        output_size = 64
+        radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
+        radar_arr[32, 32] = [0, 200, 0, 200]
+        radar_img = Image.fromarray(radar_arr)
+
         confidence_map = np.full((output_size, output_size), 0.6, dtype=np.float32)
 
         map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
@@ -439,48 +536,11 @@ class TestConfidenceAlphaCurve:
             confidence_map=confidence_map,
         )
         result_arr = np.array(result)
-        # The pixel at (32, 32) should have visible green (alpha-composited over black)
-        # Alpha = 200 * adjusted_confidence. At conf=0.6:
-        #   conf^3: 200 * 0.216 = 43 (barely visible)
-        #   conf^1.5: 200 * 0.465 = 93 (clearly visible)
-        # After alpha compositing over black bg, green channel = G * (alpha/255)
-        # We check the green channel of the composite output is clearly visible
         green_val = result_arr[32, 32, 1]
-        assert green_val >= 50, (
-            f"Rain at 60% confidence should be visible, but green channel = {green_val}"
-        )
-
-    def test_clutter_at_20pct_confidence_is_suppressed(self):
-        """A pixel at 20% confidence should have alpha < 50 in the output.
-
-        With conf^1.5: 0.2^1.5 * 200 = 17.9 (well suppressed)
-        With conf^3: 0.2^3 * 200 = 1.6 (also suppressed)
-        """
-        from custom_components.incoming_rain.radar.composite import _composite_single_frame
-
-        output_size = 64
-        radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
-        radar_arr[32, 32] = [0, 200, 0, 200]
-        radar_img = Image.fromarray(radar_arr)
-
-        confidence_map = np.full((output_size, output_size), 0.2, dtype=np.float32)
-
-        map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
-        result = _composite_single_frame(
-            map_crop=map_crop,
-            radar_resized=radar_img,
-            lat=-33.7,
-            lon=151.2,
-            map_zoom=8,
-            radius_km=128,
-            output_size=output_size,
-            confidence_map=confidence_map,
-        )
-        result_arr = np.array(result)
-        # At 20% confidence, the green should be barely visible
-        green_val = result_arr[32, 32, 1]
-        assert green_val < 50, (
-            f"Clutter at 20% confidence should be suppressed, but green channel = {green_val}"
+        # With binary threshold: full alpha -> green ~ 157
+        # With old conf^1.5: alpha=93 -> green ~ 73 (fails this assertion)
+        assert green_val >= 140, (
+            f"Rain at 60% confidence should be fully visible, but green = {green_val}"
         )
 
 
