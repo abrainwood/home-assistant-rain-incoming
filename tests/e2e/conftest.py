@@ -314,7 +314,7 @@ def ha_client(ha_container) -> HAClient:
 
     # Add integration
     flow = _raw_request("POST", "/api/config/config_entries/flow",
-                         {"handler": "incoming_rain"}, token=token)
+                         {"handler": "rain_incoming"}, token=token)
     _raw_request("POST", f"/api/config/config_entries/flow/{flow['flow_id']}", {
         "latitude": -33.701,
         "longitude": 151.209,
@@ -325,7 +325,7 @@ def ha_client(ha_container) -> HAClient:
     client = HAClient(token)
     try:
         client.poll_entity_state(
-            "binary_sensor.incoming_rain_status",
+            "binary_sensor.rain_incoming_status",
             timeout=30,
             condition=lambda s: s.get("state") not in (None, "unavailable"),
         )
@@ -343,7 +343,7 @@ def configure_location(ha_client):
     integration - subsequent tests can switch scenarios without
     re-creating the config entry.
 
-    Returns a function that configures a new incoming_rain integration
+    Returns a function that configures a new rain_incoming integration
     entry and waits for its first coordinator update.
     """
     entry_ids: list[str] = []
@@ -352,7 +352,7 @@ def configure_location(ha_client):
         flow = ha_client.request(
             "POST",
             "/api/config/config_entries/flow",
-            {"handler": "incoming_rain"},
+            {"handler": "rain_incoming"},
         )
         result = ha_client.request(
             "POST",
@@ -372,7 +372,7 @@ def configure_location(ha_client):
                 entry_ids.append(entry_id)
         # Poll until the binary sensor for this location is ready
         sensor_slug = name.lower().replace(" ", "_")
-        sensor_id = f"binary_sensor.incoming_rain_{sensor_slug}_status"
+        sensor_id = f"binary_sensor.rain_incoming_{sensor_slug}_status"
         try:
             ha_client.poll_entity_state(
                 sensor_id,

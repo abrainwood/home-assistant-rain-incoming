@@ -18,10 +18,10 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.providers.base import BoundingBox, RadarFrame
-from custom_components.incoming_rain.radar.detector import DetectorConfig, detect
-from custom_components.incoming_rain.radar.qc.scoring import compute_confidence_map
-from custom_components.incoming_rain.radar.qc.types import QCConfig
+from custom_components.rain_incoming.providers.base import BoundingBox, RadarFrame
+from custom_components.rain_incoming.radar.detector import DetectorConfig, detect
+from custom_components.rain_incoming.radar.qc.scoring import compute_confidence_map
+from custom_components.rain_incoming.radar.qc.types import QCConfig
 
 GOLDEN_DATA_DIR = Path(__file__).parent.parent.parent / "fixtures" / "golden_data"
 WINDOW_SIZE = 6  # frames needed for detection

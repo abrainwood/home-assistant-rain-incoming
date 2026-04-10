@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.radar.detector import TrackedCell
-from custom_components.incoming_rain.radar.qc.motion_consistency import score_motion_consistency
+from custom_components.rain_incoming.radar.detector import TrackedCell
+from custom_components.rain_incoming.radar.qc.motion_consistency import score_motion_consistency
 
 
 def _make_cell(velocity_kmh: float = 50.0, coherent: bool = True) -> TrackedCell:

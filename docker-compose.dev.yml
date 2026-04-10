@@ -4,7 +4,7 @@ services:
     image: ghcr.io/home-assistant/home-assistant:stable
     volumes:
       # Mount the custom component directly - edits reflect on restart
-      - ./custom_components/incoming_rain:/config/custom_components/incoming_rain:ro
+      - ./custom_components/rain_incoming:/config/custom_components/rain_incoming:ro
       # Persist HA config/state across restarts
       - ${HA_VOLUME:-ha-dev-config}:/config
     environment:

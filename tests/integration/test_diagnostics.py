@@ -7,9 +7,9 @@ import pytest
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.incoming_rain.const import DOMAIN
-from custom_components.incoming_rain.diagnostics import async_get_config_entry_diagnostics
-from custom_components.incoming_rain.radar.detector import Confidence, DetectionResult
+from custom_components.rain_incoming.const import DOMAIN
+from custom_components.rain_incoming.diagnostics import async_get_config_entry_diagnostics
+from custom_components.rain_incoming.radar.detector import Confidence, DetectionResult
 
 MOCK_RESULT_RAIN = DetectionResult(
     rain_incoming=True,
@@ -36,7 +36,7 @@ def mock_entry():
 async def _setup_integration(hass: HomeAssistant, entry: MockConfigEntry, result: DetectionResult):
     entry.add_to_hass(hass)
     with patch(
-        "custom_components.incoming_rain.coordinator.RainDetectorCoordinator._async_update_data",
+        "custom_components.rain_incoming.coordinator.RainDetectorCoordinator._async_update_data",
         new=AsyncMock(return_value=result),
     ):
         await hass.config_entries.async_setup(entry.entry_id)

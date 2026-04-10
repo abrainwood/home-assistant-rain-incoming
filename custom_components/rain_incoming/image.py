@@ -47,9 +47,9 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
     @property
     def device_info(self) -> DeviceInfo:
         location_name = self._entry.data.get(CONF_LOCATION_NAME) or ""
-        device_name = "Incoming Rain"
+        device_name = "Rain Incoming"
         if location_name:
-            device_name = f"Incoming Rain - {location_name}"
+            device_name = f"Rain Incoming - {location_name}"
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.entry_id)},
             name=device_name,

@@ -27,7 +27,7 @@ import numpy as np
 # Add project root to path so we can import custom_components without HA
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from custom_components.incoming_rain.const import (
+from custom_components.rain_incoming.const import (
     INTENSITY_THRESHOLD,
     MAX_ANGULAR_VARIANCE_RADIANS,
     MAX_STORM_SPEED_KMH,
@@ -38,15 +38,15 @@ from custom_components.incoming_rain.const import (
     RAINVIEWER_TILE_SIZE,
     RAINVIEWER_ZOOM,
 )
-from custom_components.incoming_rain.providers.base import BoundingBox
-from custom_components.incoming_rain.providers.rainviewer import (
+from custom_components.rain_incoming.providers.base import BoundingBox
+from custom_components.rain_incoming.providers.rainviewer import (
     MANIFEST_URL,
     RainViewerFrame,
     RainViewerProvider,
 )
-from custom_components.incoming_rain.radar.composite import render_animated_composite
-from custom_components.incoming_rain.radar.detector import DetectorConfig, detect
-from custom_components.incoming_rain.radar.qc import (
+from custom_components.rain_incoming.radar.composite import render_animated_composite
+from custom_components.rain_incoming.radar.detector import DetectorConfig, detect
+from custom_components.rain_incoming.radar.qc import (
     QCConfig,
     compute_confidence_map,
     refine_confidence_post_detection,
@@ -54,7 +54,7 @@ from custom_components.incoming_rain.radar.qc import (
 
 # Suppress expected QC warnings about missing factor scores (speed/motion/clutter
 # aren't available in the pre-detection pass - that's by design)
-logging.getLogger("custom_components.incoming_rain.radar.qc.scoring").setLevel(
+logging.getLogger("custom_components.rain_incoming.radar.qc.scoring").setLevel(
     logging.ERROR
 )
 

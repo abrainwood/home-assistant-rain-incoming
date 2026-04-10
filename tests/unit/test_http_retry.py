@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from custom_components.incoming_rain.http_retry import fetch_with_retry
+from custom_components.rain_incoming.http_retry import fetch_with_retry
 
 
 def _make_response(status: int, headers: dict | None = None) -> MagicMock:
@@ -49,7 +49,7 @@ class TestFetchWithRetry:
 
         session.get = AsyncMock(side_effect=[rate_limited, rate_limited, ok_resp])
 
-        with patch("custom_components.incoming_rain.http_retry.asyncio.sleep", new_callable=AsyncMock):
+        with patch("custom_components.rain_incoming.http_retry.asyncio.sleep", new_callable=AsyncMock):
             result = await fetch_with_retry(
                 session, "http://example.com/test", max_retries=3, base_delay=0.01,
             )
@@ -69,7 +69,7 @@ class TestFetchWithRetry:
         async def mock_sleep(delay):
             sleep_delays.append(delay)
 
-        with patch("custom_components.incoming_rain.http_retry.asyncio.sleep", side_effect=mock_sleep):
+        with patch("custom_components.rain_incoming.http_retry.asyncio.sleep", side_effect=mock_sleep):
             result = await fetch_with_retry(
                 session, "http://example.com/test", max_retries=3, base_delay=1.0,
             )
@@ -85,7 +85,7 @@ class TestFetchWithRetry:
 
         session.get = AsyncMock(side_effect=[server_error, ok_resp])
 
-        with patch("custom_components.incoming_rain.http_retry.asyncio.sleep", new_callable=AsyncMock):
+        with patch("custom_components.rain_incoming.http_retry.asyncio.sleep", new_callable=AsyncMock):
             result = await fetch_with_retry(
                 session, "http://example.com/test", max_retries=3, base_delay=0.01,
             )
@@ -100,7 +100,7 @@ class TestFetchWithRetry:
         # max_retries=2 means 3 attempts total (initial + 2 retries)
         session.get = AsyncMock(return_value=server_error)
 
-        with patch("custom_components.incoming_rain.http_retry.asyncio.sleep", new_callable=AsyncMock):
+        with patch("custom_components.rain_incoming.http_retry.asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(aiohttp.ClientResponseError) as exc_info:
                 await fetch_with_retry(
                     session, "http://example.com/test", max_retries=2, base_delay=0.01,
@@ -134,7 +134,7 @@ class TestFetchWithRetry:
         async def mock_sleep(delay):
             sleep_delays.append(delay)
 
-        with patch("custom_components.incoming_rain.http_retry.asyncio.sleep", side_effect=mock_sleep):
+        with patch("custom_components.rain_incoming.http_retry.asyncio.sleep", side_effect=mock_sleep):
             with pytest.raises(aiohttp.ClientResponseError):
                 await fetch_with_retry(
                     session, "http://example.com/test", max_retries=3, base_delay=1.0,
@@ -149,7 +149,7 @@ class TestFetchWithRetry:
     @pytest.mark.asyncio
     async def test_semaphore_limits_concurrency(self) -> None:
         """Verify the rate-limited fetch respects the semaphore."""
-        from custom_components.incoming_rain.http_retry import rate_limited_fetch
+        from custom_components.rain_incoming.http_retry import rate_limited_fetch
 
         session = AsyncMock(spec=aiohttp.ClientSession)
         ok_resp = _make_response(200)

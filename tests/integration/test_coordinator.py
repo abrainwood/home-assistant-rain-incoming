@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.core import HomeAssistant
 
-from custom_components.incoming_rain.coordinator import RainDetectorCoordinator
-from custom_components.incoming_rain.radar.detector import Confidence, DetectionResult
+from custom_components.rain_incoming.coordinator import RainDetectorCoordinator
+from custom_components.rain_incoming.radar.detector import Confidence, DetectionResult
 
 
 def make_entry(lat: float = -33.701, lon: float = 151.209, lookahead: int = 60):
@@ -38,9 +38,9 @@ async def test_coordinator_returns_detection_result(hass: HomeAssistant):
 
     with (
         patch.object(coordinator._provider, "get_frames", new=AsyncMock(return_value=[])),
-        patch("custom_components.incoming_rain.coordinator.detect", return_value=EMPTY_RESULT),
+        patch("custom_components.rain_incoming.coordinator.detect", return_value=EMPTY_RESULT),
         patch(
-            "custom_components.incoming_rain.coordinator.async_get_clientsession",
+            "custom_components.rain_incoming.coordinator.async_get_clientsession",
             return_value=mock_session,
         ),
     ):

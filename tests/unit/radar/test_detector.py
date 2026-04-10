@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.providers.base import BoundingBox, RadarFrame
-from custom_components.incoming_rain.radar.detector import (
+from custom_components.rain_incoming.providers.base import BoundingBox, RadarFrame
+from custom_components.rain_incoming.radar.detector import (
     Confidence,
     DetectionResult,
     DetectorConfig,
@@ -392,7 +392,7 @@ class TestQCDoesNotSuppressRealRain:
         grids = [np.zeros((64, 64), dtype=np.float32) for _ in range(3)]
         for g in grids:
             g[28:36, 28:36] = 0.5
-        from custom_components.incoming_rain.radar.qc import compute_confidence_map
+        from custom_components.rain_incoming.radar.qc import compute_confidence_map
         confidence_maps = [compute_confidence_map(g, grids=grids).confidence for g in grids]
 
         result = detect(frames, (LAT, LON), cfg, confidence_maps=confidence_maps)
@@ -415,7 +415,7 @@ class TestQCDoesNotSuppressRealRain:
         for i, col in enumerate([16, 20, 24]):
             grids[i][28:28 + cell_size, col:col + cell_size] = 0.8
 
-        from custom_components.incoming_rain.radar.qc import compute_confidence_map
+        from custom_components.rain_incoming.radar.qc import compute_confidence_map
         confidence_maps = [
             compute_confidence_map(g, grids=grids).confidence
             for g in grids
@@ -440,7 +440,7 @@ class TestQCDoesNotSuppressRealRain:
         for i, col in enumerate([8, 12, 16]):
             grids[i][24:24 + cell_size, col:col + cell_size] = 0.8
 
-        from custom_components.incoming_rain.radar.qc import compute_confidence_map
+        from custom_components.rain_incoming.radar.qc import compute_confidence_map
         confidence_maps = [
             compute_confidence_map(g, grids=grids).confidence
             for g in grids
@@ -512,7 +512,7 @@ class TestOverheadRainDetection:
         H, W = grids[0].shape
 
         shep_lat, shep_lon = -36.381, 145.399
-        from custom_components.incoming_rain.coordinator import _build_analysis_bounds
+        from custom_components.rain_incoming.coordinator import _build_analysis_bounds
         bounds = _build_analysis_bounds(shep_lat, shep_lon)
 
         from datetime import timezone, timedelta

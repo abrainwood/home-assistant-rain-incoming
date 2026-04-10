@@ -9,9 +9,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.radar.detector import detect
-from custom_components.incoming_rain.radar.qc import compute_confidence_map
-from custom_components.incoming_rain.radar.qc.clutter_map import ClutterMap, get_clutter_frequency
+from custom_components.rain_incoming.radar.detector import detect
+from custom_components.rain_incoming.radar.qc import compute_confidence_map
+from custom_components.rain_incoming.radar.qc.clutter_map import ClutterMap, get_clutter_frequency
 
 from .test_detector import LAT, LON, default_config, make_frame, ts
 

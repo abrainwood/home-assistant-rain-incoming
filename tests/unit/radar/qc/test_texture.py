@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.radar.qc.texture import score_texture
+from custom_components.rain_incoming.radar.qc.texture import score_texture
 
 
 class TestScoreTexture:

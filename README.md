@@ -1,6 +1,6 @@
-# Incoming Rain
+# Rain Incoming
 
-**Know before it hits.** Incoming Rain watches weather radar and tells you when rain is heading your way - before it arrives. Get animated radar maps and sensors you can use to trigger automations.
+**Know before it hits.** Rain Incoming watches weather radar and tells you when rain is heading your way - before it arrives. Get animated radar maps and sensors you can use to trigger automations.
 
 ![Radar showing heavy rain approaching Vancouver](docs/radar_vancouver_128km.gif)
 
@@ -26,17 +26,17 @@
 
 1. Make sure [HACS](https://hacs.xyz) is installed
 2. Go to **HACS > Integrations > Explore & Download Repositories**
-3. Search for **"Incoming Rain"**
+3. Search for **"Rain Incoming"**
 4. Click **Download**
 5. Restart Home Assistant
-6. Go to **Settings > Integrations > Add Integration** and search for **"Incoming Rain"**
+6. Go to **Settings > Integrations > Add Integration** and search for **"Rain Incoming"**
 
 ### Method 2: Manual
 
-1. Download the latest release from [GitHub](https://github.com/abrainwood/home-assistant-incoming-rain/releases)
-2. Copy the `custom_components/incoming_rain` folder into your `config/custom_components/` directory
+1. Download the latest release from [GitHub](https://github.com/abrainwood/home-assistant-rain-incoming/releases)
+2. Copy the `custom_components/rain_incoming` folder into your `config/custom_components/` directory
 3. Restart Home Assistant
-4. Go to **Settings > Integrations > Add Integration** and search for **"Incoming Rain"**
+4. Go to **Settings > Integrations > Add Integration** and search for **"Rain Incoming"**
 
 ---
 
@@ -54,7 +54,7 @@ The latitude and longitude default to your Home Assistant home location (set in 
 
 ### Changing settings after setup
 
-**Settings > Integrations > Incoming Rain > Configure**
+**Settings > Integrations > Rain Incoming > Configure**
 
 Changes take effect immediately on the next poll.
 
@@ -81,7 +81,7 @@ automation:
   - alias: "Close pergola cover - rain incoming"
     trigger:
       - platform: state
-        entity_id: binary_sensor.incoming_rain_status
+        entity_id: binary_sensor.rain_incoming_status
         to: "on"
     action:
       - service: cover.close_cover
@@ -96,13 +96,13 @@ automation:
   - alias: "Return lawnmower - rain incoming"
     trigger:
       - platform: state
-        entity_id: binary_sensor.incoming_rain_status
+        entity_id: binary_sensor.rain_incoming_status
         to: "on"
     condition:
       - condition: not
         conditions:
           - condition: state
-            entity_id: sensor.incoming_rain_intensity
+            entity_id: sensor.rain_incoming_intensity
             state: "light"
     action:
       - service: vacuum.return_to_base
@@ -117,7 +117,7 @@ automation:
   - alias: "Washing alert - rain incoming"
     trigger:
       - platform: state
-        entity_id: binary_sensor.incoming_rain_status
+        entity_id: binary_sensor.rain_incoming_status
         to: "on"
     condition:
       # Only alert during daytime when washing might be out
@@ -129,8 +129,8 @@ automation:
         data:
           title: "Rain incoming!"
           message: >
-            Rain expected to arrive at {{ states('sensor.incoming_rain_arrival_time') | as_timestamp | timestamp_custom('%H:%M') }}.
-            Intensity: {{ states('sensor.incoming_rain_intensity') }}.
+            Rain expected to arrive at {{ states('sensor.rain_incoming_arrival_time') | as_timestamp | timestamp_custom('%H:%M') }}.
+            Intensity: {{ states('sensor.rain_incoming_intensity') }}.
             Time to bring the washing in!
 ```
 
@@ -140,14 +140,14 @@ automation:
 
 | Entity | Type | Description |
 |---|---|---|
-| `binary_sensor.incoming_rain_status` | Binary | `on` when rain is approaching or overhead |
-| `sensor.incoming_rain_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
-| `sensor.incoming_rain_intensity` | Sensor | Precipitation intensity: none / light / moderate / heavy / extreme |
-| `sensor.incoming_rain_last_rain` | Timestamp | Last time rain was detected nearby |
-| `image.incoming_rain_radar_64km` | Image | Animated radar map - neighbourhood scale (64km radius) |
-| `image.incoming_rain_radar_128km` | Image | Animated radar map - city/regional scale (128km radius) |
-| `image.incoming_rain_radar_256km` | Image | Animated radar map - state/province scale (256km radius) |
-| `image.incoming_rain_radar_512km` | Image | Animated radar map - synoptic scale (512km radius) |
+| `binary_sensor.rain_incoming_status` | Binary | `on` when rain is approaching or overhead |
+| `sensor.rain_incoming_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
+| `sensor.rain_incoming_intensity` | Sensor | Precipitation intensity: none / light / moderate / heavy / extreme |
+| `sensor.rain_incoming_last_rain` | Timestamp | Last time rain was detected nearby |
+| `image.rain_incoming_radar_64km` | Image | Animated radar map - neighbourhood scale (64km radius) |
+| `image.rain_incoming_radar_128km` | Image | Animated radar map - city/regional scale (128km radius) |
+| `image.rain_incoming_radar_256km` | Image | Animated radar map - state/province scale (256km radius) |
+| `image.rain_incoming_radar_512km` | Image | Animated radar map - synoptic scale (512km radius) |
 
 The radar images show the last several frames of radar data as an animation, with a crosshair marking your monitored location.
 
@@ -205,9 +205,9 @@ Bug reports, feature requests, and PRs are welcome. See [CONTRIBUTING.md](CONTRI
 
 ---
 
-## Data source
+## Attribution
 
-Radar data provided by the [RainViewer API](https://www.rainviewer.com/api.html) - worldwide radar composites, free for personal/educational use with attribution.
+Radar data provided by [RainViewer](https://www.rainviewer.com/). Free for personal and educational use with attribution.
 
 ## License
 

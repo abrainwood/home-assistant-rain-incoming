@@ -8,15 +8,15 @@ import numpy as np
 import pytest
 from aiohttp import ClientError
 
-from custom_components.incoming_rain.providers.base import BoundingBox
-from custom_components.incoming_rain.providers.rainviewer import (
+from custom_components.rain_incoming.providers.base import BoundingBox
+from custom_components.rain_incoming.providers.rainviewer import (
     RainViewerFrame,
     RainViewerProvider,
     _colour_to_intensity,
     _resolve_url,
     _tile_bounds,
 )
-from custom_components.incoming_rain.radar.geo import lat_lon_to_tile
+from custom_components.rain_incoming.radar.geo import lat_lon_to_tile
 
 
 # --- URL resolution ---

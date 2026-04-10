@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.radar.qc.temporal import score_temporal
+from custom_components.rain_incoming.radar.qc.temporal import score_temporal
 
 
 class TestScoreTemporal:

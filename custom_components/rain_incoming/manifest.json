@@ -1,8 +1,8 @@
 {
-  "domain": "incoming_rain",
-  "name": "Incoming Rain",
+  "domain": "rain_incoming",
+  "name": "Rain Incoming",
   "version": "0.1.0",
-  "documentation": "https://github.com/andrewjdavies/incoming_rain",
+  "documentation": "https://github.com/abrainwood/home-assistant-rain-incoming",
   "requirements": ["numpy>=1.26", "scipy>=1.11"],
   "dependencies": [],
   "codeowners": ["@abrainwood"],

@@ -1,8 +1,8 @@
-# Contributing to Incoming Rain
+# Contributing to Rain Incoming
 
 Thanks for your interest in contributing! This integration detects approaching rain using RainViewer radar data and provides sensors for Home Assistant automations.
 
-**Quality bar**: this codebase aims to demonstrate production-grade quality. PRs are expected to maintain that bar - it's a showcase project. Resilience, observability, and thorough testing are not optional extras.
+**Quality bar**: resilience, observability, and thorough testing are not optional extras. PRs are expected to maintain the same standard as the existing code.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ Thanks for your interest in contributing! This integration detects approaching r
 ## Getting started
 
 ```bash
-git clone https://github.com/abrainwood/home-assistant-incoming-rain.git
+git clone https://github.com/abrainwood/home-assistant-rain-incoming.git
 cd incoming_rain
 
 # Create virtualenv and install dev dependencies
@@ -36,7 +36,7 @@ This integration uses the [RainViewer API](https://www.rainviewer.com/api.html) 
 ## Project structure
 
 ```
-custom_components/incoming_rain/
+custom_components/rain_incoming/
   providers/
     base.py               # Abstract interfaces (RadarProvider, RadarFrame)
     rainviewer.py         # RainViewer API implementation

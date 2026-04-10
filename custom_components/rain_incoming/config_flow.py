@@ -33,10 +33,10 @@ def _validate_input(user_input: dict) -> dict[str, str]:
 def _build_title(user_input: dict) -> str:
     location_name = user_input.get(CONF_LOCATION_NAME, "").strip()
     if location_name:
-        return f"Incoming Rain - {location_name}"
+        return f"Rain Incoming - {location_name}"
     lat = user_input[CONF_LATITUDE]
     lon = user_input[CONF_LONGITUDE]
-    return f"Incoming Rain ({lat:.2f}, {lon:.2f})"
+    return f"Rain Incoming ({lat:.2f}, {lon:.2f})"
 
 
 def _build_schema(
@@ -55,15 +55,15 @@ def _build_schema(
     )
 
 
-class IncomingRainConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Config flow for Incoming Rain."""
+class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Config flow for Rain Incoming."""
 
     VERSION = 1
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return IncomingRainOptionsFlow(config_entry)
+        return RainIncomingOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict | None = None
@@ -91,7 +91,7 @@ class IncomingRainConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-class IncomingRainOptionsFlow(OptionsFlow):
+class RainIncomingOptionsFlow(OptionsFlow):
     """Options flow to reconfigure location and lookahead after setup."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:

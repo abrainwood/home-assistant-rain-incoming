@@ -4,7 +4,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.incoming_rain.const import DOMAIN
+from custom_components.rain_incoming.const import DOMAIN
 
 
 @pytest.mark.asyncio
@@ -67,7 +67,7 @@ async def test_config_flow_title_uses_location_name_when_provided(hass: HomeAssi
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Incoming Rain - Beach House"
+    assert result["title"] == "Rain Incoming - Beach House"
     assert result["data"]["location_name"] == "Beach House"
 
 
@@ -86,7 +86,7 @@ async def test_config_flow_title_uses_coordinates_when_name_empty(hass: HomeAssi
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Incoming Rain (-33.70, 151.21)"
+    assert result["title"] == "Rain Incoming (-33.70, 151.21)"
 
 
 @pytest.mark.asyncio
@@ -104,7 +104,7 @@ async def test_config_flow_title_uses_coordinates_when_name_omitted(hass: HomeAs
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Incoming Rain (-33.70, 151.21)"
+    assert result["title"] == "Rain Incoming (-33.70, 151.21)"
 
 
 @pytest.mark.asyncio

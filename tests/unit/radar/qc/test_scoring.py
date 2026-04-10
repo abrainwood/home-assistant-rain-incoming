@@ -4,8 +4,8 @@ import logging
 
 import numpy as np
 
-from custom_components.incoming_rain.radar.qc.scoring import compute_confidence_map
-from custom_components.incoming_rain.radar.qc.types import ConfidenceMap, QCConfig
+from custom_components.rain_incoming.radar.qc.scoring import compute_confidence_map
+from custom_components.rain_incoming.radar.qc.types import ConfidenceMap, QCConfig
 
 
 class TestComputeConfidenceMap:

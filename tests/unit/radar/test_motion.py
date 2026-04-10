@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.radar.motion import (
+from custom_components.rain_incoming.radar.motion import (
     estimate_velocity,
     extract_cell_centroids,
     is_directionally_coherent,

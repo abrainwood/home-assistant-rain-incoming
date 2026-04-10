@@ -49,7 +49,7 @@ _LOGGER = logging.getLogger(__name__)
 FRAMES_TO_FETCH = 8
 
 # Clutter map persistence
-CLUTTER_MAP_FILENAME = "incoming_rain_clutter.npz"
+CLUTTER_MAP_FILENAME = "rain_incoming_clutter.npz"
 CLUTTER_SAVE_INTERVAL = 36  # save every 36 cycles (~6 hours at 10-min intervals)
 CLUTTER_MATURITY_CYCLES = 72  # fully mature after ~12 hours
 
@@ -78,7 +78,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         super().__init__(
             hass,
             _LOGGER,
-            name="incoming_rain",
+            name="rain_incoming",
             update_interval=timedelta(seconds=POLL_INTERVAL_SECONDS),
         )
         self._entry = entry

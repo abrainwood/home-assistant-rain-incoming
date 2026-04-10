@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from custom_components.incoming_rain.providers.open_meteo import (
+from custom_components.rain_incoming.providers.open_meteo import (
     fetch_precipitation_now,
 )
 

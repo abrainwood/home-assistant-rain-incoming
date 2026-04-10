@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "incoming-rain"
+name = "rain-incoming"
 version = "0.1.0"
 description = "Home Assistant integration that detects approaching rain using radar data"
 requires-python = ">=3.12"
@@ -31,5 +31,5 @@ asyncio_mode = "auto"
 pythonpath = ["."]
 
 [tool.coverage.run]
-source = ["custom_components/incoming_rain"]
+source = ["custom_components/rain_incoming"]
 omit = ["tests/*"]

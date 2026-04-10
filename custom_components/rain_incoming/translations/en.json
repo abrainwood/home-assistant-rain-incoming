@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up Incoming Rain",
-        "description": "Monitor a location for approaching rain using radar data.",
+        "title": "Set up Rain Incoming",
+        "description": "Detect approaching rain using radar data from RainViewer",
         "data": {
           "latitude": "Latitude",
           "longitude": "Longitude",
@@ -24,7 +24,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Configure Incoming Rain",
+        "title": "Configure Rain Incoming",
         "data": {
           "latitude": "Latitude",
           "longitude": "Longitude",

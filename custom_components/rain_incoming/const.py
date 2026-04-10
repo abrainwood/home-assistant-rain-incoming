@@ -1,4 +1,4 @@
-DOMAIN = "incoming_rain"
+DOMAIN = "rain_incoming"
 
 # Config keys (user-facing)
 CONF_LOCATION_NAME = "location_name"

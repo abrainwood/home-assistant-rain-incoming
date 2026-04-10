@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from custom_components.incoming_rain.radar.composite import (
+from custom_components.rain_incoming.radar.composite import (
     _map_tile_cache,
     _radar_tile_cache,
     calculate_map_zoom,
@@ -66,7 +66,7 @@ class TestFilterPrecipitationPixels:
 
     def test_precipitation_colour_preserved(self):
         """A pixel matching a known RainViewer precipitation colour keeps its alpha."""
-        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+        from custom_components.rain_incoming.providers.rainviewer import PRECIP_COLOURS
         r, g, b, _ = PRECIP_COLOURS[2]  # (0, 154, 213) - light-moderate rain
         img = np.zeros((10, 10, 4), dtype=np.uint8)
         img[5, 5] = [r, g, b, 255]
@@ -88,7 +88,7 @@ class TestFilterPrecipitationPixels:
 
     def test_all_documented_colours_pass_filter(self):
         """Every colour in the documented scheme 2 table should pass the filter."""
-        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+        from custom_components.rain_incoming.providers.rainviewer import PRECIP_COLOURS
         img = np.zeros((len(PRECIP_COLOURS), 1, 4), dtype=np.uint8)
         for i, (r, g, b, _) in enumerate(PRECIP_COLOURS):
             img[i, 0] = [r, g, b, 200]
@@ -108,7 +108,7 @@ class TestFilterPrecipitationPixels:
 
 class TestDrawCrosshair:
     def test_draws_red_at_circle_edge(self):
-        from custom_components.incoming_rain.radar.composite import _CROSSHAIR_RADIUS
+        from custom_components.rain_incoming.radar.composite import _CROSSHAIR_RADIUS
         img = Image.new("RGBA", (100, 100), (0, 0, 0, 255))
         draw_crosshair(img, 50, 50)
         pixels = np.array(img)
@@ -318,7 +318,7 @@ class TestRenderAnimatedComposite:
     @pytest.mark.asyncio
     async def test_gif_has_expected_frame_count(self):
         """Pillow deduplicates identical GIF frames, so use distinct precipitation colours."""
-        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+        from custom_components.rain_incoming.providers.rainviewer import PRECIP_COLOURS
 
         output_size = 256
         map_bytes = _make_tile_png((30, 30, 30, 255))
@@ -388,7 +388,7 @@ class TestRenderAnimatedComposite:
     @pytest.mark.asyncio
     async def test_last_frame_has_longer_duration(self):
         """The last GIF frame should hold 4x longer than other frames."""
-        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+        from custom_components.rain_incoming.providers.rainviewer import PRECIP_COLOURS
 
         output_size = 256
         map_bytes = _make_tile_png((30, 30, 30, 255))
@@ -454,7 +454,7 @@ class TestBinaryThresholdRendering:
         Effective intensity: 0.46 * 0.5 = 0.23 >= 0.1 -> full alpha (200 unchanged)
         After compositing over black: green = 200 * (200/255) ~ 157
         """
-        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+        from custom_components.rain_incoming.radar.composite import _composite_single_frame
 
         output_size = 64
         radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
@@ -488,7 +488,7 @@ class TestBinaryThresholdRendering:
         Effective intensity: 0.069 * 0.5 = 0.035 < 0.1 -> dimmed (alpha * 0.25)
         Original alpha=200, dimmed to 50. After compositing: green = 30 * (50/255) ~ 6
         """
-        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+        from custom_components.rain_incoming.radar.composite import _composite_single_frame
 
         output_size = 64
         radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
@@ -518,7 +518,7 @@ class TestBinaryThresholdRendering:
 
     def test_no_confidence_renders_full(self):
         """Without confidence map, all radar renders at full alpha."""
-        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+        from custom_components.rain_incoming.radar.composite import _composite_single_frame
 
         output_size = 64
         radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
@@ -552,7 +552,7 @@ class TestBinaryThresholdRendering:
         Pixel: green=200 (luminance ~0.46), confidence=0.6
         Effective: 0.46 * 0.6 = 0.28 >= 0.1 -> full alpha
         """
-        from custom_components.incoming_rain.radar.composite import _composite_single_frame
+        from custom_components.rain_incoming.radar.composite import _composite_single_frame
 
         output_size = 64
         radar_arr = np.zeros((output_size, output_size, 4), dtype=np.uint8)
@@ -594,7 +594,7 @@ class TestConfidenceWeightedRendering:
     async def test_speckle_is_dimmed_vs_smooth_rain(self):
         """Speckly radar tile should have lower mean alpha than smooth rain tile
         after confidence-weighted rendering."""
-        from custom_components.incoming_rain.providers.rainviewer import PRECIP_COLOURS
+        from custom_components.rain_incoming.providers.rainviewer import PRECIP_COLOURS
 
         output_size = 256
         # Use a real precipitation colour so the colour filter doesn't strip it

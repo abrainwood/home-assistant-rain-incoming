@@ -1,5 +1,5 @@
 """
-E2E tests for the incoming_rain integration.
+E2E tests for the rain_incoming integration.
 
 These tests run against a real HA instance in Docker with a mock RainViewer
 server. They verify the full pipeline: HTTP fetch -> tile decoding ->
@@ -15,14 +15,14 @@ import pytest
 from PIL import Image
 
 
-BINARY_SENSOR = "binary_sensor.incoming_rain_status"
-ARRIVAL_SENSOR = "sensor.incoming_rain_arrival_time"
-INTENSITY_SENSOR = "sensor.incoming_rain_intensity"
-LAST_RAIN_SENSOR = "sensor.incoming_rain_last_rain"
-IMAGE_64 = "image.incoming_rain_radar_64km"
-IMAGE_128 = "image.incoming_rain_radar_128km"
-IMAGE_256 = "image.incoming_rain_radar_256km"
-IMAGE_512 = "image.incoming_rain_radar_512km"
+BINARY_SENSOR = "binary_sensor.rain_incoming_status"
+ARRIVAL_SENSOR = "sensor.rain_incoming_arrival_time"
+INTENSITY_SENSOR = "sensor.rain_incoming_intensity"
+LAST_RAIN_SENSOR = "sensor.rain_incoming_last_rain"
+IMAGE_64 = "image.rain_incoming_radar_64km"
+IMAGE_128 = "image.rain_incoming_radar_128km"
+IMAGE_256 = "image.rain_incoming_radar_256km"
+IMAGE_512 = "image.rain_incoming_radar_512km"
 
 
 class TestIntegrationLoaded:
@@ -271,13 +271,13 @@ class TestSystemLogs:
 
         our_lines = [
             line for line in log_text.split("\n")
-            if "incoming_rain" in line
+            if "rain_incoming" in line
             and ("WARNING" in line or "ERROR" in line)
         ]
 
         # Exclude known/expected warnings we can't control
         expected_patterns = [
-            "custom integration incoming_rain which has not been tested",  # HA standard warning
+            "custom integration rain_incoming which has not been tested",  # HA standard warning
         ]
 
         unexpected = [
@@ -286,6 +286,6 @@ class TestSystemLogs:
         ]
 
         assert not unexpected, (
-            f"Found {len(unexpected)} unexpected warning(s) from incoming_rain:\n"
+            f"Found {len(unexpected)} unexpected warning(s) from rain_incoming:\n"
             + "\n".join(unexpected)
         )

@@ -6,7 +6,7 @@ Usage:
     python scripts/dev-setup.py          # normal dev (real RainViewer)
     python scripts/dev-setup.py --mock   # E2E mode (mock RainViewer on port 9876)
 
-Creates the HA account, completes onboarding, and adds the incoming_rain
+Creates the HA account, completes onboarding, and adds the rain_incoming
 integration. Saves the auth token to .dev-token for E2E tests.
 """
 from __future__ import annotations
@@ -189,18 +189,18 @@ def onboard(token_file: str = TOKEN_FILE) -> str:
 
 
 def add_integration(token: str) -> bool:
-    """Add the incoming_rain integration via config flow."""
+    """Add the rain_incoming integration via config flow."""
     # Check if already configured
     entries = _request("GET", "/api/config/config_entries/entry", token=token)
     if entries:
         for entry in entries:
-            if entry.get("domain") == "incoming_rain":
+            if entry.get("domain") == "rain_incoming":
                 print("Integration already configured")
                 return True
 
-    print("Adding incoming_rain integration...")
+    print("Adding rain_incoming integration...")
     flow = _request("POST", "/api/config/config_entries/flow",
-                     {"handler": "incoming_rain"}, token=token)
+                     {"handler": "rain_incoming"}, token=token)
     if not flow or "flow_id" not in flow:
         print("Failed to init config flow")
         return False
@@ -212,7 +212,7 @@ def add_integration(token: str) -> bool:
         return False
 
     if result.get("type") == "create_entry":
-        print(f"Integration added: {result.get('title', 'incoming_rain')}")
+        print(f"Integration added: {result.get('title', 'rain_incoming')}")
         return True
 
     print(f"Unexpected flow result: {result}")

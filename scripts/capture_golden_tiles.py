@@ -24,18 +24,18 @@ import aiohttp.resolver
 # Add project root to path so we can import custom_components without HA
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from custom_components.incoming_rain.const import (
+from custom_components.rain_incoming.const import (
     RAINVIEWER_ANALYSIS_GRID,
     RAINVIEWER_COLOUR_SCHEME,
     RAINVIEWER_ZOOM,
 )
-from custom_components.incoming_rain.providers.rainviewer import (
+from custom_components.rain_incoming.providers.rainviewer import (
     MANIFEST_URL,
     TILE_BASE_URL,
     TILE_SIZE,
 )
-from custom_components.incoming_rain.radar.composite import render_composite
-from custom_components.incoming_rain.radar.geo import lat_lon_to_tile
+from custom_components.rain_incoming.radar.composite import render_composite
+from custom_components.rain_incoming.radar.geo import lat_lon_to_tile
 
 ZOOM = RAINVIEWER_ZOOM
 GRID_HALF = RAINVIEWER_ANALYSIS_GRID

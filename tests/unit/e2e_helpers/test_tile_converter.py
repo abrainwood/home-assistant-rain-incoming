@@ -61,7 +61,7 @@ class TestGridToTilePng:
     def test_mixed_intensities_round_trip_through_rainviewer_decoding(self):
         """A grid with varied intensities should decode back to close values
         when passed through the RainViewer colour-to-intensity decoder."""
-        from custom_components.incoming_rain.providers.rainviewer import (
+        from custom_components.rain_incoming.providers.rainviewer import (
             _tile_to_intensity_array,
         )
 
@@ -86,7 +86,7 @@ class TestGridToTilePng:
     def test_golden_data_grid_round_trips(self):
         """Load a real golden data grid and verify it round-trips."""
         from pathlib import Path
-        from custom_components.incoming_rain.providers.rainviewer import (
+        from custom_components.rain_incoming.providers.rainviewer import (
             _tile_to_intensity_array,
         )
 

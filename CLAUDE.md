@@ -1,11 +1,11 @@
-# Incoming Rain - Developer Guide
+# Rain Incoming - Developer Guide
 
 HA custom integration that detects approaching rain using RainViewer radar data and exposes binary sensors and arrival-time sensors for Home Assistant automations.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/abrainwood/home-assistant-incoming-rain.git
+git clone https://github.com/abrainwood/home-assistant-rain-incoming.git
 cd incoming_rain
 python -m venv .venv
 source .venv/bin/activate
@@ -34,7 +34,7 @@ make dev   # then open http://localhost:8123 (login: dev / devdevdev)
 ### Key files
 
 ```
-custom_components/incoming_rain/
+custom_components/rain_incoming/
   coordinator.py          # DataUpdateCoordinator, fetch scheduling, backoff
   image.py                # Camera entity, image rendering
   http_retry.py           # Retry-with-backoff wrapper for all HTTP calls

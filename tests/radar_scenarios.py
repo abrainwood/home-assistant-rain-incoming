@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from custom_components.incoming_rain.providers.base import BoundingBox, RadarFrame
+from custom_components.rain_incoming.providers.base import BoundingBox, RadarFrame
 
 # Standard test location: Terry Hills radar
 LAT: float = -33.701

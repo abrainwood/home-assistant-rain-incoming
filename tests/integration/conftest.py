@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from custom_components.incoming_rain.radar.detector import Confidence, DetectionResult
+from custom_components.rain_incoming.radar.detector import Confidence, DetectionResult
 
 _MOCK_RESULT_UNAVAILABLE = DetectionResult(
     rain_incoming=False,
@@ -35,7 +35,7 @@ def mock_coordinator_network(request):
         return
 
     with patch(
-        "custom_components.incoming_rain.coordinator.RainDetectorCoordinator._async_update_data",
+        "custom_components.rain_incoming.coordinator.RainDetectorCoordinator._async_update_data",
         new=AsyncMock(return_value=_MOCK_RESULT_UNAVAILABLE),
     ):
         yield

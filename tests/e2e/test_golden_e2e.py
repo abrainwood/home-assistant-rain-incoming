@@ -47,9 +47,9 @@ BRIGHT_LAT = -36.731
 BRIGHT_LON = 146.960
 
 # Entity IDs for location-specific integrations
-# HA generates entity IDs from device name "Incoming Rain - Bright"
-# -> binary_sensor.incoming_rain_bright_status
-# -> image.incoming_rain_bright_radar_128km
+# HA generates entity IDs from device name "Rain Incoming - Bright"
+# -> binary_sensor.rain_incoming_bright_status
+# -> image.rain_incoming_bright_radar_128km
 # etc.
 
 
@@ -78,14 +78,14 @@ class TestGoldenDataBright:
         time.sleep(15)
 
         # Step 4: Check sensor state
-        sensor_id = "binary_sensor.incoming_rain_bright_status"
+        sensor_id = "binary_sensor.rain_incoming_bright_status"
         state = ha_client.get_state(sensor_id)
         assert state is not None, (
             f"Entity {sensor_id} not found - integration may not have loaded"
         )
 
         # Step 5: Download rain image
-        image_id = "image.incoming_rain_bright_radar_128km"
+        image_id = "image.rain_incoming_bright_radar_128km"
         rain_gif = ha_client.get_image(image_id)
         if rain_gif:
             _save_gif(rain_gif, "/tmp/e2e_golden_bright_rain.gif")
@@ -128,7 +128,7 @@ class TestGoldenDataBright:
             )
 
         # Also verify intensity is reported correctly
-        intensity_id = "sensor.incoming_rain_bright_intensity"
+        intensity_id = "sensor.rain_incoming_bright_intensity"
         intensity_state = ha_client.get_state(intensity_id)
         if intensity_state is not None:
             # Restore golden scenario to check intensity in rain state
@@ -160,11 +160,11 @@ class TestGoldenDataAlbury:
         configure_location(ALBURY_LAT, ALBURY_LON, "Albury")
         time.sleep(15)
 
-        sensor_id = "binary_sensor.incoming_rain_albury_status"
+        sensor_id = "binary_sensor.rain_incoming_albury_status"
         state = ha_client.get_state(sensor_id)
         assert state is not None, f"Entity {sensor_id} not found"
 
-        rain_gif = ha_client.get_image("image.incoming_rain_albury_radar_128km")
+        rain_gif = ha_client.get_image("image.rain_incoming_albury_radar_128km")
         if rain_gif:
             _save_gif(rain_gif, "/tmp/e2e_golden_albury_rain.gif")
 
@@ -200,11 +200,11 @@ class TestGoldenDataShepparton:
         configure_location(SHEPPARTON_LAT, SHEPPARTON_LON, "Shepparton")
         time.sleep(15)
 
-        sensor_id = "binary_sensor.incoming_rain_shepparton_status"
+        sensor_id = "binary_sensor.rain_incoming_shepparton_status"
         state = ha_client.get_state(sensor_id)
         assert state is not None, f"Entity {sensor_id} not found"
 
-        rain_gif = ha_client.get_image("image.incoming_rain_shepparton_radar_128km")
+        rain_gif = ha_client.get_image("image.rain_incoming_shepparton_radar_128km")
         if rain_gif:
             _save_gif(rain_gif, "/tmp/e2e_golden_shepparton_rain.gif")
 
@@ -221,7 +221,7 @@ class TestGoldenDataShepparton:
         configure_location(SHEPPARTON_LAT, SHEPPARTON_LON, "Shepparton")
         time.sleep(15)
 
-        sensor_id = "binary_sensor.incoming_rain_shepparton_status"
+        sensor_id = "binary_sensor.rain_incoming_shepparton_status"
         state = ha_client.get_state(sensor_id)
         assert state is not None, f"Entity {sensor_id} not found"
         assert state["state"] == "off", (

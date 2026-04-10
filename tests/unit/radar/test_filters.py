@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.radar.filters import (
+from custom_components.rain_incoming.radar.filters import (
     filter_by_area,
     filter_by_temporal_persistence,
     threshold_intensity,

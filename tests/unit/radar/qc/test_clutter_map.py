@@ -6,16 +6,16 @@ import tempfile
 import numpy as np
 import pytest
 
-from custom_components.incoming_rain.radar.qc.clutter_map import (
+from custom_components.rain_incoming.radar.qc.clutter_map import (
     ClutterMap,
     get_clutter_frequency,
     load_clutter_map,
     save_clutter_map,
     update_clutter_map,
 )
-from custom_components.incoming_rain.radar.qc.clutter import score_clutter
-from custom_components.incoming_rain.radar.qc.scoring import compute_confidence_map
-from custom_components.incoming_rain.radar.qc.types import QCConfig
+from custom_components.rain_incoming.radar.qc.clutter import score_clutter
+from custom_components.rain_incoming.radar.qc.scoring import compute_confidence_map
+from custom_components.rain_incoming.radar.qc.types import QCConfig
 
 
 class TestUpdateClutterMap:
