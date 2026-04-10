@@ -350,11 +350,27 @@ def browser():
 
 
 @pytest.fixture
-def page(browser):
-    """Create a new browser page for each test."""
+def page(browser, request):
+    """Create a new browser page for each test. Screenshots on failure."""
     p = browser.new_page()
     yield p
+    if request.node.rep_call and request.node.rep_call.failed:
+        import os
+        screenshot_dir = os.environ.get("PLAYWRIGHT_SCREENSHOTS", "/tmp/playwright-failures")
+        os.makedirs(screenshot_dir, exist_ok=True)
+        test_name = request.node.name.replace("/", "_").replace("::", "_")
+        path = os.path.join(screenshot_dir, f"{test_name}.png")
+        p.screenshot(path=path, full_page=True)
     p.close()
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Store test result on the node so the page fixture can check it."""
+    import pytest
+    outcome = yield
+    rep = outcome.get_result()
+    setattr(item, f"rep_{rep.when}", rep)
 
 
 # ---------------------------------------------------------------------------

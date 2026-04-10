@@ -130,4 +130,14 @@ jobs:
           fi
 
       - name: Run Playwright UI tests
+        env:
+          PLAYWRIGHT_SCREENSHOTS: /tmp/playwright-failures
         run: pytest tests/e2e/test_ui_playwright.py -v --timeout=300
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures
+          path: /tmp/playwright-failures/
+          if-no-files-found: ignore
