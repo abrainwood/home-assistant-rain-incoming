@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from io import BytesIO
+
+from PIL import Image, ImageDraw, ImageFont
 
 from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
@@ -59,10 +62,43 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
     def image_last_updated(self) -> datetime | None:
         return self.coordinator.last_update_success_time
 
+    @property
+    def available(self) -> bool:
+        # Always available - we show cached data or a placeholder
+        return True
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        attrs: dict = {}
+        if (
+            self._cached_image is not None
+            and not self.coordinator.last_update_success
+            and self.coordinator.last_update_success_time is not None
+        ):
+            attrs["stale_since"] = self.coordinator.last_update_success_time.isoformat()
+        return attrs
+
+    def _make_placeholder(self) -> bytes:
+        """Generate a placeholder GIF with 'Waiting for radar data...' text."""
+        img = Image.new("RGB", (640, 640), (30, 30, 30))
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.load_default(size=18)
+        except TypeError:
+            font = ImageFont.load_default()
+        text = "Waiting for radar data..."
+        bbox = font.getbbox(text)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text(((640 - tw) // 2, (640 - th) // 2), text, fill=(180, 180, 180), font=font)
+        buf = BytesIO()
+        img.save(buf, format="GIF")
+        return buf.getvalue()
+
     async def async_image(self) -> bytes | None:
         frame_path = self.coordinator.latest_frame_path
         if frame_path is None:
-            return None
+            # No fresh data - return cached image or placeholder
+            return self._cached_image or self._make_placeholder()
 
         # Only re-render if the latest frame path changed
         if frame_path == self._cached_frame_path and self._cached_image is not None:
@@ -70,7 +106,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
 
         frame_paths = self.coordinator.frame_paths
         if not frame_paths:
-            return None
+            return self._cached_image or self._make_placeholder()
 
         data = self._entry.data
         lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
