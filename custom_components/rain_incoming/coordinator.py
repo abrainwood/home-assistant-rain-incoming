@@ -204,8 +204,14 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             for f in frames
         ]
 
-        # Evict stale entries and keep only the current frame set.
-        self._frame_cache = {f.path: f for f in frames}
+        # Only cache frames that have successfully fetched grids.
+        # If a fetch failed (rate limited, timeout), the frame will have no
+        # cached grid - don't cache it so we retry on the next poll.
+        self._frame_cache = {
+            f.path: f
+            for f in frames
+            if getattr(f, "_cached_grid", None) is not None
+        }
 
         # Compute per-frame QC confidence maps BEFORE detection so they can
         # be used to gate intensity thresholding in the detector.

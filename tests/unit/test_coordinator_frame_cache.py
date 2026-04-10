@@ -95,8 +95,13 @@ class TestFrameCache:
         # Resolve frames in manifest order
         resolved = [cache.get(f.path, f) for f in manifest_frames]
 
-        # Evict stale entries - keep only current frame set
-        updated_cache = {f.path: f for f in resolved}
+        # Only cache frames with successfully fetched grids.
+        # Mirrors the production code: failed fetches are not cached.
+        updated_cache = {
+            f.path: f
+            for f in resolved
+            if getattr(f, "_cached_grid", None) is not None
+        }
 
         reused_paths = [f.path for f in reused]
         fetched_paths = [f.path for f in to_fetch]
@@ -227,4 +232,52 @@ class TestFrameCache:
         )
         assert set(fetch_called_for).isdisjoint(set(cached_paths)), (
             "_fetch_stitched_grid must not be called for cached frames"
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_fetch_not_cached(self):
+        """Frames whose tile fetch failed (no grid) must not be cached.
+
+        If a frame is rate-limited or times out, its _cached_grid stays None.
+        Caching it would mean we never retry - the broken data persists.
+        """
+        paths = [f"/v2/radar/frame{i}" for i in range(4)]
+
+        def fail_one_fetch(frame):
+            """Simulate: frames 0-2 succeed, frame 3 fails (no grid populated)."""
+            if frame.path == paths[3]:
+                return  # don't set _cached_grid - simulates a failed fetch
+            frame._cached_grid = np.zeros((10, 10), dtype=np.float32)
+            frame._cached_bounds = BoundingBox(
+                lat_min=0, lat_max=1, lon_min=0, lon_max=1
+            )
+
+        manifest_frames = [_make_fresh_frame(p) for p in paths]
+
+        resolved, cache, _, _ = await self._run_cache_resolution(
+            manifest_frames=manifest_frames,
+            initial_cache={},
+            fetch_side_effect=fail_one_fetch,
+        )
+
+        # Frame 3 failed - it must NOT be in the cache
+        assert paths[3] not in cache, (
+            "Frame with failed fetch should not be cached"
+        )
+        # Frames 0-2 succeeded - they should be cached
+        for p in paths[:3]:
+            assert p in cache, f"Successfully fetched frame {p} should be cached"
+
+        # On next poll, frame 3 should be re-fetched (not skipped as "cached")
+        manifest_frames_2 = [_make_fresh_frame(p) for p in paths]
+        _, _, reused_paths, fetched_paths = await self._run_cache_resolution(
+            manifest_frames=manifest_frames_2,
+            initial_cache=cache,
+            # This time all succeed
+        )
+        assert paths[3] in fetched_paths, (
+            "Previously failed frame should be re-fetched on next poll"
+        )
+        assert set(paths[:3]) == set(reused_paths), (
+            "Previously successful frames should be reused"
         )
