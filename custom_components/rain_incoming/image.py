@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageFont
 
 from homeassistant.components.image import ImageEntity
+
+_LOGGER = logging.getLogger(__name__)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import HomeAssistant
@@ -97,8 +100,11 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
     async def async_image(self) -> bytes | None:
         frame_path = self.coordinator.latest_frame_path
         if frame_path is None:
-            # No fresh data - return cached image or placeholder
-            return self._cached_image or self._make_placeholder()
+            if self._cached_image is not None:
+                _LOGGER.debug("Radar %dkm: returning stale cached image (no fresh data)", self._radius_km)
+                return self._cached_image
+            _LOGGER.debug("Radar %dkm: returning placeholder (no data yet)", self._radius_km)
+            return self._make_placeholder()
 
         # Only re-render if the latest frame path changed
         if frame_path == self._cached_frame_path and self._cached_image is not None:
@@ -106,7 +112,11 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
 
         frame_paths = self.coordinator.frame_paths
         if not frame_paths:
-            return self._cached_image or self._make_placeholder()
+            if self._cached_image is not None:
+                _LOGGER.debug("Radar %dkm: returning stale cached image (no frame paths)", self._radius_km)
+                return self._cached_image
+            _LOGGER.debug("Radar %dkm: returning placeholder (no frame paths)", self._radius_km)
+            return self._make_placeholder()
 
         data = self._entry.data
         lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
@@ -122,18 +132,38 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         session = async_get_clientsession(self.hass)
         conf_maps = self.coordinator.confidence_maps or None
         location_name = data.get(CONF_LOCATION_NAME) or None
-        self._cached_image = await render_animated_composite(
-            lat=lat,
-            lon=lon,
-            radius_km=self._radius_km,
-            frame_paths=frame_paths,
-            frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
-            frame_timestamps=local_timestamps,
-            tz_name=self.hass.config.time_zone,
-            confidence_maps=conf_maps,
-            location_name=location_name,
-            session=session,
-            run_in_executor=self.hass.async_add_executor_job,
+
+        _LOGGER.debug(
+            "Radar %dkm: rendering %d frames for %s",
+            self._radius_km, len(frame_paths), location_name or "default location",
         )
-        self._cached_frame_path = frame_path
+        try:
+            self._cached_image = await render_animated_composite(
+                lat=lat,
+                lon=lon,
+                radius_km=self._radius_km,
+                frame_paths=frame_paths,
+                frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
+                frame_timestamps=local_timestamps,
+                tz_name=self.hass.config.time_zone,
+                confidence_maps=conf_maps,
+                location_name=location_name,
+                session=session,
+                run_in_executor=self.hass.async_add_executor_job,
+            )
+            self._cached_frame_path = frame_path
+            _LOGGER.debug(
+                "Radar %dkm: rendered %d bytes",
+                self._radius_km, len(self._cached_image) if self._cached_image else 0,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Radar %dkm: rendering failed for %s",
+                self._radius_km, location_name or "default location",
+            )
+            # Return whatever we have - stale cache or placeholder
+            if self._cached_image is not None:
+                return self._cached_image
+            return self._make_placeholder()
+
         return self._cached_image

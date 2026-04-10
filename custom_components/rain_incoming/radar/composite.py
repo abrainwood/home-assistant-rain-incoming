@@ -206,7 +206,7 @@ def draw_range_rings(
 
 async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
     resp = await rate_limited_fetch(session, url, semaphore=_get_tile_semaphore())
-    data = await resp.read()
+    data = await asyncio.wait_for(resp.read(), timeout=10)
     return Image.open(BytesIO(data)).convert("RGBA")
 
 
@@ -494,8 +494,16 @@ async def _fetch_radar_overlay(
         for tx in range(vp.radar_tx_min, vp.radar_tx_max + 1)
     ]
 
+    _LOGGER.debug(
+        "radar overlay %s: %d tiles needed (%d,%d)-(%d,%d)",
+        frame_path[-8:], len(coords),
+        vp.radar_tx_min, vp.radar_ty_min, vp.radar_tx_max, vp.radar_ty_max,
+    )
+
     # Evict old entries if cache is too large
     _evict_radar_cache_if_full()
+
+    import time as _time
 
     async def _fetch_one(tx: int, ty: int):
         cache_key = (frame_path, radar_zoom, tx, ty, _RENDER_COLOUR_SCHEME)
@@ -507,8 +515,15 @@ async def _fetch_radar_overlay(
             f"{_RAINVIEWER_TILE_BASE}{frame_path}"
             f"/{TILE_SIZE}/{radar_zoom}/{tx}/{ty}/{_RENDER_COLOUR_SCHEME}/0.png"
         )
+        t0 = _time.monotonic()
         try:
             tile = await _fetch_tile(session, url)
+            elapsed = _time.monotonic() - t0
+            if elapsed > 5:
+                _LOGGER.warning(
+                    "Slow tile fetch: %.1fs for z=%d x=%d y=%d (%s)",
+                    elapsed, radar_zoom, tx, ty, frame_path[-8:],
+                )
             _radar_tile_cache[cache_key] = tile
             return tx, ty, tile
         except aiohttp.ClientResponseError as e:
@@ -681,10 +696,19 @@ async def render_animated_composite(
     Convenience function that calls fetch_map_crop, fetch_radar_overlays,
     composite_frames, and render_gif in sequence.
     """
+    import time as _time
+    t0 = _time.monotonic()
+
     map_crop = await fetch_map_crop(session, lat, lon, radius_km, output_size)
+    t1 = _time.monotonic()
+    _LOGGER.debug("render %dkm: map tiles fetched in %.1fs", radius_km, t1 - t0)
+
     radar_overlays = await fetch_radar_overlays(
         session, lat, lon, radius_km, frame_paths, output_size
     )
+    t2 = _time.monotonic()
+    _LOGGER.debug("render %dkm: %d radar overlays fetched in %.1fs", radius_km, len(radar_overlays), t2 - t1)
+
     frames = composite_frames(
         background=map_crop,
         radar_overlays=radar_overlays,
@@ -695,6 +719,8 @@ async def render_animated_composite(
         confidence_maps=confidence_maps,
         location_name=location_name,
     )
+    t3 = _time.monotonic()
+    _LOGGER.debug("render %dkm: %d frames composited in %.1fs", radius_km, len(frames), t3 - t2)
 
     if not frames:
         # Shouldn't happen, but return a blank GIF if no frames

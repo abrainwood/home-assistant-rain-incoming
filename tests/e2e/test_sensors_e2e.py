@@ -22,7 +22,6 @@ LAST_RAIN_SENSOR = "sensor.rain_incoming_last_rain"
 IMAGE_64 = "image.rain_incoming_radar_64km"
 IMAGE_128 = "image.rain_incoming_radar_128km"
 IMAGE_256 = "image.rain_incoming_radar_256km"
-IMAGE_512 = "image.rain_incoming_radar_512km"
 
 
 class TestIntegrationLoaded:
@@ -44,7 +43,7 @@ class TestIntegrationLoaded:
         state = ha_client.get_state(LAST_RAIN_SENSOR)
         assert state is not None, f"Entity {LAST_RAIN_SENSOR} not found"
 
-    @pytest.mark.parametrize("entity_id", [IMAGE_64, IMAGE_128, IMAGE_256, IMAGE_512])
+    @pytest.mark.parametrize("entity_id", [IMAGE_64, IMAGE_128, IMAGE_256])
     def test_image_entities_exist(self, ha_client, entity_id):
         state = ha_client.get_state(entity_id)
         assert state is not None, f"Entity {entity_id} not found"

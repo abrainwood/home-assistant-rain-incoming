@@ -24,8 +24,21 @@ async def fetch_with_retry(
     Returns the successful response. Raises aiohttp.ClientResponseError if all
     retries are exhausted or a non-retryable error status is returned.
     """
+    request_timeout = aiohttp.ClientTimeout(total=30)
     for attempt in range(max_retries + 1):
-        resp = await session.get(url)
+        try:
+            resp = await session.get(url, timeout=request_timeout)
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError):
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                _LOGGER.warning(
+                    "Timeout on %s, retrying in %.1fs (attempt %d/%d)",
+                    url, delay, attempt + 1, max_retries,
+                )
+                await asyncio.sleep(delay)
+                continue
+            _LOGGER.warning("All %d retries exhausted (timeout) for %s", max_retries, url)
+            raise
 
         if resp.status == 429:
             if attempt < max_retries:

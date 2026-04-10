@@ -13,7 +13,7 @@
 - **Binary sensor** - is rain incoming? (`on`/`off`, use it in any automation)
 - **Arrival time prediction** - when will it arrive?
 - **Intensity level** - light / moderate / heavy / extreme
-- **Animated radar maps** at 4 zoom levels (64 / 128 / 256 / 512km)
+- **Animated radar maps** at 3 zoom levels (64 / 128 / 256km)
 - **Multi-location support** - add as many instances as you need
 - **Works worldwide** - powered by [RainViewer](https://www.rainviewer.com/), free, no API key needed
 - **Smart noise filtering** - QC pipeline handles radar artifacts so you don't get false alarms
@@ -147,7 +147,6 @@ automation:
 | `image.rain_incoming_radar_64km` | Image | Animated radar map - neighbourhood scale (64km radius) |
 | `image.rain_incoming_radar_128km` | Image | Animated radar map - city/regional scale (128km radius) |
 | `image.rain_incoming_radar_256km` | Image | Animated radar map - state/province scale (256km radius) |
-| `image.rain_incoming_radar_512km` | Image | Animated radar map - synoptic scale (512km radius) |
 
 The radar images show the last several frames of radar data as an animation, with a crosshair marking your monitored location.
 
