@@ -555,6 +555,83 @@ async def render_composite(
     return _render_sync(map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size)
 
 
+# --- Public composable API ---
+# These functions expose the rendering pipeline as independent building blocks.
+# Production code uses render_animated_composite() which calls all of them.
+# Tests can call them individually for isolated assertions.
+
+
+async def fetch_map_crop(
+    session: aiohttp.ClientSession,
+    lat: float,
+    lon: float,
+    radius_km: int,
+    output_size: int = 640,
+) -> Image.Image:
+    """Fetch CartoDB map tiles for a location and radius. Returns a cropped PIL image."""
+    vp = _ViewportParams(lat, lon, radius_km, output_size)
+    return await _fetch_map_crop(session, vp, output_size)
+
+
+async def fetch_radar_overlays(
+    session: aiohttp.ClientSession,
+    lat: float,
+    lon: float,
+    radius_km: int,
+    frame_paths: list[str],
+    output_size: int = 640,
+) -> list[Image.Image]:
+    """Fetch radar tiles for each frame path. Returns a list of RGBA PIL images."""
+    vp = _ViewportParams(lat, lon, radius_km, output_size)
+    return list(await asyncio.gather(*[
+        _fetch_radar_overlay(session, vp, fp, output_size) for fp in frame_paths
+    ]))
+
+
+def composite_frames(
+    background: Image.Image,
+    radar_overlays: list[Image.Image],
+    lat: float,
+    lon: float,
+    radius_km: int,
+    output_size: int = 640,
+    *,
+    frame_timestamps: list[datetime] | None = None,
+    tz_name: str | None = None,
+    confidence_maps: list[np.ndarray] | None = None,
+) -> list[Image.Image]:
+    """Composite radar overlays over a background image. Returns a list of frames."""
+    vp = _ViewportParams(lat, lon, radius_km, output_size)
+    timestamps = frame_timestamps or [None] * len(radar_overlays)
+    frames: list[Image.Image] = []
+    for i, radar_resized in enumerate(radar_overlays):
+        ts = timestamps[i] if i < len(timestamps) else None
+        conf_map = confidence_maps[i] if confidence_maps and i < len(confidence_maps) else None
+        frame_img = _composite_single_frame(
+            background, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
+            timestamp=ts, tz_name=tz_name,
+            confidence_map=conf_map,
+        )
+        frames.append(frame_img)
+    return frames
+
+
+def render_gif(
+    frames: list[Image.Image],
+    frame_duration_ms: int = 500,
+) -> bytes:
+    """Encode PIL frames to animated GIF bytes."""
+    if not frames:
+        blank = Image.new("RGB", (100, 100), (0, 0, 0))
+        buf = BytesIO()
+        blank.save(buf, format="GIF")
+        return buf.getvalue()
+    return _render_gif_sync(frames, frame_duration_ms)
+
+
+# --- High-level convenience function (used by image.py) ---
+
+
 async def render_animated_composite(
     lat: float,
     lon: float,
@@ -571,40 +648,22 @@ async def render_animated_composite(
 ) -> bytes:
     """Render an animated GIF compositing multiple radar frames over a static map.
 
-    Parameters
-    ----------
-    frame_timestamps: optional list of datetimes matching frame_paths, used for
-        overlaying a timestamp on each frame.
-    confidence_maps: optional per-frame confidence arrays from the QC pipeline.
-        Each array is float32 (H, W), values 0-1. Applied as an alpha multiplier
-        to dim low-confidence pixels.
-    session: an aiohttp.ClientSession for fetching tiles.
-    run_in_executor: optional callable (e.g. hass.async_add_executor_job)
-        to offload CPU-bound GIF assembly. If None, rendering runs inline.
+    Convenience function that calls fetch_map_crop, fetch_radar_overlays,
+    composite_frames, and render_gif in sequence.
     """
-    vp = _ViewportParams(lat, lon, radius_km, output_size)
-
-    # Fetch map tiles once - they're the same for every frame
-    map_crop = await _fetch_map_crop(session, vp, output_size)
-
-    # Fetch all radar overlays in parallel
-    radar_overlays = await asyncio.gather(*[
-        _fetch_radar_overlay(session, vp, fp, output_size) for fp in frame_paths
-    ])
-
-    timestamps = frame_timestamps or [None] * len(frame_paths)
-
-    # Composite each frame (CPU-bound but fast - no I/O)
-    frames: list[Image.Image] = []
-    for i, radar_resized in enumerate(radar_overlays):
-        ts = timestamps[i] if i < len(timestamps) else None
-        conf_map = confidence_maps[i] if confidence_maps and i < len(confidence_maps) else None
-        frame_img = _composite_single_frame(
-            map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
-            timestamp=ts, tz_name=tz_name,
-            confidence_map=conf_map,
-        )
-        frames.append(frame_img)
+    map_crop = await fetch_map_crop(session, lat, lon, radius_km, output_size)
+    radar_overlays = await fetch_radar_overlays(
+        session, lat, lon, radius_km, frame_paths, output_size
+    )
+    frames = composite_frames(
+        background=map_crop,
+        radar_overlays=radar_overlays,
+        lat=lat, lon=lon, radius_km=radius_km,
+        output_size=output_size,
+        frame_timestamps=frame_timestamps,
+        tz_name=tz_name,
+        confidence_maps=confidence_maps,
+    )
 
     if not frames:
         # Shouldn't happen, but return a blank GIF if no frames
