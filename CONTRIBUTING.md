@@ -33,49 +33,6 @@ make test-e2e      # E2E against Docker HA (~45s)
 
 This integration uses the [RainViewer API](https://www.rainviewer.com/api.html) - a free public API with no API key required. Their terms specify personal/educational use with attribution. We're tracking formal permission for open-source distribution.
 
-## Project structure
-
-```
-custom_components/rain_incoming/
-  providers/
-    base.py               # Abstract interfaces (RadarProvider, RadarFrame)
-    rainviewer.py         # RainViewer API implementation
-  radar/
-    detector.py           # Full detection pipeline orchestration
-    composite.py          # Frame compositing
-    filters.py            # Threshold, spatial, temporal filters
-    motion.py             # Cell centroid tracking, velocity estimation
-    geo.py                # Coordinate math
-    qc/                   # Quality control subpackage
-      scoring.py          # Aggregate confidence score
-      texture.py          # Texture-based clutter detection
-      temporal.py         # Temporal consistency checks
-      clutter.py          # Clutter map generation
-      clutter_map.py      # Persistent clutter map management
-      speed_sanity.py     # Physically implausible speed rejection
-      motion_consistency.py  # Motion vector consistency checks
-      types.py            # QC data types
-  binary_sensor.py        # Rain Incoming sensor (on/off)
-  sensor.py               # Rain Arrival Time sensor (timestamp)
-  image.py                # Camera entity, image rendering
-  coordinator.py          # DataUpdateCoordinator with backoff
-  http_retry.py           # Retry-with-backoff wrapper for all HTTP calls
-  config_flow.py          # UI configuration flow
-  const.py                # All constants and thresholds
-
-tests/
-  unit/                   # Fast, no external deps (~1s)
-  integration/            # In-process HA via pytest-homeassistant-custom-component (~75s)
-  contract/               # Live API contract checks (scheduled in CI)
-  e2e/                    # Full stack against Docker HA (~45s)
-  fixtures/
-    golden_data/          # Real-world radar captures (v1 golden dataset)
-    golden_v2/            # Real-world radar captures (v2, multi-location)
-  radar_scenarios.py      # Synthetic golden scenarios shared across test layers
-
-docs/                     # README screenshots and media
-```
-
 ## Test layers
 
 We maintain four test layers. Each has a different purpose - don't skip layers.
@@ -159,6 +116,7 @@ The dev instance and E2E tests use separate Docker containers, volumes, and port
 - Start with what changed, not what you did ("Add cell tracking" not "I added cell tracking")
 - Keep the first line under 72 characters
 - Use the body for why, not what (the diff shows what)
+- Reference the GitHub issue if related (e.g. "Fix arrival time for overhead rain (#42)")
 
 ## References
 
