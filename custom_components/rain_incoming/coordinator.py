@@ -237,12 +237,14 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # be used to gate intensity thresholding in the detector.
         grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
 
-        # If ALL grids are zero, every fetch failed - raise so sensors show
-        # unavailable instead of a false "no rain".
+        # If NO frames were successfully fetched, raise so sensors show
+        # unavailable instead of a false "no rain". We check _cached_grid
+        # (set by _fetch_stitched_grid on success) rather than grid content,
+        # because all-zero grids are valid - they mean "no precipitation".
         import numpy as np
-        if grids and all(np.count_nonzero(g) == 0 for g in grids):
+        if frames and all(getattr(f, "_cached_grid", None) is None for f in frames):
             raise UpdateFailed(
-                "All radar tile fetches failed - all grids are empty"
+                "All radar tile fetches failed - no frames have data"
             )
         qc_config = QCConfig()
 
