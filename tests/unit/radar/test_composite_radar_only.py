@@ -58,6 +58,42 @@ def _count_non_black_pixels(gif_bytes: bytes) -> int:
     return int((arr.max(axis=2) > 10).sum())
 
 
+# RainViewer Universal Blue scheme 2 precipitation colours (RGB).
+_PRECIP_COLOURS_RGB = np.array([
+    [0, 154, 213],   # light rain (cyan-blue)
+    [0, 130, 202],
+    [0, 105, 191],
+    [22, 170, 0],    # moderate (greens)
+    [31, 190, 0],
+    [255, 240, 0],   # heavy (yellows)
+    [255, 200, 0],
+    [255, 140, 0],   # very heavy (oranges)
+    [255, 80, 0],
+    [255, 0, 0],     # extreme (reds)
+    [200, 0, 0],
+], dtype=np.float32)
+
+
+def _count_precipitation_pixels(gif_bytes: bytes, max_colour_dist: float = 40.0) -> tuple[int, float]:
+    """Count pixels matching precipitation colours in the last frame of a GIF.
+
+    Returns (count, fraction_of_total).
+    """
+    img = Image.open(BytesIO(gif_bytes))
+    if hasattr(img, "n_frames") and img.n_frames > 1:
+        img.seek(img.n_frames - 1)
+    arr = np.array(img.convert("RGB")).astype(np.float32)
+
+    diff = arr[:, :, np.newaxis, :] - _PRECIP_COLOURS_RGB[np.newaxis, np.newaxis, :, :]
+    distances = np.sqrt((diff ** 2).sum(axis=-1))
+    best_dist = distances.min(axis=-1)
+
+    precip_mask = best_dist < max_colour_dist
+    count = int(precip_mask.sum())
+    total = arr.shape[0] * arr.shape[1]
+    return count, count / total
+
+
 class TestComposableRenderingPipeline:
     """Test the composable building blocks of the rendering pipeline."""
 
@@ -132,3 +168,31 @@ class TestComposableRenderingPipeline:
             lat=-33.701, lon=151.209, radius_km=128,
         )
         assert len(frames) == 3
+
+    @pytest.mark.asyncio
+    async def test_dry_radar_over_black_has_zero_precipitation_pixels(self):
+        """Dry radar (transparent tiles) composited over black must have
+        zero precipitation-coloured pixels.
+
+        This is the unit-level equivalent of the E2E dry-frame check,
+        but without the CartoDB map background that causes false positives
+        from vegetation greens matching precipitation colour thresholds.
+        """
+        session = _make_mock_session()
+
+        overlays = await fetch_radar_overlays(
+            session=session, lat=-33.701, lon=151.209, radius_km=128,
+            frame_paths=["/v2/radar/dry_frame"],
+        )
+        background = Image.new("RGBA", (640, 640), (0, 0, 0, 255))
+        frames = composite_frames(
+            background=background, radar_overlays=overlays,
+            lat=-33.701, lon=151.209, radius_km=128,
+        )
+        gif_bytes = render_gif(frames)
+
+        count, fraction = _count_precipitation_pixels(gif_bytes)
+        assert fraction < 0.005, (
+            f"Dry radar over black has {fraction:.2%} precipitation pixels ({count} px) - "
+            f"annotations or rendering artifacts are matching precipitation colours"
+        )
