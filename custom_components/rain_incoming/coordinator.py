@@ -101,6 +101,10 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self._clutter_loaded = False
         self._clutter_cycle_count = 0
 
+        # Frame cache: path -> RainViewerFrame with pre-fetched grid.
+        # Avoids re-fetching tile grids for frames that haven't changed between polls.
+        self._frame_cache: dict[str, object] = {}
+
     async def async_save_clutter_map(self) -> None:
         """Persist the clutter map to disk. Called on HA shutdown."""
         if self._clutter_map is not None:
@@ -175,7 +179,33 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                     type(e).__name__, e, frame.timestamp,
                 )
 
-        await asyncio.gather(*[_fetch_frame(frame) for frame in frames])
+        # Incremental fetch: reuse cached frames for paths we've already fetched,
+        # only hit the network for genuinely new frames.
+        reused = []
+        to_fetch = []
+        for frame in frames:
+            cached = self._frame_cache.get(frame.path)
+            if cached is not None:
+                reused.append(cached)
+            else:
+                to_fetch.append(frame)
+
+        _LOGGER.debug(
+            "Frames: %d cached, %d new", len(reused), len(to_fetch)
+        )
+
+        if to_fetch:
+            await asyncio.gather(*[_fetch_frame(f) for f in to_fetch])
+
+        # Build the resolved frame list in manifest order, substituting cached
+        # objects for known paths so their pre-populated _cached_grid is used.
+        frames = [
+            self._frame_cache.get(f.path, f)
+            for f in frames
+        ]
+
+        # Evict stale entries and keep only the current frame set.
+        self._frame_cache = {f.path: f for f in frames}
 
         # Compute per-frame QC confidence maps BEFORE detection so they can
         # be used to gate intensity thresholding in the detector.
