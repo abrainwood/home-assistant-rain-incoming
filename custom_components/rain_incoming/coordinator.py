@@ -12,6 +12,25 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+# Aligned polling schedule: minutes past the hour when we poll.
+# RainViewer updates on the 0s (00, 10, 20...), so +1 minute gives them
+# time to publish. Polling at these fixed times ensures fresh data
+# regardless of when HA started.
+_POLL_MINUTES = (1, 11, 21, 31, 41, 51)
+
+
+def next_aligned_poll_time(now: datetime) -> datetime:
+    """Return the next datetime at minute 01/11/21/31/41/51, second 00."""
+    for m in _POLL_MINUTES:
+        candidate = now.replace(minute=m, second=0, microsecond=0)
+        if candidate > now:
+            return candidate
+    # All slots in this hour have passed - wrap to next hour, first slot
+    next_hour = (now.replace(minute=0, second=0, microsecond=0)
+                 + timedelta(hours=1))
+    return next_hour.replace(minute=_POLL_MINUTES[0])
+
+
 from .const import (
     BACKOFF_BASE_SECONDS,
     BACKOFF_MAX_SECONDS,
@@ -95,11 +114,16 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
     """Fetches radar frames, runs detection, and manages backoff on failure."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        # Set initial interval to reach the next aligned poll time
+        now = datetime.now(timezone.utc)
+        next_poll = next_aligned_poll_time(now)
+        initial_interval = max(next_poll - now, timedelta(seconds=10))
+
         super().__init__(
             hass,
             _LOGGER,
             name="rain_incoming",
-            update_interval=timedelta(seconds=POLL_INTERVAL_SECONDS),
+            update_interval=initial_interval,
         )
         self._entry = entry
         self._provider = RainViewerProvider()
@@ -330,6 +354,13 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         self._consecutive_failures = 0
         self.last_update_success_time = datetime.now(timezone.utc)
+
+        # Schedule the next poll at the next aligned time
+        now = datetime.now(timezone.utc)
+        next_poll = next_aligned_poll_time(now)
+        self.update_interval = max(next_poll - now, timedelta(seconds=10))
+        _LOGGER.debug("Next poll at %s (in %ds)", next_poll.strftime("%H:%M"), self.update_interval.total_seconds())
+
         return result
 
     async def _fetch_with_backoff(self, lat: float, lon: float):
