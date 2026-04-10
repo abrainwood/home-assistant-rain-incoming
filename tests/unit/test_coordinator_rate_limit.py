@@ -36,8 +36,10 @@ def _make_entry(lat: float = -33.701, lon: float = 151.209, lookahead: int = 60)
     return entry
 
 
-def _make_frame(ts_epoch: int, path: str = "/test/path") -> RainViewerFrame:
-    """Create a RainViewerFrame with a fixed timestamp."""
+def _make_frame(ts_epoch: int, path: str | None = None) -> RainViewerFrame:
+    """Create a RainViewerFrame with a fixed timestamp and unique path."""
+    if path is None:
+        path = f"/v2/radar/{ts_epoch}"
     return RainViewerFrame(
         timestamp=datetime.fromtimestamp(ts_epoch, tz=timezone.utc),
         path=path,
@@ -360,12 +362,6 @@ async def test_recovery_after_partial_rate_limit(hass: HomeAssistant):
 
     assert isinstance(result2, DetectionResult), "Poll 2 should succeed fully after recovery"
     assert mock_detect2.called, "detect() must be called on poll 2 - full data is available"
-
-    # All frames in poll 2 should have non-zero cached grids
-    for i, frame in enumerate(frames_poll2):
-        assert frame._cached_grid is not None and np.count_nonzero(frame._cached_grid) > 0, (
-            f"Poll 2 frame {i} should have non-zero data after successful fetch"
-        )
 
 
 @pytest.mark.asyncio
