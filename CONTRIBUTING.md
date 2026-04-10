@@ -111,6 +111,18 @@ The dev instance and E2E tests use separate Docker containers, volumes, and port
 | `make dev-stop` | Stop dev instance |
 | `make dev-logs` | Tail HA logs |
 
+## Pull requests
+
+We follow the [Kubernetes PR best practices](https://github.com/kubernetes/community/blob/main/contributors/guide/pull-requests.md#best-practices-for-faster-reviews):
+
+- **Keep PRs small and focused.** One concern per PR - don't bundle bug fixes with refactors with features. Smaller PRs get faster, more thorough reviews.
+- **Validate demand first.** For significant new features, open an issue to discuss the approach before investing effort.
+- **Separate concerns.** Bug fix, refactor, and feature work belong in distinct PRs.
+- **Test thoroughly.** Very few PRs should touch code without touching tests.
+- **Document your reasoning.** Non-obvious decisions need comments. Commit bodies should explain *why*, not *what*.
+
+All PRs require a green CI build and at least one approving review before merge.
+
 ## Commit messages
 
 - Start with what changed, not what you did ("Add cell tracking" not "I added cell tracking")
