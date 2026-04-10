@@ -85,6 +85,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
 
         session = async_get_clientsession(self.hass)
         conf_maps = self.coordinator.confidence_maps or None
+        location_name = data.get(CONF_LOCATION_NAME) or None
         self._cached_image = await render_animated_composite(
             lat=lat,
             lon=lon,
@@ -94,6 +95,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
             frame_timestamps=local_timestamps,
             tz_name=self.hass.config.time_zone,
             confidence_maps=conf_maps,
+            location_name=location_name,
             session=session,
             run_in_executor=self.hass.async_add_executor_job,
         )

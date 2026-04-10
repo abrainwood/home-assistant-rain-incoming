@@ -228,16 +228,43 @@ async def _fetch_map_tile(
     return tile
 
 
-def _draw_timestamp(img: Image.Image, timestamp: datetime, tz_name: str | None = None) -> None:
-    """Draw a timestamp with date in the bottom-left corner."""
+def build_frame_label(
+    timestamp: datetime | None,
+    tz_name: str | None,
+    radius_km: int,
+    location_name: str | None = None,
+) -> str:
+    """Build the BOM-style label string for a GIF frame.
+
+    Format: "Location  DD/MM/YY  HH:MM TZ  Rangekm"
+    Location is omitted if not set.
+    """
+    parts = []
+    if location_name:
+        parts.append(location_name)
+    if timestamp is not None:
+        tz_label = timestamp.strftime("%Z") or tz_name or "UTC"
+        parts.append(timestamp.strftime("%d/%m/%y"))
+        parts.append(timestamp.strftime(f"%H:%M {tz_label}"))
+    parts.append(f"{radius_km}km")
+    return "  ".join(parts)
+
+
+def _draw_frame_label(
+    img: Image.Image,
+    timestamp: datetime | None,
+    tz_name: str | None,
+    radius_km: int,
+    location_name: str | None = None,
+) -> None:
+    """Draw the BOM-style label in the bottom-left corner of a frame."""
+    label = build_frame_label(timestamp, tz_name, radius_km, location_name)
     draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.load_default(size=16)
     except TypeError:
         font = ImageFont.load_default()
 
-    tz_label = timestamp.strftime("%Z") or tz_name or "UTC"
-    label = timestamp.strftime(f"%d %b %Y  %H:%M {tz_label}")
     bbox = font.getbbox(label)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     padding = 8
@@ -263,6 +290,7 @@ def _composite_single_frame(
     timestamp: datetime | None = None,
     tz_name: str | None = None,
     confidence_map: np.ndarray | None = None,
+    location_name: str | None = None,
 ) -> Image.Image:
     """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image.
 
@@ -310,8 +338,7 @@ def _composite_single_frame(
     draw_range_rings(composite, cx, cy, radius_px, radius_km)
     draw_crosshair(composite, cx, cy)
 
-    if timestamp is not None:
-        _draw_timestamp(composite, timestamp, tz_name)
+    _draw_frame_label(composite, timestamp, tz_name, radius_km, location_name)
 
     return composite
 
@@ -599,6 +626,7 @@ def composite_frames(
     frame_timestamps: list[datetime] | None = None,
     tz_name: str | None = None,
     confidence_maps: list[np.ndarray] | None = None,
+    location_name: str | None = None,
 ) -> list[Image.Image]:
     """Composite radar overlays over a background image. Returns a list of frames."""
     vp = _ViewportParams(lat, lon, radius_km, output_size)
@@ -611,6 +639,7 @@ def composite_frames(
             background, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
             timestamp=ts, tz_name=tz_name,
             confidence_map=conf_map,
+            location_name=location_name,
         )
         frames.append(frame_img)
     return frames
@@ -643,6 +672,7 @@ async def render_animated_composite(
     frame_timestamps: list[datetime] | None = None,
     tz_name: str | None = None,
     confidence_maps: list[np.ndarray] | None = None,
+    location_name: str | None = None,
     session: aiohttp.ClientSession,
     run_in_executor: object = None,
 ) -> bytes:
@@ -663,6 +693,7 @@ async def render_animated_composite(
         frame_timestamps=frame_timestamps,
         tz_name=tz_name,
         confidence_maps=confidence_maps,
+        location_name=location_name,
     )
 
     if not frames:
