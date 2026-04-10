@@ -15,18 +15,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-import platform
-
 import pytest
 import pytest_socket
 
 # Add project root to path so we can import scripts
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from tests.e2e.mock_rainviewer import start_in_background
-
-# On macOS, host.docker.internal resolves to the host from inside containers.
-# On Linux (e.g. GitHub Actions), the Docker bridge gateway IP is used instead.
-_DOCKER_HOST = "host.docker.internal" if platform.system() == "Darwin" else "172.17.0.1"
 
 
 # --- Override root conftest fixtures that don't apply to E2E tests ---
@@ -204,8 +198,8 @@ def ha_container(mock_server):
     env = {
         **os.environ,
         **_DOCKER_ENV,
-        "RAINVIEWER_API_URL": f"http://{_DOCKER_HOST}:{MOCK_PORT}",
-        "RAINVIEWER_TILE_URL": f"http://{_DOCKER_HOST}:{MOCK_PORT}",
+        "RAINVIEWER_API_URL": f"http://host.docker.internal:{MOCK_PORT}",
+        "RAINVIEWER_TILE_URL": f"http://host.docker.internal:{MOCK_PORT}",
     }
 
     # Always start fresh - remove old E2E container and volume for a clean slate

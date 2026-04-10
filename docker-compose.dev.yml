@@ -12,6 +12,8 @@ services:
       # Leave unset for real API (manual dev testing).
       - RAINVIEWER_API_URL=${RAINVIEWER_API_URL:-}
       - RAINVIEWER_TILE_URL=${RAINVIEWER_TILE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${HA_PORT:-8123}:8123"
     stop_grace_period: 30s
