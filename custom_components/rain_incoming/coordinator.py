@@ -25,7 +25,6 @@ from .const import (
     MIN_TEMPORAL_FRAMES,
     POLL_INTERVAL_SECONDS,
     PROXIMITY_RADIUS_KM,
-    RAINVIEWER_ANALYSIS_GRID,
     RAINVIEWER_ZOOM,
     RAINVIEWER_TILE_SIZE,
 )
@@ -54,20 +53,41 @@ CLUTTER_SAVE_INTERVAL = 36  # save every 36 cycles (~6 hours at 10-min intervals
 CLUTTER_MATURITY_CYCLES = 72  # fully mature after ~12 hours
 
 
-def _build_analysis_bounds(lat: float, lon: float) -> BoundingBox:
-    """Build a bounding box centred on the location covering the analysis area."""
+def _build_analysis_tiles(lat: float, lon: float, zoom: int) -> list[tuple[int, int]]:
+    """Return the 4 tile coordinates of the 2x2 block that best centres the location."""
     import math
-    grid_half = RAINVIEWER_ANALYSIS_GRID
-    # At zoom 7 each tile is ~2.8125° of longitude
-    tile_deg_lon = 360.0 / (2 ** RAINVIEWER_ZOOM)
-    tile_deg_lat = tile_deg_lon  # approximate at mid-latitudes
-    half_lon = tile_deg_lon * grid_half
-    half_lat = tile_deg_lat * grid_half
+    from .radar.geo import lat_lon_to_tile
+
+    cx, cy = lat_lon_to_tile(lat, lon, zoom)
+
+    # Fractional tile position of the location
+    n = 2 ** zoom
+    fx = (lon + 180.0) / 360.0 * n
+    lat_r = math.radians(lat)
+    fy = (1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi) / 2.0 * n
+
+    # Position within the tile (0 to 1)
+    frac_x = fx - cx
+    frac_y = fy - cy
+
+    # Pick the 2x2 block anchored at the nearest corner
+    x0 = cx - 1 if frac_x < 0.5 else cx
+    y0 = cy - 1 if frac_y < 0.5 else cy
+
+    return [(x0, y0), (x0 + 1, y0), (x0, y0 + 1), (x0 + 1, y0 + 1)]
+
+
+def _build_analysis_bounds(lat: float, lon: float) -> BoundingBox:
+    """Build a bounding box from the smart 2x2 tile selection."""
+    from .providers.rainviewer import _tile_bounds
+
+    tiles = _build_analysis_tiles(lat, lon, RAINVIEWER_ZOOM)
+    all_bounds = [_tile_bounds(tx, ty, RAINVIEWER_ZOOM) for tx, ty in tiles]
     return BoundingBox(
-        lat_min=lat - half_lat,
-        lat_max=lat + half_lat,
-        lon_min=lon - half_lon,
-        lon_max=lon + half_lon,
+        lat_min=min(b.lat_min for b in all_bounds),
+        lat_max=max(b.lat_max for b in all_bounds),
+        lon_min=min(b.lon_min for b in all_bounds),
+        lon_max=max(b.lon_max for b in all_bounds),
     )
 
 
@@ -132,8 +152,8 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             max_storm_speed_kmh=MAX_STORM_SPEED_KMH,
             proximity_radius_km=PROXIMITY_RADIUS_KM,
             analysis_bounds=_build_analysis_bounds(lat, lon),
-            grid_width=RAINVIEWER_TILE_SIZE * (2 * RAINVIEWER_ANALYSIS_GRID + 1),
-            grid_height=RAINVIEWER_TILE_SIZE * (2 * RAINVIEWER_ANALYSIS_GRID + 1),
+            grid_width=RAINVIEWER_TILE_SIZE * 2,
+            grid_height=RAINVIEWER_TILE_SIZE * 2,
         )
 
     async def _async_update_data(self) -> DetectionResult:
