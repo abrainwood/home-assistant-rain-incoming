@@ -50,7 +50,7 @@ The latitude and longitude default to your Home Assistant home location (set in 
 |---|---|---|---|
 | Latitude | Your HA home location | -90 to 90 | Location to monitor |
 | Longitude | Your HA home location | -180 to 180 | Location to monitor |
-| Lookahead | 60 min | 15-120 min | How far ahead to predict |
+| Lookahead | 60 min | 20-60 min | How far ahead to predict |
 
 ### Changing settings after setup
 

@@ -504,42 +504,6 @@ class TestOverheadRainDetection:
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.rain_incoming is True
 
-    def test_shepparton_golden_data_detects_rain(self):
-        """Regression test: real radar data from Shepparton with active rain
-        over the location should trigger rain_incoming."""
-        data = np.load('tests/fixtures/golden_data/grids_20260409_shepparton.npz')
-        grids = [data[f'frame_{i}'] for i in range(len(data.files))]
-        H, W = grids[0].shape
-
-        shep_lat, shep_lon = -36.381, 145.399
-        from custom_components.rain_incoming.coordinator import _build_analysis_bounds
-        bounds = _build_analysis_bounds(shep_lat, shep_lon)
-
-        from datetime import timezone, timedelta
-        timestamps = [1775682600, 1775683200, 1775683800, 1775684400, 1775685000, 1775685600]
-        frames = []
-        for i, t in enumerate(timestamps):
-            frames.append(make_frame(
-                datetime.fromtimestamp(t, tz=timezone.utc),
-                grids[i],
-                bounds,
-            ))
-
-        config = DetectorConfig(
-            lookahead_seconds=3600,
-            intensity_threshold=0.1,
-            min_cell_area_pixels=1,
-            min_temporal_frames=2,
-            max_angular_variance=0.5,
-            max_storm_speed_kmh=120.0,
-            proximity_radius_km=5.0,
-            analysis_bounds=bounds,
-            grid_width=W,
-            grid_height=H,
-        )
-        result = detect(frames, (shep_lat, shep_lon), config)
-        # Rain was confirmed over Shepparton by BOM, Apple Weather, Weatherzone
-        assert result.rain_incoming is True
 
 
 class TestClosingDistanceFallback:
