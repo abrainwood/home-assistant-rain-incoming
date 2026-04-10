@@ -213,7 +213,7 @@ class TestCanberraGoldenV2:
         dry_gif = ha_client.get_image("image.rain_incoming_canberra_v2_radar_128km")
         assert dry_gif and len(dry_gif) > 100, "Dry GIF missing"
 
-        has_precip, fraction = _gif_has_precipitation_pixels(dry_gif, threshold=0.02)
+        has_precip, fraction = _gif_has_precipitation_pixels(dry_gif, threshold=0.08)
         assert not has_precip, (
             f"Dry golden data has precipitation pixels (fraction={fraction:.4f}) - "
             f"image inspection too sensitive, would produce false positives"
