@@ -19,6 +19,7 @@ dev = [
     "Pillow>=10.0",
     "aiohttp>=3.9",
     "aioresponses>=0.7",
+    "pytest-playwright>=0.4",
 ]
 
 [tool.setuptools.packages.find]

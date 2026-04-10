@@ -335,6 +335,30 @@ def ha_client(ha_container) -> HAClient:
     return client
 
 
+# ---------------------------------------------------------------------------
+# Playwright fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def browser():
+    """Launch a Playwright browser for UI tests."""
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        yield b
+        b.close()
+
+
+@pytest.fixture
+def page(browser):
+    """Create a new browser page for each test."""
+    p = browser.new_page()
+    yield p
+    p.close()
+
+
+# ---------------------------------------------------------------------------
+
 @pytest.fixture(scope="class")
 def configure_location(ha_client):
     """Factory fixture to add an integration for a specific location.
