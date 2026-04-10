@@ -2,6 +2,8 @@
 
 Thanks for your interest in contributing! This integration detects approaching rain using RainViewer radar data and provides sensors for Home Assistant automations.
 
+**Quality bar**: this codebase aims to demonstrate production-grade quality. PRs are expected to maintain that bar - it's a showcase project. Resilience, observability, and thorough testing are not optional extras.
+
 ## Prerequisites
 
 - Python 3.12+ (via [pyenv](https://github.com/pyenv/pyenv) recommended)
@@ -11,7 +13,7 @@ Thanks for your interest in contributing! This integration detects approaching r
 ## Getting started
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/abrainwood/home-assistant-incoming-rain.git
 cd incoming_rain
 
 # Create virtualenv and install dev dependencies
@@ -36,24 +38,42 @@ This integration uses the [RainViewer API](https://www.rainviewer.com/api.html) 
 ```
 custom_components/incoming_rain/
   providers/
-    base.py          # Abstract interfaces (RadarProvider, RadarFrame)
-    rainviewer.py     # RainViewer API implementation
+    base.py               # Abstract interfaces (RadarProvider, RadarFrame)
+    rainviewer.py         # RainViewer API implementation
   radar/
-    filters.py        # Threshold, spatial, temporal filters
-    motion.py         # Cell centroid tracking, velocity estimation
-    detector.py       # Full detection pipeline
-  binary_sensor.py    # Rain Incoming sensor (on/off)
-  sensor.py           # Rain Arrival Time sensor (timestamp)
-  coordinator.py      # DataUpdateCoordinator with backoff
-  config_flow.py      # UI configuration flow
-  const.py            # All constants and thresholds
+    detector.py           # Full detection pipeline orchestration
+    composite.py          # Frame compositing
+    filters.py            # Threshold, spatial, temporal filters
+    motion.py             # Cell centroid tracking, velocity estimation
+    geo.py                # Coordinate math
+    qc/                   # Quality control subpackage
+      scoring.py          # Aggregate confidence score
+      texture.py          # Texture-based clutter detection
+      temporal.py         # Temporal consistency checks
+      clutter.py          # Clutter map generation
+      clutter_map.py      # Persistent clutter map management
+      speed_sanity.py     # Physically implausible speed rejection
+      motion_consistency.py  # Motion vector consistency checks
+      types.py            # QC data types
+  binary_sensor.py        # Rain Incoming sensor (on/off)
+  sensor.py               # Rain Arrival Time sensor (timestamp)
+  image.py                # Camera entity, image rendering
+  coordinator.py          # DataUpdateCoordinator with backoff
+  http_retry.py           # Retry-with-backoff wrapper for all HTTP calls
+  config_flow.py          # UI configuration flow
+  const.py                # All constants and thresholds
 
 tests/
-  unit/               # Fast, no external deps (~1s)
-  integration/        # In-process HA via pytest-homeassistant-custom-component (~75s)
-  contract/           # Live API contract checks (scheduled in CI)
-  e2e/                # Full stack against Docker HA (~45s)
-  radar_scenarios.py  # Golden test data shared across test layers
+  unit/                   # Fast, no external deps (~1s)
+  integration/            # In-process HA via pytest-homeassistant-custom-component (~75s)
+  contract/               # Live API contract checks (scheduled in CI)
+  e2e/                    # Full stack against Docker HA (~45s)
+  fixtures/
+    golden_data/          # Real-world radar captures (v1 golden dataset)
+    golden_v2/            # Real-world radar captures (v2, multi-location)
+  radar_scenarios.py      # Synthetic golden scenarios shared across test layers
+
+docs/                     # README screenshots and media
 ```
 
 ## Test layers
@@ -79,10 +99,23 @@ Full stack: Docker HA container + mock RainViewer server. Tests the entire pipel
 ## Code expectations
 
 - **TDD**: write the test first, then the code to pass it. If you're fixing a bug, write the failing test that reproduces it before fixing.
-- **No test deletion**: a test can only be replaced if the replacement covers the same behaviour. Moving coverage to a different layer needs discussion.
+- **No test deletion**: a test can only be replaced if the replacement covers the same behaviour at the same layer. Moving coverage to a different layer needs discussion. "This behaviour no longer exists" is a valid reason to delete - with explanation.
 - **Self-documenting code**: names should explain intent. Comments only where the logic genuinely needs explanation.
 - **Abstract external dependencies**: all data sources go behind the `RadarProvider` interface. Never call an external API directly from core logic.
 - **Keep it simple**: don't add features, abstractions, or error handling beyond what the current task requires.
+- **Never silently swallow exceptions**: unexpected exceptions and unexpected HTTP status codes must be logged at WARNING or ERROR. `except Exception: pass` or `except Exception: _LOGGER.debug(...)` is never acceptable.
+- **Retry with backoff**: use `http_retry.py` for all HTTP calls. Retry on 429/5xx with exponential backoff. Respect `Retry-After` headers on 429 responses. Log at WARNING if all retries fail.
+- **Rate limit awareness**: don't fire bursts of concurrent requests. Pace batches, use connection limits.
+- **Log enough for users to diagnose**: include HTTP status, URL or service name, and a human-readable message. Don't log raw tracebacks for expected failure modes.
+- **Fail visible, not silent**: missing data, empty renders, stale sensors must appear in the HA system log - not hide behind debug-level logging.
+
+### Test quality rules
+
+- **Tests must validate user experience, not just internal logic.** If unit tests pass but a user would see broken behaviour, the tests are lying. Test that data produces correct visible output, not just that a value is non-zero.
+- **Test the tests - inverse validation.** For every E2E and golden data positive test, verify there's an assertion that would FAIL if the pipeline were broken. Feed in data that should fail, and confirm the test does fail. A test that passes with both valid and invalid input isn't testing anything.
+- **Golden data must exercise the full pipeline.** Real-world captures must run through ALL stages - QC, compositing, rendering - not just the detection algorithm in isolation. A detection test that skips QC confidence application is testing a fiction.
+- **No sleeps in tests.** `time.sleep()` causes flakiness. Poll with a timeout instead - or have the system under test signal readiness via logs, events, or state changes.
+- **Flaky test = failing test.** Fix it before moving on. Don't skip, quarantine, or rerun to paper over it.
 
 ## Running the dev HA instance
 

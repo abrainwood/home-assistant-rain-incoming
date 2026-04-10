@@ -108,15 +108,53 @@ class HAClient:
             try:
                 url = f"{HA_URL}/api/image_proxy/{entity_id}"
                 req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.token}"})
-                with urllib.request.urlopen(req, timeout=60) as resp:
+                with urllib.request.urlopen(req, timeout=120) as resp:
                     data = resp.read()
                     if data and len(data) > 100:
                         return data
-            except Exception:
-                pass
+                    print(f"  get_image attempt {attempt+1}: got {len(data)} bytes (too small)")
+            except Exception as e:
+                print(f"  get_image attempt {attempt+1}: {type(e).__name__}: {e}")
             if attempt < max_retries - 1:
                 time.sleep(delay)
         return None
+
+    def poll_entity_state(
+        self,
+        entity_id: str,
+        *,
+        timeout: float = 60,
+        interval: float = 2.0,
+        condition=None,
+    ) -> dict:
+        """Poll entity until it exists and optionally meets a condition.
+
+        Args:
+            entity_id: The entity to poll.
+            timeout: Max seconds to wait.
+            interval: Seconds between polls.
+            condition: Optional callable(state_dict) -> bool. If provided,
+                       polls until it returns True.
+
+        Returns the state dict when ready.
+        Raises TimeoutError if timeout expires.
+        """
+        deadline = time.time() + timeout
+        last_state = None
+        while time.time() < deadline:
+            state = self.get_state(entity_id)
+            if state is not None:
+                if condition is None or condition(state):
+                    return state
+                last_state = state
+            time.sleep(interval)
+        if last_state is not None:
+            raise TimeoutError(
+                f"Entity {entity_id} exists but condition not met within {timeout}s. "
+                f"Last state: {last_state.get('state')}, "
+                f"attrs: {last_state.get('attributes', {})}"
+            )
+        raise TimeoutError(f"Entity {entity_id} not found within {timeout}s")
 
     def set_mock_scenario(self, scenario: str) -> None:
         """Switch the mock RainViewer server's active scenario."""
@@ -284,14 +322,26 @@ def ha_client(ha_container) -> HAClient:
     }, token=token)
 
     # Wait for coordinator to do its first update
-    time.sleep(3)
+    client = HAClient(token)
+    try:
+        client.poll_entity_state(
+            "binary_sensor.incoming_rain_status",
+            timeout=30,
+            condition=lambda s: s.get("state") not in (None, "unavailable"),
+        )
+    except TimeoutError:
+        pass  # best-effort; tests will fail with clear messages if entity isn't ready
 
-    return HAClient(token)
+    return client
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def configure_location(ha_client):
     """Factory fixture to add an integration for a specific location.
+
+    Class-scoped so all tests in a class share the same configured
+    integration - subsequent tests can switch scenarios without
+    re-creating the config entry.
 
     Returns a function that configures a new incoming_rain integration
     entry and waits for its first coordinator update.
@@ -316,10 +366,21 @@ def configure_location(ha_client):
         )
         if result and "result" in result:
             entry_id = result.get("result")
+            if isinstance(entry_id, dict):
+                entry_id = entry_id.get("entry_id")
             if entry_id:
                 entry_ids.append(entry_id)
-        # Wait for coordinator first update
-        time.sleep(5)
+        # Poll until the binary sensor for this location is ready
+        sensor_slug = name.lower().replace(" ", "_")
+        sensor_id = f"binary_sensor.incoming_rain_{sensor_slug}_status"
+        try:
+            ha_client.poll_entity_state(
+                sensor_id,
+                timeout=30,
+                condition=lambda s: s.get("state") not in (None, "unavailable"),
+            )
+        except TimeoutError:
+            pass  # best-effort; test will fail with a clear message if entity isn't ready
 
     yield _configure
 
