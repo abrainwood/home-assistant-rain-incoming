@@ -279,11 +279,12 @@ def _composite_single_frame(
                 (radar_arr.shape[1], radar_arr.shape[0]), PILImage.BILINEAR
             )
             confidence_map = np.array(conf_img).astype(np.float32) / 255.0
-        # Binary detection mask: mirrors the detector's own threshold logic.
-        # Compute effective intensity = luminance * QC_confidence. Pixels at
-        # or above the detection threshold render at full opacity; below it
-        # they're dimmed to 25% (still faintly visible as context, but clearly
-        # distinguished from "real" rain).
+        # Binary detection mask: pixels with strong radar returns render at full
+        # opacity regardless of QC confidence. The threshold is applied to raw
+        # luminance so that real precipitation (bright pixels in the radar tile)
+        # is never dimmed by a low confidence score. Confidence only dims pixels
+        # that are already faint/borderline - i.e. where luminance alone is below
+        # the threshold.
         _INTENSITY_THRESHOLD = 0.1
         _DIM_FACTOR = 0.25
         r, g, b = (
@@ -292,9 +293,8 @@ def _composite_single_frame(
             radar_arr[:, :, 2].astype(np.float32),
         )
         luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-        effective = luminance * confidence_map
         alpha_multiplier = np.where(
-            effective >= _INTENSITY_THRESHOLD, 1.0, _DIM_FACTOR
+            luminance >= _INTENSITY_THRESHOLD, 1.0, _DIM_FACTOR
         )
         radar_arr[:, :, 3] = (
             radar_arr[:, :, 3].astype(np.float32) * alpha_multiplier
