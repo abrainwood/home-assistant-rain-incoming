@@ -262,6 +262,122 @@ class TestComposableRenderingPipeline:
             f"got fraction={fraction:.4f}"
         )
 
+    def test_renderer_filter_at_least_as_strict_as_parser(self):
+        """The renderer filter threshold must be <= the parser threshold.
+
+        Both thresholds gate pixel matching against the same PRECIP_COLOURS
+        palette. An inverted asymmetry would make rendered images show
+        precipitation pixels the detector never assigned intensity to.
+        """
+        from custom_components.rain_incoming.providers.rainviewer import MAX_COLOUR_DISTANCE
+        from custom_components.rain_incoming.radar.composite import _FILTER_MAX_COLOUR_DISTANCE
+
+        assert _FILTER_MAX_COLOUR_DISTANCE <= MAX_COLOUR_DISTANCE, (
+            f"Renderer filter threshold ({_FILTER_MAX_COLOUR_DISTANCE}) must be <= "
+            f"parser threshold ({MAX_COLOUR_DISTANCE}). An inverted asymmetry would "
+            f"make rendered images show precipitation pixels the detector never "
+            f"recognised. See composite.py and rainviewer.py."
+        )
+
+    def test_parser_accepts_filter_rejects_in_threshold_gap(self):
+        """A pixel inside the (renderer, parser) tolerance gap must be parser-accepted and filter-rejected.
+
+        Proves both thresholds are active. If someone tightens parser or loosens
+        filter such that the gap collapses, this test fails.
+        """
+        from custom_components.rain_incoming.providers.rainviewer import (
+            MAX_COLOUR_DISTANCE,
+            PRECIP_COLOURS,
+            TILE_SIZE,
+            _tile_to_intensity_array,
+        )
+        from custom_components.rain_incoming.radar.composite import (
+            _FILTER_MAX_COLOUR_DISTANCE,
+            filter_precipitation_pixels,
+        )
+
+        # Offset PRECIP_COLOURS[0] red channel by +40 - lands at L2=40 from
+        # the source entry, between the filter (30) and parser (60) thresholds.
+        # If palette changes such that the offset no longer lands in the gap,
+        # the sanity assertion below will tell you to update this offset.
+        base_r, base_g, base_b, _ = PRECIP_COLOURS[0]
+        offset = 40
+        gap_r, gap_g, gap_b = base_r + offset, base_g, base_b
+
+        min_dist = min(
+            ((gap_r - r) ** 2 + (gap_g - g) ** 2 + (gap_b - b) ** 2) ** 0.5
+            for r, g, b, _ in PRECIP_COLOURS
+        )
+        assert _FILTER_MAX_COLOUR_DISTANCE < min_dist <= MAX_COLOUR_DISTANCE, (
+            f"Synthetic pixel ({gap_r},{gap_g},{gap_b}) has min palette distance "
+            f"{min_dist:.2f}, which is not in the gap "
+            f"({_FILTER_MAX_COLOUR_DISTANCE}, {MAX_COLOUR_DISTANCE}]. "
+            f"Update the offset in this test to keep the gap property."
+        )
+
+        tile_img = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (gap_r, gap_g, gap_b, 255))
+        buf = BytesIO()
+        tile_img.save(buf, format="PNG")
+        intensity_array = _tile_to_intensity_array(buf.getvalue())
+
+        assert (intensity_array > 0).all(), (
+            f"Parser must accept gap pixel ({gap_r},{gap_g},{gap_b}) at distance "
+            f"{min_dist:.2f} from the nearest palette entry - within "
+            f"MAX_COLOUR_DISTANCE ({MAX_COLOUR_DISTANCE})."
+        )
+
+        rgba_array = np.array(Image.open(BytesIO(buf.getvalue())), dtype=np.uint8)
+        filtered = filter_precipitation_pixels(rgba_array)
+
+        assert (filtered[:, :, 3] == 0).all(), (
+            f"Renderer filter must reject gap pixel ({gap_r},{gap_g},{gap_b}) at "
+            f"distance {min_dist:.2f} from the nearest palette entry - exceeds "
+            f"_FILTER_MAX_COLOUR_DISTANCE ({_FILTER_MAX_COLOUR_DISTANCE})."
+        )
+
+    def test_parser_rejects_beyond_max_colour_distance(self):
+        """Parser must return intensity 0 for pixels beyond MAX_COLOUR_DISTANCE.
+
+        Complement to test_parser_accepts_filter_rejects_in_threshold_gap:
+        proves the parser reads the threshold, not just that it accepts
+        in-range pixels.
+        """
+        from custom_components.rain_incoming.providers.rainviewer import (
+            MAX_COLOUR_DISTANCE,
+            PRECIP_COLOURS,
+            TILE_SIZE,
+            _tile_to_intensity_array,
+        )
+
+        # Offset PRECIP_COLOURS[0] red channel by +100 - lands at L2=100 from
+        # the source entry, well beyond the parser threshold (60). If palette
+        # changes push a nearer entry within 60 of this pixel, the sanity
+        # assertion below will tell you to update the offset.
+        base_r, base_g, base_b, _ = PRECIP_COLOURS[0]
+        offset = 100
+        far_r, far_g, far_b = base_r + offset, base_g, base_b
+
+        min_dist = min(
+            ((far_r - r) ** 2 + (far_g - g) ** 2 + (far_b - b) ** 2) ** 0.5
+            for r, g, b, _ in PRECIP_COLOURS
+        )
+        assert min_dist > MAX_COLOUR_DISTANCE, (
+            f"Synthetic pixel ({far_r},{far_g},{far_b}) has min palette distance "
+            f"{min_dist:.2f}, which is not beyond MAX_COLOUR_DISTANCE ({MAX_COLOUR_DISTANCE}). "
+            f"Update the offset in this test to keep the out-of-range property."
+        )
+
+        tile_img = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (far_r, far_g, far_b, 255))
+        buf = BytesIO()
+        tile_img.save(buf, format="PNG")
+        intensity_array = _tile_to_intensity_array(buf.getvalue())
+
+        assert (intensity_array == 0).all(), (
+            f"Parser must reject pixel ({far_r},{far_g},{far_b}) at distance "
+            f"{min_dist:.2f} from the nearest palette entry - exceeds "
+            f"MAX_COLOUR_DISTANCE ({MAX_COLOUR_DISTANCE})."
+        )
+
     @pytest.mark.asyncio
     async def test_dry_radar_over_black_has_zero_precipitation_pixels(self):
         """Dry radar (transparent tiles) composited over black must have
