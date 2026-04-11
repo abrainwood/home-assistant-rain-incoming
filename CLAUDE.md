@@ -89,6 +89,26 @@ Write a failing test, write minimum code to pass, refactor. That's it. If you're
 - **Golden data must exercise the full pipeline.** Run real captures through ALL transforms, filters, QC stages, and rendering steps - not just the detection algorithm in isolation.
 - **Don't change tests while refactoring.** If a test needs to change, stop and explain why before proceeding.
 
+## Browser tests (Playwright)
+
+Browser tests are not unit tests. Don't write them like unit tests - guessing selectors, running, fixing, repeating. That's how flaky tests are born.
+
+**Build interactively first using the Playwright MCP, then codify.** The flow:
+
+1. **Explore.** Use the Playwright MCP (`mcp__playwright__browser_*`) to navigate the live app. Take an accessibility snapshot at each page (`browser_snapshot`) - it's better than a screenshot for finding stable references.
+2. **Find stable selectors.** Prefer accessible role + name (`getByRole('textbox', { name: 'Username' })`) over CSS selectors. These pierce shadow DOM automatically. Watch what the snapshot returns - if elements have role and accessible name, use them.
+3. **Verify the assertion is reachable.** Before writing the test, prove you can get to the data you want to assert on. For example: can you actually fetch the image bytes from the dialog? Use `browser_evaluate` to run JS and return real values. If you can't see the data interactively, you can't assert on it.
+4. **Watch for auth gotchas.** HA login bounces clicks back to `/auth/authorize` if "Keep me logged in" isn't checked. Other apps have similar quirks. Prove the click flow works end-to-end before writing the test.
+5. **Codify.** Once the interactive sequence works, translate it into a Python test using `playwright.sync_api`. The test should manage its own browser inside the test function (no fixtures from the async E2E conftest - they conflict on event loops).
+6. **Run locally end-to-end.** Verify the codified test passes against the dev container before pushing. Don't iterate on CI.
+
+**Assertion strength matters.** A browser test that just checks "image element exists" is weak - a placeholder image would pass. Strong assertions prove what the user actually sees:
+- Image: fetch the bytes via `page.evaluate()` (uses the authenticated browser session), parse with PIL, assert format/dimensions/animation/frame count.
+- Text content: assert specific text from the rendered DOM, not just "page loaded".
+- State changes: trigger a backend state change, then verify the UI reflects it.
+
+**Shadow DOM is the norm in modern web apps.** Use a `findDeep` walker in `evaluate()` to traverse shadow roots when role-based locators aren't enough. Don't waste time fighting CSS selectors against custom elements.
+
 ## Code quality
 
 - Names should make code self-documenting. Comments only where the logic genuinely needs explanation.

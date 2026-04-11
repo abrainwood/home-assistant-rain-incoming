@@ -305,6 +305,12 @@ def ha_client(ha_container) -> HAClient:
             "language": "en",
         }, token=token)
         _raw_request("POST", "/api/onboarding/analytics", {}, token=token)
+        # Mark integration step done - without this, browser logins are
+        # redirected to /onboarding.html to finish setup.
+        _raw_request("POST", "/api/onboarding/integration", {
+            "client_id": f"{HA_URL}/",
+            "redirect_uri": f"{HA_URL}/?auth_callback=1",
+        }, token=token)
     else:
         # Already onboarded - log in
         token = _get_token_via_login()
