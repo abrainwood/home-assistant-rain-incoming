@@ -4,6 +4,12 @@ Thanks for your interest in contributing! This integration detects approaching r
 
 **Quality bar**: resilience, observability, and thorough testing are not optional extras. PRs are expected to maintain the same standard as the existing code.
 
+## AI-assisted development
+
+This project has been developed with substantial AI assistance (Claude Opus and Sonnet) under direct human direction. All architectural decisions, code review, test discipline, and final approvals are made by the human maintainer. Tests, documentation, and production code are reviewed for correctness regardless of how they were written.
+
+Contributions are welcome whether or not you use AI tools. The same DCO sign-off process applies either way - by signing off, you confirm you have the right to submit the contribution, which includes responsibility for any AI-assisted portions.
+
 ## Prerequisites
 
 - Python 3.12+ (via [pyenv](https://github.com/pyenv/pyenv) recommended)
@@ -123,12 +129,50 @@ We follow the [Kubernetes PR best practices](https://github.com/kubernetes/commu
 
 All PRs require a green CI build and at least one approving review before merge.
 
+## Sign your commits (DCO)
+
+This project uses the [Developer Certificate of Origin](https://developercertificate.org/). Every commit must include a `Signed-off-by:` line proving you have the right to contribute the work under this project's licence.
+
+The easiest way to sign off is to use `git commit -s` (or `--signoff`):
+
+```bash
+git commit -s -m "Add support for Lake Margaret radar coverage"
+```
+
+For an existing commit:
+
+```bash
+git commit -s --amend --no-edit
+```
+
+For multiple unsigned commits in a branch:
+
+```bash
+git rebase -i --signoff main
+```
+
+The DCO GitHub Actions check will block merges with unsigned commits. By signing off, you affirm:
+
+1. The contribution is your own work, OR
+2. The contribution is based on prior work covered by an appropriate open source licence and you have the right to submit it under that licence, OR
+3. The contribution was provided to you by someone who certified one of the above and you are not modifying it.
+
+The full DCO text is at [developercertificate.org](https://developercertificate.org/). It's a short, plain-English statement.
+
 ## Commit messages
 
 - Start with what changed, not what you did ("Add cell tracking" not "I added cell tracking")
 - Keep the first line under 72 characters
 - Use the body for why, not what (the diff shows what)
 - Reference the GitHub issue if related (e.g. "Fix arrival time for overhead rain (#42)")
+
+## Licensing intent
+
+This project is released under the MIT Licence (see [LICENSE](LICENSE)). The maintainer reserves the right to dual-licence or relicence the project under other terms (including commercial licences) in the future.
+
+By contributing under the DCO, you acknowledge that your contributions may be included in such relicensed versions of the project. Forks and non-commercial redistribution under the existing MIT terms are explicitly welcome regardless of any future relicensing of this repository - the MIT version of any commit you've seen will always remain available under MIT.
+
+If you'd prefer your contribution NOT be part of any future relicensed version, please open a discussion before submitting the PR.
 
 ## References
 
