@@ -95,13 +95,6 @@ class HAClient:
         self.request("POST", "/api/services/homeassistant/update_entity",
                       {"entity_id": entity_id})
 
-    def get_text(self, path: str) -> str:
-        """Fetch a plain-text endpoint (e.g. /api/error_log)."""
-        url = f"{HA_URL}{path}"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.token}"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.read().decode()
-
     def get_image(self, entity_id: str, max_retries: int = 5, delay: float = 5.0) -> bytes | None:
         """Download an image, retrying if the entity isn't ready yet."""
         for attempt in range(max_retries):
