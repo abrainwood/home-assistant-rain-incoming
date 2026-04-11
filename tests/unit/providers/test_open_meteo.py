@@ -33,29 +33,26 @@ def _make_mock_session(response_json=None, status=200, raise_exc=None):
 
 
 class TestFetchPrecipitationNow:
-    def test_returns_precipitation_value(self):
+    @pytest.mark.asyncio
+    async def test_returns_precipitation_value(self):
         """Should extract precipitation from a valid API response."""
         session = _make_mock_session(
             response_json={"current": {"precipitation": 0.5, "time": "2026-04-08T10:00"}}
         )
-        result = asyncio.get_event_loop().run_until_complete(
-            fetch_precipitation_now(-33.7, 151.2, session)
-        )
+        result = await fetch_precipitation_now(-33.7, 151.2, session)
         assert result == 0.5
 
-    def test_returns_none_on_network_error(self):
+    @pytest.mark.asyncio
+    async def test_returns_none_on_network_error(self):
         """Network timeout should return None (fail open)."""
         session = _make_mock_session(raise_exc=asyncio.TimeoutError())
-        result = asyncio.get_event_loop().run_until_complete(
-            fetch_precipitation_now(-33.7, 151.2, session)
-        )
+        result = await fetch_precipitation_now(-33.7, 151.2, session)
         assert result is None
 
-    def test_returns_none_on_invalid_json(self):
+    @pytest.mark.asyncio
+    async def test_returns_none_on_invalid_json(self):
         """Garbage response (missing expected keys) should return None."""
         session = _make_mock_session(response_json={"garbage": True})
-        result = asyncio.get_event_loop().run_until_complete(
-            fetch_precipitation_now(-33.7, 151.2, session)
-        )
+        result = await fetch_precipitation_now(-33.7, 151.2, session)
         # "current" key is missing, so .get("current", {}).get("precipitation") -> None
         assert result is None
