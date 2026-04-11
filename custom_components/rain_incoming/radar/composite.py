@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import os
 from datetime import datetime
 from io import BytesIO
 
@@ -19,6 +18,7 @@ from ..providers.rainviewer import (
     TILE_SIZE,
 )
 from .geo import lat_lon_to_tile
+from .map_styles import MapStyle, MapStyleDefinition, get_style
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,9 +31,6 @@ _PRECIP_RGB = np.array(
 # Maximum L2 colour distance to accept a pixel as precipitation.
 _FILTER_MAX_COLOUR_DISTANCE = 30.0
 
-_MAP_TILE_BASE = os.environ.get(
-    "MAP_TILE_URL", "https://basemaps.cartocdn.com/rastertiles/voyager"
-)
 _RENDER_COLOUR_SCHEME = 2
 _RAINVIEWER_TILE_BASE = TILE_BASE_URL
 
@@ -41,8 +38,8 @@ _CROSSHAIR_RADIUS = 8
 _CROSSHAIR_LINE_LENGTH = 16
 _CROSSHAIR_LINE_GAP = 12
 
-# Module-level cache for static map tiles: (zoom, x, y) -> RGBA Image
-_map_tile_cache: dict[tuple[int, int, int], Image.Image] = {}
+# Module-level cache for static map tiles: (style, zoom, x, y) -> RGBA Image
+_map_tile_cache: dict[tuple, Image.Image] = {}
 
 # Module-level cache for radar tiles: (frame_path, zoom, x, y, scheme) -> RGBA Image
 # The cache key includes frame_path, so stale data can never be served.
@@ -211,20 +208,37 @@ async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
 
 
 async def _fetch_map_tile(
-    session: aiohttp.ClientSession, zoom: int, tx: int, ty: int,
-) -> Image.Image:
-    """Fetch a map tile, using the module-level cache for hits."""
-    key = (zoom, tx, ty)
-    cached = _map_tile_cache.get(key)
+    session: aiohttp.ClientSession,
+    zoom: int,
+    tx: int,
+    ty: int,
+    style_def: MapStyleDefinition | None = None,
+) -> Image.Image | None:
+    """Fetch a map tile using the given style, with module-level cache for hits.
+
+    style_def defaults to VOYAGER if not provided (preserves previous behaviour).
+    """
+    if style_def is None:
+        style_def = get_style(MapStyle.VOYAGER)
+
+    # Cache key includes style so different styles don't share stale tiles.
+    cache_key = (style_def.style, zoom, tx, ty)
+    cached = _map_tile_cache.get(cache_key)  # type: ignore[arg-type]
     if cached is not None:
         return cached
 
-    url = f"{_MAP_TILE_BASE}/{zoom}/{tx}/{ty}.png"
-    tile = await _fetch_tile(session, url)
-    # Boost saturation for richer land/water colours
-    from PIL import ImageEnhance
-    tile = ImageEnhance.Color(tile).enhance(1.8)
-    _map_tile_cache[key] = tile
+    tile = await style_def.fetch_tile(session, zoom, tx, ty)
+    if tile is None:
+        return None
+
+    # Voyager benefits from a saturation boost for richer land/water colours.
+    # Other styles manage their own post-processing (e.g. OSM Dark applies its
+    # own transform inside _fetch_osm_dark).
+    if style_def.style == MapStyle.VOYAGER:
+        from PIL import ImageEnhance
+        tile = ImageEnhance.Color(tile).enhance(1.8)
+
+    _map_tile_cache[cache_key] = tile  # type: ignore[index]
     return tile
 
 
@@ -238,9 +252,13 @@ def build_frame_label(
 
     Format: "Location  DD/MM/YY  HH:MM TZ  Rangekm"
     Location is omitted if not set.
+    Location names > 30 chars are truncated to 29 chars + ellipsis as a
+    render-time safety net (config validation is PR 3's job).
     """
     parts = []
     if location_name:
+        if len(location_name) > 30:
+            location_name = location_name[:29] + "\u2026"
         parts.append(location_name)
     if timestamp is not None:
         tz_label = timestamp.strftime("%Z") or tz_name or "UTC"
@@ -257,7 +275,7 @@ def _draw_frame_label(
     radius_km: int,
     location_name: str | None = None,
 ) -> None:
-    """Draw the BOM-style label in the bottom-left corner of a frame."""
+    """Draw the BOM-style label in the top-left corner of a frame."""
     label = build_frame_label(timestamp, tz_name, radius_km, location_name)
     draw = ImageDraw.Draw(img)
     try:
@@ -265,11 +283,9 @@ def _draw_frame_label(
     except TypeError:
         font = ImageFont.load_default()
 
-    bbox = font.getbbox(label)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     padding = 8
     lx = padding
-    ly = img.height - th - padding
+    ly = padding
 
     # White outline for readability on any background
     for dx in (-1, 0, 1):
@@ -277,6 +293,44 @@ def _draw_frame_label(
             if dx or dy:
                 draw.text((lx + dx, ly + dy), label, fill=(255, 255, 255, 220), font=font)
     draw.text((lx, ly), label, fill=(0, 0, 0, 230), font=font)
+
+
+def _draw_attribution(img: Image.Image, style_def: MapStyleDefinition) -> None:
+    """Draw the map provider + RainViewer attribution along the full bottom of the composite.
+
+    Frame label is now at top-left, so the entire bottom edge is available.
+    14pt fits ESRI's 85-char attribution (546px) comfortably in a 640px image (624px available).
+    """
+    text = f"{style_def.attribution} | RainViewer"
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.load_default(size=14)
+    except TypeError:
+        font = ImageFont.load_default()
+
+    padding = 8
+    text_bbox = font.getbbox(text)
+    text_h = text_bbox[3] - text_bbox[1]
+
+    lx = padding
+    ly = img.height - text_h - padding
+
+    _draw_text_with_outline(draw, lx, ly, text, font)
+
+
+def _draw_text_with_outline(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    text: str,
+    font,
+) -> None:
+    """Draw text with a white outline and dark fill for readability on any background."""
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx or dy:
+                draw.text((x + dx, y + dy), text, fill=(255, 255, 255, 220), font=font)
+    draw.text((x, y), text, fill=(0, 0, 0, 230), font=font)
 
 
 def _composite_single_frame(
@@ -291,6 +345,7 @@ def _composite_single_frame(
     tz_name: str | None = None,
     confidence_map: np.ndarray | None = None,
     location_name: str | None = None,
+    style_def: MapStyleDefinition | None = None,
 ) -> Image.Image:
     """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image.
 
@@ -340,6 +395,10 @@ def _composite_single_frame(
 
     _draw_frame_label(composite, timestamp, tz_name, radius_km, location_name)
 
+    if style_def is None:
+        style_def = get_style(MapStyle.VOYAGER)
+    _draw_attribution(composite, style_def)
+
     return composite
 
 
@@ -351,10 +410,12 @@ def _render_sync(
     map_zoom: int,
     radius_km: int,
     output_size: int,
+    style_def: MapStyleDefinition | None = None,
 ) -> bytes:
     """CPU-bound rendering: composite, draw overlays, export PNG."""
     composite = _composite_single_frame(
         map_crop, radar_resized, lat, lon, map_zoom, radius_km, output_size,
+        style_def=style_def,
     )
     buf = BytesIO()
     composite.save(buf, format="PNG")
@@ -440,8 +501,12 @@ async def _fetch_map_crop(
     session: aiohttp.ClientSession,
     vp: _ViewportParams,
     output_size: int,
+    style_def: MapStyleDefinition | None = None,
 ) -> Image.Image:
     """Fetch and stitch map tiles (in parallel), then crop to viewport."""
+    if style_def is None:
+        style_def = get_style(MapStyle.VOYAGER)
+
     coords = [
         (tx, ty)
         for ty in range(vp.tile_y_min, vp.tile_y_max + 1)
@@ -450,7 +515,7 @@ async def _fetch_map_crop(
 
     async def _fetch_one(tx: int, ty: int):
         try:
-            return tx, ty, await _fetch_map_tile(session, vp.map_zoom, tx, ty)
+            return tx, ty, await _fetch_map_tile(session, vp.map_zoom, tx, ty, style_def)
         except aiohttp.ClientResponseError as e:
             _LOGGER.warning(
                 "Map tile fetch failed: HTTP %d for z=%d x=%d y=%d",
@@ -576,6 +641,7 @@ async def render_composite(
     *,
     session: aiohttp.ClientSession,
     run_in_executor: object = None,
+    map_style: MapStyle | str = MapStyle.VOYAGER,
 ) -> bytes:
     """Render a radar composite image as PNG bytes.
 
@@ -584,17 +650,20 @@ async def render_composite(
     session: an aiohttp.ClientSession for fetching tiles.
     run_in_executor: optional callable (e.g. hass.async_add_executor_job)
         to offload CPU-bound rendering. If None, rendering runs inline.
+    map_style: base map provider. Defaults to VOYAGER.
     """
+    style_def = get_style(map_style)
     vp = _ViewportParams(lat, lon, radius_km, output_size)
-    map_crop = await _fetch_map_crop(session, vp, output_size)
+    map_crop = await _fetch_map_crop(session, vp, output_size, style_def)
     radar_resized = await _fetch_radar_overlay(session, vp, frame_path, output_size)
 
     if run_in_executor is not None:
         return await run_in_executor(
             _render_sync, map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
+            style_def,
         )
 
-    return _render_sync(map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size)
+    return _render_sync(map_crop, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size, style_def)
 
 
 # --- Public composable API ---
@@ -609,10 +678,17 @@ async def fetch_map_crop(
     lon: float,
     radius_km: int,
     output_size: int = 640,
+    map_style: MapStyle | str = MapStyle.VOYAGER,
 ) -> Image.Image:
-    """Fetch CartoDB map tiles for a location and radius. Returns a cropped PIL image."""
+    """Fetch map tiles for a location and radius. Returns a cropped PIL image.
+
+    map_style selects the base map provider. Defaults to VOYAGER (CARTO) to
+    preserve existing production behaviour. Pass any MapStyle value or its
+    string equivalent (e.g. "osm_dark") to change the map style.
+    """
+    style_def = get_style(map_style)
     vp = _ViewportParams(lat, lon, radius_km, output_size)
-    return await _fetch_map_crop(session, vp, output_size)
+    return await _fetch_map_crop(session, vp, output_size, style_def)
 
 
 async def fetch_radar_overlays(
@@ -642,8 +718,10 @@ def composite_frames(
     tz_name: str | None = None,
     confidence_maps: list[np.ndarray] | None = None,
     location_name: str | None = None,
+    map_style: MapStyle | str = MapStyle.VOYAGER,
 ) -> list[Image.Image]:
     """Composite radar overlays over a background image. Returns a list of frames."""
+    style_def = get_style(map_style)
     vp = _ViewportParams(lat, lon, radius_km, output_size)
     timestamps = frame_timestamps or [None] * len(radar_overlays)
     frames: list[Image.Image] = []
@@ -655,6 +733,7 @@ def composite_frames(
             timestamp=ts, tz_name=tz_name,
             confidence_map=conf_map,
             location_name=location_name,
+            style_def=style_def,
         )
         frames.append(frame_img)
     return frames
@@ -690,6 +769,7 @@ async def render_animated_composite(
     location_name: str | None = None,
     session: aiohttp.ClientSession,
     run_in_executor: object = None,
+    map_style: MapStyle | str = MapStyle.VOYAGER,
 ) -> bytes:
     """Render an animated GIF compositing multiple radar frames over a static map.
 
@@ -699,7 +779,7 @@ async def render_animated_composite(
     import time as _time
     t0 = _time.monotonic()
 
-    map_crop = await fetch_map_crop(session, lat, lon, radius_km, output_size)
+    map_crop = await fetch_map_crop(session, lat, lon, radius_km, output_size, map_style)
     t1 = _time.monotonic()
     _LOGGER.debug("render %dkm: map tiles fetched in %.1fs", radius_km, t1 - t0)
 
@@ -718,6 +798,7 @@ async def render_animated_composite(
         tz_name=tz_name,
         confidence_maps=confidence_maps,
         location_name=location_name,
+        map_style=map_style,
     )
     t3 = _time.monotonic()
     _LOGGER.debug("render %dkm: %d frames composited in %.1fs", radius_km, len(frames), t3 - t2)
