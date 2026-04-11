@@ -284,26 +284,26 @@ class TestAPNoise_ColdStart:
     The cold-start penalty (0.85x) provides some confidence reduction."""
 
     def test_cold_start_reduces_ap_confidence(self):
-        """Weak AP returns should have reduced confidence on cold start."""
-        # Weak AP-like smooth blob at location
+        """Cold-start penalty (0.92x at maturity=0) reduces QC confidence below 0.90.
+
+        This tests compute_confidence_map directly - the cold-start penalty is a
+        property of QC scoring, not the detection pipeline. Without the penalty,
+        the same smooth blob scores ~0.97. With it, it drops to ~0.89.
+        """
         blob = slice(20, 44), slice(20, 44)
         grids = [_smooth_blob(GRID_SHAPE, *blob, intensity=0.15) for _ in range(3)]
 
-        result = _run_pipeline(
-            grids,
-            clutter_maturity=0.0,  # fresh install
+        cm = compute_confidence_map(
+            grids[-1],
+            grids=grids,
+            clutter_maturity=0.0,  # fresh install - penalty active
         )
+        ap_region = cm.confidence[20:44, 20:44]
+        mean_conf = float(ap_region[ap_region > 0].mean())
 
-        # Cold-start penalty (0.92x at maturity=0) reduces confidence.
-        # Without the penalty, base confidence for this smooth blob is ~0.97.
-        # With the penalty applied, confidence drops to ~0.89 - below 0.90.
-        # Cells may or may not be tracked (weak intensity), but any that are
-        # must show the penalty's effect. We also verify the pipeline produces
-        # cells to ensure this assertion is not silently vacuous.
-        assert len(result.tracked_cells) >= 1, (
-            "Expected at least one tracked cell from smooth blob to verify cold-start penalty"
-        )
-        assert all(cell.confidence < 0.90 for cell in result.tracked_cells), (
-            f"Cold-start penalty should keep cell confidence below 0.90; "
-            f"got {[c.confidence for c in result.tracked_cells]}"
+        # At maturity=0: penalty = 0.92 → observed ~0.89 (below 0.90).
+        # At maturity=1.0: no penalty → observed ~0.97 (above 0.90).
+        # If the penalty were removed, this assertion would fail.
+        assert mean_conf < 0.90, (
+            f"Cold-start penalty should reduce confidence below 0.90; got {mean_conf:.4f}"
         )
