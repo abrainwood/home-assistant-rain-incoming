@@ -104,7 +104,7 @@ async def test_arrival_sensor_unknown_when_no_rain(hass: HomeAssistant, mock_ent
     await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
     state = hass.states.get("sensor.rain_incoming_arrival_time")
     assert state is not None
-    assert state.state in ("unknown", "None")
+    assert state.state == "unknown"
 
 
 @pytest.mark.asyncio
@@ -378,4 +378,4 @@ async def test_last_rain_sensor_exists(hass: HomeAssistant, mock_entry):
 async def test_last_rain_sensor_unknown_when_no_rain_history(hass: HomeAssistant, mock_entry):
     await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
     state = hass.states.get("sensor.rain_incoming_last_rain")
-    assert state.state in ("unknown", "None")
+    assert state.state == "unknown"

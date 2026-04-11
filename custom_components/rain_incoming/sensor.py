@@ -176,7 +176,7 @@ class LastRainNearbySensor(
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in ("unknown", "unavailable", "None"):
+        if last_state and last_state.state not in ("unknown", "unavailable"):
             from datetime import datetime
             try:
                 self.coordinator.last_rain_nearby_time = datetime.fromisoformat(
