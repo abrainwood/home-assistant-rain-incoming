@@ -72,4 +72,6 @@ class RainIncomingBinarySensor(CoordinatorEntity[RainDetectorCoordinator], Binar
         if self.coordinator.data is not None:
             attrs["confidence"] = self.coordinator.data.confidence.value
             attrs["frame_count"] = self.coordinator.data.frame_count
+        if self.coordinator.last_update_success_time is not None:
+            attrs["last_update_success"] = self.coordinator.last_update_success_time.isoformat()
         return attrs
