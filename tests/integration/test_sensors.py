@@ -121,20 +121,26 @@ async def test_image_entity_created(hass: HomeAssistant, mock_entry, entity_id):
 
 @pytest.mark.asyncio
 async def test_image_entity_content_type_is_gif(hass: HomeAssistant, mock_entry):
+    """All radar image entities must serve image/gif so the HA frontend animates the loop."""
     await _setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    entity = hass.data[DOMAIN][mock_entry.entry_id]
-    # Get the image entity from the entity registry
-    from homeassistant.helpers.entity_component import EntityComponent
+
     from homeassistant.components.image import DOMAIN as IMAGE_DOMAIN
-    component: EntityComponent = hass.data.get("entity_components", {}).get(IMAGE_DOMAIN)
-    if component is not None:
-        entities = [e for e in component.entities if "radar" in e.entity_id]
-        for entity in entities:
-            assert entity.content_type == "image/gif"
-    else:
-        # Fallback: check via state attributes
-        state = hass.states.get("image.rain_incoming_radar_128km")
-        assert state is not None
+    from homeassistant.helpers.entity_component import EntityComponent
+
+    component: EntityComponent | None = hass.data.get("entity_components", {}).get(IMAGE_DOMAIN)
+    if component is None:
+        pytest.fail(
+            "entity_components[image] not found in hass.data after integration setup - "
+            "cannot verify content_type"
+        )
+
+    radar_entities = [e for e in component.entities if "radar" in e.entity_id]
+    assert radar_entities, "No radar image entities found after integration setup"
+
+    for entity in radar_entities:
+        assert entity.content_type == "image/gif", (
+            f"{entity.entity_id} has content_type={entity.content_type!r}, expected 'image/gif'"
+        )
 
 
 # --- strings.json ---

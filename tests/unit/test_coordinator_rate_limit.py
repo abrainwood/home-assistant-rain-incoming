@@ -394,8 +394,9 @@ async def test_recovery_after_total_rate_limit(hass: HomeAssistant):
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
 
-    # Coordinator internal state should not have been poisoned
-    assert coordinator._consecutive_failures == 0 or True  # no strict requirement here
+    # Poll 1 fails at the tile-fetch level (not via _fetch_with_backoff), so the
+    # backoff counter must remain untouched at its initial value of zero.
+    assert coordinator._consecutive_failures == 0
 
     # --- Poll 2: full recovery ---
     frames_poll2 = [_make_frame(base_ts + (i + 4) * 600) for i in range(4)]
