@@ -168,8 +168,10 @@ class TestAPNoise_SmoothPersistent:
         cm = compute_confidence_map(grids[-1], grids=grids)
         ap_region = cm.confidence[20:44, 20:44]
         mean_conf = float(ap_region[ap_region > 0].mean())
-        # Confidence should be high but not perfect 1.0
-        assert mean_conf < 1.0
+        # Confidence should be meaningfully below 1.0 (edge effects in texture
+        # scoring reduce it). Observed value ~0.89 - lower bound at 0.80 gives
+        # a meaningful margin while catching any removal of the penalty.
+        assert 0.80 < mean_conf < 1.0
 
 
 # ---- 8. No radar returns ----
@@ -292,8 +294,16 @@ class TestAPNoise_ColdStart:
             clutter_maturity=0.0,  # fresh install
         )
 
-        # Cold-start (0.85x) confidence reduction
-        # With base confidence ~0.99 for smooth blob, effective conf ~0.85
-        if result.rain_incoming:
-            for cell in result.tracked_cells:
-                assert cell.confidence < 0.90
+        # Cold-start penalty (0.92x at maturity=0) reduces confidence.
+        # Without the penalty, base confidence for this smooth blob is ~0.97.
+        # With the penalty applied, confidence drops to ~0.89 - below 0.90.
+        # Cells may or may not be tracked (weak intensity), but any that are
+        # must show the penalty's effect. We also verify the pipeline produces
+        # cells to ensure this assertion is not silently vacuous.
+        assert len(result.tracked_cells) >= 1, (
+            "Expected at least one tracked cell from smooth blob to verify cold-start penalty"
+        )
+        assert all(cell.confidence < 0.90 for cell in result.tracked_cells), (
+            f"Cold-start penalty should keep cell confidence below 0.90; "
+            f"got {[c.confidence for c in result.tracked_cells]}"
+        )
