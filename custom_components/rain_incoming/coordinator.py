@@ -36,6 +36,7 @@ from .const import (
     BACKOFF_MAX_SECONDS,
     BACKOFF_MULTIPLIER,
     CONF_LOOKAHEAD_MINUTES,
+    CONF_MAP_STYLE,
     DEFAULT_LOOKAHEAD_MINUTES,
     INTENSITY_THRESHOLD,
     MAX_ANGULAR_VARIANCE_RADIANS,
@@ -148,6 +149,14 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # Frame cache: path -> RainViewerFrame with pre-fetched grid.
         # Avoids re-fetching tile grids for frames that haven't changed between polls.
         self._frame_cache: dict[str, object] = {}
+
+    @property
+    def map_style(self) -> str:
+        """Return the active map style, reading options first then data then default."""
+        return self._entry.options.get(
+            CONF_MAP_STYLE,
+            self._entry.data.get(CONF_MAP_STYLE, "voyager"),
+        )
 
     async def async_save_clutter_map(self) -> None:
         """Persist the clutter map to disk. Called on HA shutdown."""

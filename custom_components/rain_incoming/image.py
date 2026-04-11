@@ -133,9 +133,11 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         conf_maps = self.coordinator.confidence_maps or None
         location_name = data.get(CONF_LOCATION_NAME) or None
 
+        map_style = self.coordinator.map_style
+
         _LOGGER.debug(
-            "Radar %dkm: rendering %d frames for %s",
-            self._radius_km, len(frame_paths), location_name or "default location",
+            "Radar %dkm: rendering %d frames for %s (style=%s)",
+            self._radius_km, len(frame_paths), location_name or "default location", map_style,
         )
         try:
             self._cached_image = await render_animated_composite(
@@ -150,6 +152,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
                 location_name=location_name,
                 session=session,
                 run_in_executor=self.hass.async_add_executor_job,
+                map_style=map_style,
             )
             self._cached_frame_path = frame_path
             _LOGGER.debug(

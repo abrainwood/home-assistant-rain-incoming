@@ -8,14 +8,17 @@
           "latitude": "Latitude",
           "longitude": "Longitude",
           "lookahead_minutes": "Lookahead (minutes)",
-          "location_name": "Location name (optional)"
+          "location_name": "Location name (optional)",
+          "map_style": "Map style"
         }
       }
     },
     "error": {
       "invalid_latitude": "Latitude must be between -90 and 90",
       "invalid_longitude": "Longitude must be between -180 and 180",
-      "invalid_lookahead": "Lookahead must be between 20 and 60 minutes"
+      "invalid_lookahead": "Lookahead must be between 20 and 60 minutes",
+      "location_name_too_long": "Location name must be 30 characters or fewer (avoids overlap with map attribution on the bottom of the composite).",
+      "invalid_map_style": "Please select a valid map style"
     },
     "abort": {
       "already_configured": "This location is already configured"
@@ -26,17 +29,16 @@
       "init": {
         "title": "Configure Rain Incoming",
         "data": {
-          "latitude": "Latitude",
-          "longitude": "Longitude",
           "lookahead_minutes": "Lookahead (minutes)",
-          "location_name": "Location name (optional)"
+          "location_name": "Location name (optional)",
+          "map_style": "Map style"
         }
       }
     },
     "error": {
-      "invalid_latitude": "Latitude must be between -90 and 90",
-      "invalid_longitude": "Longitude must be between -180 and 180",
-      "invalid_lookahead": "Lookahead must be between 20 and 60 minutes"
+      "invalid_lookahead": "Lookahead must be between 20 and 60 minutes",
+      "location_name_too_long": "Location name must be 30 characters or fewer (avoids overlap with map attribution on the bottom of the composite).",
+      "invalid_map_style": "Please select a valid map style"
     }
   }
 }
