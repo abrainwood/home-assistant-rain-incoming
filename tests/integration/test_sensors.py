@@ -242,6 +242,25 @@ async def test_config_values_not_in_attributes(hass: HomeAssistant, mock_entry, 
 
 
 @pytest.mark.asyncio
+async def test_binary_sensor_exposes_last_update_success_attribute(hass: HomeAssistant, mock_entry):
+    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
+
+    # In production, last_update_success_time is set inside _async_update_data, but the
+    # integration test patches that method out. Seed it manually and push new data through
+    # the coordinator so all CoordinatorEntity listeners write a fresh state snapshot.
+    coordinator = hass.data[DOMAIN][mock_entry.entry_id]
+    coordinator.last_update_success_time = datetime(2026, 4, 11, 0, 0, 0, tzinfo=timezone.utc)
+    coordinator.async_set_updated_data(MOCK_RESULT_RAIN_COMING)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("binary_sensor.rain_incoming_status")
+    assert state is not None
+    assert "last_update_success" in state.attributes
+    value = state.attributes["last_update_success"]
+    datetime.fromisoformat(value)  # raises ValueError if not a valid ISO 8601 string
+
+
+@pytest.mark.asyncio
 async def test_binary_sensor_still_has_dynamic_attributes(hass: HomeAssistant, mock_entry):
     await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
     state = hass.states.get("binary_sensor.rain_incoming_status")

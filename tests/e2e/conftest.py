@@ -119,6 +119,42 @@ class HAClient:
                 time.sleep(delay)
         return None
 
+    def wait_for_coordinator_cycle(
+        self,
+        entity_id: str,
+        timeout: float = 60.0,
+        interval: float = 2.0,
+    ) -> dict:
+        """Trigger an entity update and wait for the coordinator to run a fresh cycle.
+
+        Handles HA's update_entity debounce by repeatedly nudging the entity and
+        polling the last_update_success attribute until it advances past the
+        pre-trigger value. Returns the new state dict once the cycle completes.
+        """
+        start = time.time()
+        deadline = start + timeout
+
+        pre_state = self.get_state(entity_id)
+        pre = pre_state.get("attributes", {}).get("last_update_success") if pre_state else None
+
+        while time.time() < deadline:
+            self.update_entity(entity_id)
+            time.sleep(interval)
+            state = self.get_state(entity_id)
+            if state is not None:
+                current = state.get("attributes", {}).get("last_update_success")
+                if current is not None and current != pre:
+                    return state
+
+        elapsed = time.time() - start
+        last_state = self.get_state(entity_id)
+        last_value = last_state.get("attributes", {}).get("last_update_success") if last_state else None
+        raise TimeoutError(
+            f"wait_for_coordinator_cycle: entity {entity_id!r} did not advance "
+            f"last_update_success past {pre!r} within {timeout}s (elapsed {elapsed:.1f}s). "
+            f"Last seen value: {last_value!r}."
+        )
+
     def poll_entity_state(
         self,
         entity_id: str,
