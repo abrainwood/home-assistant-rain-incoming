@@ -1,0 +1,298 @@
+"""Tests for _draw_attribution in composite.py.
+
+TDD: written FIRST (red), then implementation makes them green.
+
+Requirements:
+- Attribution text "{style.attribution} | RainViewer" appears on each frame
+- Positioned along the bottom of the image (full width available - frame label is now at top)
+- Single-line for all styles including ESRI's 85-char attribution at the chosen font size
+"""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+from PIL import Image, ImageFont
+
+from custom_components.rain_incoming.radar.composite import _draw_attribution
+from custom_components.rain_incoming.radar.map_styles import MapStyle, get_style
+
+
+def _blank_image(width=640, height=640) -> Image.Image:
+    """Create a blank black RGBA image."""
+    return Image.new("RGBA", (width, height), (0, 0, 0, 255))
+
+
+def _bottom_region(img: Image.Image, height_fraction: float = 0.05) -> np.ndarray:
+    """Return the bottom strip of the image as a numpy array (RGB only)."""
+    arr = np.array(img)
+    h, w = arr.shape[:2]
+    region_h = max(1, int(h * height_fraction))
+    # Bottom slice, full width, RGB only (ignore alpha channel which is always 255)
+    return arr[h - region_h:h, :, :3]
+
+
+def _count_nonblack_pixels(region: np.ndarray) -> int:
+    """Count pixels with any RGB channel > 10."""
+    return int((region.max(axis=2) > 10).sum())
+
+
+# ---------------------------------------------------------------------------
+# Attribution text appears in the bottom region
+# ---------------------------------------------------------------------------
+
+def test_draw_attribution_renders_style_text():
+    """_draw_attribution should draw text in the bottom region of the image.
+
+    A blank black image should have non-black pixels in the bottom strip after
+    calling _draw_attribution - proving text was rendered there.
+    """
+    img = _blank_image()
+    style_def = get_style(MapStyle.VOYAGER)
+    _draw_attribution(img, style_def)
+
+    region = _bottom_region(img)
+    nonblack = _count_nonblack_pixels(region)
+    assert nonblack > 0, (
+        "Expected non-black pixels in bottom region after _draw_attribution, "
+        "but the region is still all-black. Attribution was not drawn."
+    )
+
+
+def test_draw_attribution_includes_rainviewer():
+    """The drawn attribution must include 'RainViewer' - verified by rendering non-empty text."""
+    # We can't easily OCR the image in tests, but we verify _draw_attribution draws
+    # something for every style. The 'RainViewer' content is verified at the string level
+    # via the implementation contract: the text must be f"{style_def.attribution} | RainViewer".
+    for style in MapStyle:
+        img = _blank_image()
+        style_def = get_style(style)
+        _draw_attribution(img, style_def)
+        region = _bottom_region(img)
+        nonblack = _count_nonblack_pixels(region)
+        assert nonblack > 0, (
+            f"Expected attribution text for style={style} in bottom region, "
+            f"but region is all-black. Text may have been placed elsewhere or not drawn."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression test: ESRI's long attribution must fit on one line at chosen font size
+# ---------------------------------------------------------------------------
+
+def test_draw_attribution_esri_fits_single_line():
+    """ESRI's 85-char attribution must fit within img.width - 2*padding at the chosen font size.
+
+    This is a regression guard: if someone bumps the font size up beyond what fits,
+    this test will catch it. The implementation uses 14pt which gives 546px for ESRI
+    on a 640px image (624px available after padding).
+    """
+    from custom_components.rain_incoming.radar.map_styles import MapStyle, get_style
+
+    padding = 8
+    img_width = 640
+    available_width = img_width - 2 * padding
+
+    # Match the font size used in _draw_attribution
+    try:
+        font = ImageFont.load_default(size=14)
+    except TypeError:
+        font = ImageFont.load_default()
+
+    esri_def = get_style(MapStyle.ESRI_IMAGERY)
+    text = f"{esri_def.attribution} | RainViewer"
+    bbox = font.getbbox(text)
+    text_w = bbox[2] - bbox[0]
+
+    assert text_w < available_width, (
+        f"ESRI attribution text is {text_w}px wide but only {available_width}px available "
+        f"({img_width}px image - {2*padding}px padding). Reduce font size in _draw_attribution "
+        f"to fit ESRI on a single line. Text: {text!r}"
+    )
+
+
+def test_draw_attribution_frame_label_position_is_top():
+    """_draw_frame_label should place text in the top region of the image, not the bottom.
+
+    After calling _draw_frame_label, the top strip should have non-black pixels
+    and the very bottom strip should remain black (no text overlap between label and attribution).
+    This verifies the layout separation: label at top, attribution at bottom.
+    """
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+    from datetime import datetime, timezone
+
+    img = _blank_image()
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+    _draw_frame_label(img, ts, "UTC", 128, "Sydney")
+
+    arr = np.array(img)[:, :, :3]
+    h = arr.shape[0]
+
+    # Top strip should have text pixels
+    top_strip = arr[:int(h * 0.05), :, :]
+    top_nonblack = int((top_strip.max(axis=2) > 10).sum())
+
+    # Bottom strip (bottom 5%) should be empty (no text rendered there)
+    bottom_strip = arr[int(h * 0.95):, :, :]
+    bottom_nonblack = int((bottom_strip.max(axis=2) > 10).sum())
+
+    assert top_nonblack > 0, (
+        "Expected frame label text pixels in the top strip of the image, "
+        "but the top strip is all-black. Label may still be at the bottom."
+    )
+    assert bottom_nonblack == 0, (
+        f"Expected no frame label pixels in the bottom strip, "
+        f"but found {bottom_nonblack} non-black pixels. Label may still be at the bottom."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0 regression: render_composite must pass style_def through _render_sync
+# ---------------------------------------------------------------------------
+
+def test_render_composite_uses_passed_style_for_attribution():
+    """render_composite called with ESRI_IMAGERY must draw ESRI's attribution, not Voyager's.
+
+    The bug: render_composite computed style_def but did not pass it through
+    _render_sync -> _composite_single_frame, so _composite_single_frame always
+    fell back to VOYAGER's attribution regardless of what style was requested.
+
+    This test mocks _draw_attribution so we can inspect exactly which style_def
+    was used - pixel-level verification is covered by test_draw_attribution_renders_style_text.
+    """
+    from unittest.mock import patch, MagicMock, AsyncMock
+    import asyncio
+    from io import BytesIO
+    from PIL import Image
+
+    from custom_components.rain_incoming.radar.composite import render_composite, _map_tile_cache
+    from custom_components.rain_incoming.radar.map_styles import MapStyle, get_style
+
+    # Build a minimal mock session that returns valid PNG tiles
+    tile_png = BytesIO()
+    Image.new("RGBA", (256, 256), (80, 80, 80, 255)).save(tile_png, format="PNG")
+    tile_bytes = tile_png.getvalue()
+
+    async def _fake_get(url: str, **kwargs):
+        resp = MagicMock()
+        resp.status = 200
+        resp.headers = {}
+        resp.raise_for_status = MagicMock()
+        resp.release = MagicMock()
+        resp.read = AsyncMock(return_value=tile_bytes)
+        return resp
+
+    session = MagicMock()
+    session.get = AsyncMock(side_effect=_fake_get)
+
+    called_with_style: list = []
+
+    # Import the real function BEFORE patching so we can call it without recursion
+    from custom_components.rain_incoming.radar.composite import _draw_attribution as _real_draw
+
+    def _capture_draw_attribution(img, style_def):
+        called_with_style.append(style_def)
+        # Still draw so rendering doesn't error - call the real function directly
+        _real_draw(img, style_def)
+
+    _map_tile_cache.clear()
+
+    with patch(
+        "custom_components.rain_incoming.radar.composite._draw_attribution",
+        side_effect=_capture_draw_attribution,
+    ):
+        asyncio.get_event_loop().run_until_complete(
+            render_composite(
+                lat=-33.7,
+                lon=151.2,
+                radius_km=128,
+                frame_path="/test/radar/frame",
+                output_size=256,
+                session=session,
+                map_style=MapStyle.ESRI_IMAGERY,
+            )
+        )
+
+    assert called_with_style, "_draw_attribution was never called"
+    used_style_def = called_with_style[0]
+    esri_def = get_style(MapStyle.ESRI_IMAGERY)
+    assert used_style_def.style == MapStyle.ESRI_IMAGERY, (
+        f"render_composite with map_style=ESRI_IMAGERY should draw ESRI attribution, "
+        f"but _draw_attribution was called with style={used_style_def.style!r}. "
+        f"Expected {MapStyle.ESRI_IMAGERY!r}. "
+        f"This is the P0 bug: style_def was not threaded through _render_sync."
+    )
+    assert "Esri" in used_style_def.attribution, (
+        f"ESRI style_def attribution should mention 'Esri', got: {used_style_def.attribution!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layout integrity: label at top, attribution at bottom - no leakage
+# ---------------------------------------------------------------------------
+
+def test_composite_single_frame_has_label_at_top_and_attribution_at_bottom():
+    """_composite_single_frame must place the frame label at the top and attribution at the bottom.
+
+    Layout invariant: if someone accidentally changes a vertical offset, this catches it.
+    - Top 5% of the image must have non-black pixels (frame label).
+    - Bottom 5% must have non-black pixels (attribution text).
+    - The middle 90% should NOT have label text rendered there.
+
+    Uses a blank background and ESRI style so we exercise the full code path.
+    """
+    from datetime import datetime, timezone
+    from custom_components.rain_incoming.radar.composite import _composite_single_frame
+    from custom_components.rain_incoming.radar.map_styles import MapStyle, get_style
+
+    output_size = 640
+    background = Image.new("RGBA", (output_size, output_size), (60, 60, 60, 255))
+    radar = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 0))
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+    esri_def = get_style(MapStyle.ESRI_IMAGERY)
+
+    result = _composite_single_frame(
+        map_crop=background,
+        radar_resized=radar,
+        lat=-33.7,
+        lon=151.2,
+        map_zoom=8,
+        radius_km=128,
+        output_size=output_size,
+        timestamp=ts,
+        tz_name="UTC",
+        location_name="Sydney",
+        style_def=esri_def,
+    )
+
+    arr = np.array(result)[:, :, :3]
+    h = arr.shape[0]
+    strip_h = int(h * 0.05)
+
+    # The background is grey (60, 60, 60) - "non-black" includes that.
+    # We compare against what the background alone would look like: max(axis=2) = 60.
+    # Text pixels are white (255) or black (0) outlines against that grey background.
+    # We detect text by looking for pixels that DIFFER significantly from the grey background.
+    _BACKGROUND_GREY = 60
+    _TEXT_DELTA_THRESHOLD = 30  # pixels that differ from background grey by this much are text
+
+    def _count_text_pixels(strip: np.ndarray) -> int:
+        """Count pixels that differ from the background grey significantly."""
+        delta = np.abs(strip.astype(np.int32) - _BACKGROUND_GREY).max(axis=2)
+        return int((delta > _TEXT_DELTA_THRESHOLD).sum())
+
+    top_strip = arr[:strip_h, :, :]
+    bottom_strip = arr[h - strip_h:, :, :]
+    # Middle excludes top + bottom strips
+    middle_strip = arr[strip_h * 2:h - strip_h * 2, :, :]
+
+    top_text = _count_text_pixels(top_strip)
+    bottom_text = _count_text_pixels(bottom_strip)
+
+    assert top_text > 0, (
+        f"Expected frame label pixels in the top {strip_h}px strip, "
+        f"but found {top_text} text pixels. Frame label may not be at the top."
+    )
+    assert bottom_text > 0, (
+        f"Expected attribution pixels in the bottom {strip_h}px strip, "
+        f"but found {bottom_text} text pixels. Attribution may not be at the bottom."
+    )

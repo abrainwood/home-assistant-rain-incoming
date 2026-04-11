@@ -17,6 +17,8 @@ import aiohttp
 import numpy as np
 from PIL import Image, ImageEnhance
 
+from ..http_retry import fetch_with_retry
+
 _LOGGER = logging.getLogger(__name__)
 
 # Saturation multiplier applied to OSM tiles before the HSV V-invert + feature lift.
@@ -55,18 +57,20 @@ class MapStyleDefinition:
 async def _fetch_png(session: aiohttp.ClientSession, url: str) -> Image.Image | None:
     """Fetch a PNG tile URL and return it as an RGBA PIL Image, or None on failure.
 
-    Failures (non-200 status, network errors) are logged at WARNING level and
-    None is returned so the caller can decide whether to fail or fall back.
+    Uses fetch_with_retry for 429/5xx retry with exponential backoff.
+    404 errors are silently returned as None (expected for ESRI overlay tiles at
+    some zoom levels). Other 4xx errors are logged at WARNING and return None.
+    Network/timeout errors are also logged at WARNING and return None.
     """
     try:
-        async with session.get(url, headers={"User-Agent": _USER_AGENT}) as resp:
-            if resp.status != 200:
-                _LOGGER.warning(
-                    "Map tile fetch failed: HTTP %d for %s", resp.status, url
-                )
-                return None
-            data = await resp.read()
-            return Image.open(BytesIO(data)).convert("RGBA")
+        resp = await fetch_with_retry(session, url)
+        data = await resp.read()
+        return Image.open(BytesIO(data)).convert("RGBA")
+    except aiohttp.ClientResponseError as exc:
+        if exc.status == 404:
+            return None  # overlay tile doesn't exist at this zoom - expected, don't warn
+        _LOGGER.warning("Map tile fetch failed: HTTP %d for %s", exc.status, url)
+        return None
     except Exception as exc:
         _LOGGER.warning(
             "Map tile fetch error: %s: %s for %s", type(exc).__name__, exc, url
