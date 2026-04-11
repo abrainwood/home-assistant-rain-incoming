@@ -61,6 +61,11 @@ _DOCKER_ENV = {
     "HA_PORT": str(E2E_HA_PORT),
 }
 
+# docker compose prefixes named volumes with the project name (derived from the repo
+# directory, "incoming_rain"). We need the full name for `docker volume rm` since that
+# command is not compose-aware and won't apply the prefix automatically.
+_E2E_DOCKER_VOLUME = f"incoming_rain_{_DOCKER_ENV['HA_VOLUME']}"
+
 
 class HAClient:
     """Simple REST client for the HA instance."""
@@ -231,10 +236,20 @@ def ha_container(mock_server):
         "RAINVIEWER_TILE_URL": f"http://host.docker.internal:{MOCK_PORT}",
     }
 
-    # Always start fresh - remove old E2E container and volume for a clean slate
+    # Always start fresh - remove old E2E container and volume for a clean slate.
+    # We deliberately do NOT use `down -v` here: that flag is project-scoped and
+    # would remove every named volume declared in docker-compose.dev.yml - including
+    # ha-dev-config, which belongs to the developer's manual dev instance.
+    # Instead, stop the container without touching volumes, then remove just the
+    # E2E volume by its full docker name (compose prefixes named volumes with the
+    # project name, so the raw HA_VOLUME value won't match what docker sees).
     subprocess.run(
-        ["docker", "compose", "-f", "docker-compose.dev.yml", "down", "-v"],
+        ["docker", "compose", "-f", "docker-compose.dev.yml", "down"],
         capture_output=True, env=env,
+    )
+    subprocess.run(
+        ["docker", "volume", "rm", "-f", _E2E_DOCKER_VOLUME],
+        capture_output=True,
     )
     # Remove stale token
     try:

@@ -1,3 +1,9 @@
+# This compose file is shared between `make dev` (ha-dev-config volume) and
+# the E2E test fixture (ha-e2e-config volume). The two contexts pick their
+# volume via the HA_VOLUME env var. NEVER run `docker compose down -v`
+# against this file - it removes ALL volumes declared below, including the
+# dev volume that isn't in use by the current context.
+
 services:
   homeassistant:
     container_name: ${HA_CONTAINER:-ha-dev}
