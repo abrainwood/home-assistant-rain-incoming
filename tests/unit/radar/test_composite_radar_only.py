@@ -25,6 +25,7 @@ from custom_components.rain_incoming.radar.composite import (
     render_animated_composite,
     render_gif,
 )
+from tests.e2e.image_helpers import PRECIP_COLOURS_RGB
 
 
 def _make_mock_session():
@@ -58,22 +59,6 @@ def _count_non_black_pixels(gif_bytes: bytes) -> int:
     return int((arr.max(axis=2) > 10).sum())
 
 
-# RainViewer Universal Blue scheme 2 precipitation colours (RGB).
-_PRECIP_COLOURS_RGB = np.array([
-    [0, 154, 213],   # light rain (cyan-blue)
-    [0, 130, 202],
-    [0, 105, 191],
-    [22, 170, 0],    # moderate (greens)
-    [31, 190, 0],
-    [255, 240, 0],   # heavy (yellows)
-    [255, 200, 0],
-    [255, 140, 0],   # very heavy (oranges)
-    [255, 80, 0],
-    [255, 0, 0],     # extreme (reds)
-    [200, 0, 0],
-], dtype=np.float32)
-
-
 def _count_precipitation_pixels(gif_bytes: bytes, max_colour_dist: float = 40.0) -> tuple[int, float]:
     """Count pixels matching precipitation colours in the last frame of a GIF.
 
@@ -84,7 +69,7 @@ def _count_precipitation_pixels(gif_bytes: bytes, max_colour_dist: float = 40.0)
         img.seek(img.n_frames - 1)
     arr = np.array(img.convert("RGB")).astype(np.float32)
 
-    diff = arr[:, :, np.newaxis, :] - _PRECIP_COLOURS_RGB[np.newaxis, np.newaxis, :, :]
+    diff = arr[:, :, np.newaxis, :] - np.array(PRECIP_COLOURS_RGB, dtype=np.float32)[np.newaxis, np.newaxis, :, :]
     distances = np.sqrt((diff ** 2).sum(axis=-1))
     best_dist = distances.min(axis=-1)
 
@@ -168,6 +153,37 @@ class TestComposableRenderingPipeline:
             lat=-33.701, lon=151.209, radius_km=128,
         )
         assert len(frames) == 3
+
+    def test_filter_keeps_production_palette_pixels(self):
+        """filter_precipitation_pixels must preserve pixels matching PRECIP_COLOURS.
+
+        Regression test for a hardcoded palette divergence bug: a test helper
+        invented 11 RGB values labelled as the production palette, but only one
+        overlapped with the real palette. This test imports the production palette
+        directly and verifies the renderer filter keeps pixels that match it.
+        """
+        from custom_components.rain_incoming.providers.rainviewer import PRECIP_COLOURS
+        from custom_components.rain_incoming.radar.composite import filter_precipitation_pixels
+
+        # Build a 4x4 RGBA image: row 0 has non-precipitation grey pixels,
+        # row 1 has the first three production palette colours.
+        arr = np.zeros((4, 4, 4), dtype=np.uint8)
+        arr[0, 0] = [128, 128, 128, 255]  # grey - not a precipitation colour, must be filtered OUT
+        for i, (r, g, b, _) in enumerate(PRECIP_COLOURS[:3]):
+            arr[1, i] = [r, g, b, 255]  # production palette colour, must be KEPT
+
+        result = filter_precipitation_pixels(arr)
+
+        # The grey pixel is not a precipitation colour - its alpha must be zeroed
+        assert result[0, 0, 3] == 0, (
+            f"Non-precipitation grey pixel should be filtered out, got alpha={result[0, 0, 3]}"
+        )
+        # Each of the three production palette pixels must survive with non-zero alpha
+        for i, (r, g, b, _) in enumerate(PRECIP_COLOURS[:3]):
+            assert result[1, i, 3] > 0, (
+                f"Production palette pixel PRECIP_COLOURS[{i}] ({r},{g},{b}) "
+                f"should survive filter, got alpha={result[1, i, 3]}"
+            )
 
     @pytest.mark.asyncio
     async def test_dry_radar_over_black_has_zero_precipitation_pixels(self):
