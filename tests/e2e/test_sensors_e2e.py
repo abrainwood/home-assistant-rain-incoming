@@ -13,43 +13,16 @@ layer (tests/integration/test_no_unexpected_warnings.py).
 """
 from __future__ import annotations
 
+import os
 import time
-from io import BytesIO
 
-import numpy as np
-from PIL import Image
+from tests.e2e.image_helpers import images_differ_significantly
 
 
 BINARY_SENSOR = "binary_sensor.rain_incoming_status"
 ARRIVAL_SENSOR = "sensor.rain_incoming_arrival_time"
 INTENSITY_SENSOR = "sensor.rain_incoming_intensity"
 IMAGE_128 = "image.rain_incoming_radar_128km"
-
-
-def _images_differ_significantly(
-    rain_gif_bytes: bytes, no_rain_gif_bytes: bytes, threshold: float = 0.01
-) -> tuple[bool, float]:
-    """Compare two GIFs and return whether they differ significantly.
-
-    Returns (differs, fraction_different).
-    If the rain GIF looks identical to the no-rain GIF, rain is NOT being rendered.
-    """
-    def last_frame_array(gif_bytes):
-        img = Image.open(BytesIO(gif_bytes))
-        if hasattr(img, "n_frames") and img.n_frames > 1:
-            img.seek(img.n_frames - 1)
-        return np.array(img.convert("RGB")).astype(np.float32)
-
-    rain_arr = last_frame_array(rain_gif_bytes)
-    clean_arr = last_frame_array(no_rain_gif_bytes)
-
-    # Per-pixel difference
-    diff = np.abs(rain_arr - clean_arr)
-    # A pixel "differs" if any channel changes by more than 20
-    pixel_differs = diff.max(axis=2) > 20
-    fraction = pixel_differs.sum() / (rain_arr.shape[0] * rain_arr.shape[1])
-
-    return fraction > threshold, float(fraction)
 
 
 class TestIntegratedRainValidation:
@@ -74,13 +47,14 @@ class TestIntegratedRainValidation:
 
         assert no_rain_gif and rain_gif, "Failed to download GIFs"
 
-        differs, fraction = _images_differ_significantly(rain_gif, no_rain_gif)
+        differs, fraction = images_differ_significantly(rain_gif, no_rain_gif)
 
         # Save GIFs for manual inspection
-        with open("/tmp/e2e_rain.gif", "wb") as f:
-            f.write(rain_gif)
-        with open("/tmp/e2e_no_rain.gif", "wb") as f:
-            f.write(no_rain_gif)
+        if os.environ.get("RAIN_TEST_DEBUG_DUMP"):
+            with open("/tmp/e2e_rain.gif", "wb") as f:
+                f.write(rain_gif)
+            with open("/tmp/e2e_no_rain.gif", "wb") as f:
+                f.write(no_rain_gif)
 
         assert differs, (
             f"Rain GIF is identical to no-rain GIF (diff fraction: {fraction:.4f}). "
@@ -104,7 +78,7 @@ class TestIntegratedRainValidation:
 
         # Check image shows rain
         rain_gif = ha_client.get_image(IMAGE_128)
-        differs, fraction = _images_differ_significantly(rain_gif, no_rain_gif)
+        differs, fraction = images_differ_significantly(rain_gif, no_rain_gif)
         assert differs, (
             f"Sensors say rain (state={sensor['state']}, intensity={intensity['state']}) "
             f"but radar image is identical to no-rain baseline (diff: {fraction:.4f})"
@@ -135,7 +109,7 @@ class TestIntegratedRainValidation:
         )
 
         rain_gif = ha_client.get_image(IMAGE_128)
-        differs, fraction = _images_differ_significantly(rain_gif, no_rain_gif)
+        differs, fraction = images_differ_significantly(rain_gif, no_rain_gif)
         assert differs, (
             f"Sensors say approaching rain but image identical to baseline (diff: {fraction:.4f})"
         )
@@ -155,7 +129,7 @@ class TestValidationCanFail:
         clean_gif = ha_client.get_image(IMAGE_128)
 
         # Rain vs clean must differ
-        differs_rain, frac_rain = _images_differ_significantly(rain_gif, clean_gif)
+        differs_rain, frac_rain = images_differ_significantly(rain_gif, clean_gif)
         assert differs_rain, (
             f"rain_everywhere and no_rain produce identical images (diff: {frac_rain:.4f}). "
             f"The image comparison cannot detect rain."
@@ -163,7 +137,7 @@ class TestValidationCanFail:
 
         # Same scenario fetched again should produce similar images
         clean_gif2 = ha_client.get_image(IMAGE_128)
-        differs_clean, frac_clean = _images_differ_significantly(clean_gif, clean_gif2)
+        differs_clean, frac_clean = images_differ_significantly(clean_gif, clean_gif2)
         assert frac_clean < 0.05, (
             f"Two no_rain images differ by {frac_clean:.4f} - too much noise in comparison"
         )

@@ -13,76 +13,16 @@ Data sources:
 """
 from __future__ import annotations
 
-from io import BytesIO
+import os
 
-import numpy as np
-from PIL import Image
-
-
-def _images_differ_significantly(
-    rain_gif_bytes: bytes, no_rain_gif_bytes: bytes, threshold: float = 0.01
-) -> tuple[bool, float]:
-    """Compare two GIFs and return whether they differ significantly."""
-    def last_frame_array(gif_bytes):
-        img = Image.open(BytesIO(gif_bytes))
-        if hasattr(img, "n_frames") and img.n_frames > 1:
-            img.seek(img.n_frames - 1)
-        return np.array(img.convert("RGB")).astype(np.float32)
-
-    rain_arr = last_frame_array(rain_gif_bytes)
-    clean_arr = last_frame_array(no_rain_gif_bytes)
-
-    diff = np.abs(rain_arr - clean_arr)
-    pixel_differs = diff.max(axis=2) > 20
-    fraction = pixel_differs.sum() / (rain_arr.shape[0] * rain_arr.shape[1])
-
-    return fraction > threshold, float(fraction)
-
-
-# RainViewer Universal Blue scheme 2 precipitation colours (RGB).
-# These are the distinctive blues/cyans/yellows/reds that indicate rain.
-_PRECIP_COLOURS_RGB = np.array([
-    [0, 154, 213],   # light rain (cyan-blue)
-    [0, 130, 202],
-    [0, 105, 191],
-    [22, 170, 0],    # moderate (greens)
-    [31, 190, 0],
-    [255, 240, 0],   # heavy (yellows)
-    [255, 200, 0],
-    [255, 140, 0],   # very heavy (oranges)
-    [255, 80, 0],
-    [255, 0, 0],     # extreme (reds)
-    [200, 0, 0],
-], dtype=np.float32)
-
-
-def _gif_has_precipitation_pixels(
-    gif_bytes: bytes, threshold: float = 0.005, max_colour_dist: float = 40.0
-) -> tuple[bool, float]:
-    """Check if a GIF contains visible precipitation-coloured pixels.
-
-    Matches pixels against known RainViewer precipitation colours using
-    L2 distance. Returns (has_precip, fraction_of_pixels).
-    """
-    img = Image.open(BytesIO(gif_bytes))
-    if hasattr(img, "n_frames") and img.n_frames > 1:
-        img.seek(img.n_frames - 1)
-    arr = np.array(img.convert("RGB")).astype(np.float32)
-
-    # Compute L2 distance from each pixel to each precipitation colour
-    diff = arr[:, :, np.newaxis, :] - _PRECIP_COLOURS_RGB[np.newaxis, np.newaxis, :, :]
-    distances = np.sqrt((diff ** 2).sum(axis=-1))  # (H, W, N)
-    best_dist = distances.min(axis=-1)  # (H, W)
-
-    precip_mask = best_dist < max_colour_dist
-    fraction = precip_mask.sum() / (arr.shape[0] * arr.shape[1])
-    return fraction > threshold, float(fraction)
+from tests.e2e.image_helpers import gif_has_precipitation_pixels, images_differ_significantly
 
 
 def _save_gif(data: bytes, path: str) -> None:
     """Save GIF bytes to a file for manual inspection."""
-    with open(path, "wb") as f:
-        f.write(data)
+    if os.environ.get("RAIN_TEST_DEBUG_DUMP"):
+        with open(path, "wb") as f:
+            f.write(data)
 
 
 # --- Canberra ---
@@ -152,7 +92,7 @@ class TestCanberraGoldenV2:
 
         assert baseline_gif and len(baseline_gif) > 100, "Baseline GIF missing"
 
-        differs, fraction = _images_differ_significantly(rain_gif, baseline_gif)
+        differs, fraction = images_differ_significantly(rain_gif, baseline_gif)
         assert differs, (
             f"Sensor says rain but radar image identical to baseline (diff={fraction:.4f}). "
             f"Rain is not visible in the rendered image. "
@@ -221,7 +161,7 @@ class TestCanberraGoldenV2:
         assert dry_gif_2 and len(dry_gif_2) > 100, "Dry GIF 2 missing"
 
         # Two renders of the same dry data must be stable (within noise)
-        differs, fraction = _images_differ_significantly(dry_gif_1, dry_gif_2, threshold=0.01)
+        differs, fraction = images_differ_significantly(dry_gif_1, dry_gif_2, threshold=0.01)
         assert not differs, (
             f"Two dry GIF renders differ by {fraction:.4f} - "
             f"rendering is not deterministic, image comparison unreliable"
@@ -299,7 +239,7 @@ class TestDarwinGoldenV2:
         )
         _save_gif(rain_gif, "/tmp/golden_v2_darwin_rain_vis.gif")
 
-        has_precip, fraction = _gif_has_precipitation_pixels(rain_gif)
+        has_precip, fraction = gif_has_precipitation_pixels(rain_gif)
         assert has_precip, (
             f"Sensor says rain but radar image has no precipitation pixels "
             f"(fraction={fraction:.4f}). Rain is not visible in the rendered image. "

@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.rain_incoming.const import DOMAIN
 from custom_components.rain_incoming.diagnostics import async_get_config_entry_diagnostics
 from custom_components.rain_incoming.radar.detector import Confidence, DetectionResult
+from tests.integration.conftest import setup_integration
 
 MOCK_RESULT_RAIN = DetectionResult(
     rain_incoming=True,
@@ -33,19 +34,9 @@ def mock_entry():
     )
 
 
-async def _setup_integration(hass: HomeAssistant, entry: MockConfigEntry, result: DetectionResult):
-    entry.add_to_hass(hass)
-    with patch(
-        "custom_components.rain_incoming.coordinator.RainDetectorCoordinator._async_update_data",
-        new=AsyncMock(return_value=result),
-    ):
-        await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
-
-
 @pytest.mark.asyncio
 async def test_diagnostics_returns_expected_structure(hass: HomeAssistant, mock_entry):
-    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
+    await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
 
     diag = await async_get_config_entry_diagnostics(hass, mock_entry)
 
@@ -56,7 +47,7 @@ async def test_diagnostics_returns_expected_structure(hass: HomeAssistant, mock_
 
 @pytest.mark.asyncio
 async def test_diagnostics_anonymizes_location(hass: HomeAssistant, mock_entry):
-    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
+    await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
 
     diag = await async_get_config_entry_diagnostics(hass, mock_entry)
 
@@ -68,7 +59,7 @@ async def test_diagnostics_anonymizes_location(hass: HomeAssistant, mock_entry):
 
 @pytest.mark.asyncio
 async def test_diagnostics_includes_coordinator_state(hass: HomeAssistant, mock_entry):
-    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
+    await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
 
     diag = await async_get_config_entry_diagnostics(hass, mock_entry)
 
@@ -83,7 +74,7 @@ async def test_diagnostics_includes_coordinator_state(hass: HomeAssistant, mock_
 
 @pytest.mark.asyncio
 async def test_diagnostics_includes_detection_result(hass: HomeAssistant, mock_entry):
-    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
+    await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
 
     diag = await async_get_config_entry_diagnostics(hass, mock_entry)
 
@@ -98,7 +89,7 @@ async def test_diagnostics_includes_detection_result(hass: HomeAssistant, mock_e
 @pytest.mark.asyncio
 async def test_diagnostics_detection_none_when_no_data(hass: HomeAssistant, mock_entry):
     """When coordinator.data is None, detection should be None."""
-    await _setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
+    await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN)
 
     # Force coordinator data to None to simulate no data state
     coordinator = hass.data[DOMAIN][mock_entry.entry_id]

@@ -10,6 +10,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rain_incoming.radar.detector import Confidence, DetectionResult
 
@@ -20,6 +22,16 @@ _MOCK_RESULT_UNAVAILABLE = DetectionResult(
     frame_count=0,
     max_approaching_intensity=0.0,
 )
+
+
+async def setup_integration(hass: HomeAssistant, entry: MockConfigEntry, result: DetectionResult):
+    entry.add_to_hass(hass)
+    with patch(
+        "custom_components.rain_incoming.coordinator.RainDetectorCoordinator._async_update_data",
+        new=AsyncMock(return_value=result),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
 
 
 @pytest.fixture(autouse=True)
