@@ -1,0 +1,46 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Minimal permissions: this workflow only reads commits to check sign-offs.
+# Explicit scope to satisfy CodeQL Workflow-permissions best practice and
+# avoid the broad default GITHUB_TOKEN.
+permissions:
+  contents: read
+
+jobs:
+  dco-check:
+    name: Verify DCO sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check sign-offs
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          UNSIGNED=""
+          while IFS= read -r line; do
+            sha="${line%% *}"
+            subject="${line#* }"
+            if ! git show -s --format='%B' "$sha" | grep -q '^Signed-off-by:'; then
+              UNSIGNED="$UNSIGNED$sha $subject"$'\n'
+            fi
+          done < <(git log "$BASE..$HEAD" --no-merges --format='%H %s')
+          if [ -n "$UNSIGNED" ]; then
+            echo "::error::Found commits without Signed-off-by line:"
+            echo "$UNSIGNED"
+            echo ""
+            echo "Add sign-off to a commit with:"
+            echo "  git commit -s --amend --no-edit"
+            echo ""
+            echo "For multiple unsigned commits:"
+            echo "  git rebase -i --signoff main"
+            echo ""
+            echo "See CONTRIBUTING.md > Sign your commits (DCO)"
+            exit 1
+          fi
+          echo "All commits signed off."
