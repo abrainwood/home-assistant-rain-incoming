@@ -48,7 +48,8 @@ def _make_entry():
 class TestStaleImageHandling:
     """Image entity returns cached image when coordinator has no fresh data."""
 
-    def test_returns_cached_image_when_coordinator_has_no_new_data(self):
+    @pytest.mark.asyncio
+    async def test_returns_cached_image_when_coordinator_has_no_new_data(self):
         """After a successful render, if coordinator.latest_frame_path becomes
         None (failed fetch), async_image should return the cached image."""
         coord = _make_coordinator(latest_frame_path=None)
@@ -60,20 +61,19 @@ class TestStaleImageHandling:
         entity._cached_frame_path = "/v2/radar/old"
 
         # Coordinator has no new data (failed fetch)
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(entity.async_image())
+        result = await entity.async_image()
         assert result == b"GIF89a_previous_render", (
             "Should return cached image when coordinator has no fresh data"
         )
 
-    def test_returns_placeholder_when_no_cache_and_no_data(self):
+    @pytest.mark.asyncio
+    async def test_returns_placeholder_when_no_cache_and_no_data(self):
         """On first load with no data, return a placeholder image (not None/broken)."""
         coord = _make_coordinator(latest_frame_path=None)
         entry = _make_entry()
         entity = RadarImageEntity(coord, entry, 128)
 
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(entity.async_image())
+        result = await entity.async_image()
         assert result is not None, "Should return placeholder, not None (causes broken image icon)"
         assert len(result) > 100, "Placeholder should be a valid image"
 
