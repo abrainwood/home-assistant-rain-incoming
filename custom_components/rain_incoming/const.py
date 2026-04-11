@@ -3,6 +3,10 @@ DOMAIN = "rain_incoming"
 # Config keys (user-facing)
 CONF_LOCATION_NAME = "location_name"
 CONF_LOOKAHEAD_MINUTES = "lookahead_minutes"
+CONF_MAP_STYLE = "map_style"
+
+# Location name display limit (chars). Longer names overlap the attribution line.
+MAX_LOCATION_NAME_CHARS = 30
 
 # Lookahead bounds
 DEFAULT_LOOKAHEAD_MINUTES = 60
