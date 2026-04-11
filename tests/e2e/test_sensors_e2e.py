@@ -8,7 +8,8 @@ detection -> sensor state updates.
 Note: entity existence and basic sensor-state assertions are covered at the
 integration layer (tests/integration/test_sensors.py). The classes here
 focus on what only E2E can verify: radar image content, sensor/image
-coherence, and system log cleanliness.
+coherence. Warning/error log cleanliness is covered at the integration
+layer (tests/integration/test_no_unexpected_warnings.py).
 """
 from __future__ import annotations
 
@@ -91,13 +92,11 @@ class TestIntegratedRainValidation:
         # Get baseline first
         no_rain_gif = self._download_gif(ha_client, "no_rain")
 
-        # Set rain scenario
+        # Set rain scenario and wait for a fresh coordinator cycle under the new scenario
         ha_client.set_mock_scenario("rain_everywhere")
-        ha_client.update_entity(BINARY_SENSOR)
-        time.sleep(15)
+        sensor = ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
 
         # Check all sensors agree it's raining
-        sensor = ha_client.get_state(BINARY_SENSOR)
         assert sensor["state"] == "on", f"Rain active but sensor says {sensor['state']}"
 
         intensity = ha_client.get_state(INTENSITY_SENSOR)
@@ -114,10 +113,8 @@ class TestIntegratedRainValidation:
     def test_no_rain_sensors_match_image_when_dry(self, ha_client):
         """When no-rain: sensor=off, intensity=none."""
         ha_client.set_mock_scenario("no_rain")
-        ha_client.update_entity(BINARY_SENSOR)
-        time.sleep(15)
+        sensor = ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
 
-        sensor = ha_client.get_state(BINARY_SENSOR)
         assert sensor["state"] == "off", f"No rain but sensor says {sensor['state']}"
 
         intensity = ha_client.get_state(INTENSITY_SENSOR)
@@ -128,10 +125,8 @@ class TestIntegratedRainValidation:
         no_rain_gif = self._download_gif(ha_client, "no_rain")
 
         ha_client.set_mock_scenario("rain_approaching")
-        ha_client.update_entity(BINARY_SENSOR)
-        time.sleep(15)
+        sensor = ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
 
-        sensor = ha_client.get_state(BINARY_SENSOR)
         assert sensor["state"] == "on", f"Approaching rain but sensor says {sensor['state']}"
 
         arrival = ha_client.get_state(ARRIVAL_SENSOR)
@@ -152,13 +147,11 @@ class TestValidationCanFail:
     def test_different_scenarios_produce_different_images(self, ha_client):
         """rain_everywhere and no_rain MUST produce visually different GIFs."""
         ha_client.set_mock_scenario("rain_everywhere")
-        ha_client.update_entity(BINARY_SENSOR)
-        time.sleep(15)
+        ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
         rain_gif = ha_client.get_image(IMAGE_128)
 
         ha_client.set_mock_scenario("no_rain")
-        ha_client.update_entity(BINARY_SENSOR)
-        time.sleep(15)
+        ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
         clean_gif = ha_client.get_image(IMAGE_128)
 
         # Rain vs clean must differ
@@ -173,33 +166,4 @@ class TestValidationCanFail:
         differs_clean, frac_clean = _images_differ_significantly(clean_gif, clean_gif2)
         assert frac_clean < 0.05, (
             f"Two no_rain images differ by {frac_clean:.4f} - too much noise in comparison"
-        )
-
-
-class TestSystemLogs:
-    """Run last - checks HA system logs for unexpected warnings from our integration."""
-
-    def test_no_unexpected_warnings_from_integration(self, ha_client):
-        """Our integration should not produce WARNING or ERROR level logs."""
-        log_text = ha_client.get_text("/api/error_log")
-
-        our_lines = [
-            line for line in log_text.split("\n")
-            if "rain_incoming" in line
-            and ("WARNING" in line or "ERROR" in line)
-        ]
-
-        # Exclude known/expected warnings we can't control
-        expected_patterns = [
-            "custom integration rain_incoming which has not been tested",  # HA standard warning
-        ]
-
-        unexpected = [
-            line for line in our_lines
-            if not any(pattern in line for pattern in expected_patterns)
-        ]
-
-        assert not unexpected, (
-            f"Found {len(unexpected)} unexpected warning(s) from rain_incoming:\n"
-            + "\n".join(unexpected)
         )
