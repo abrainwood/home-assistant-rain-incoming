@@ -185,6 +185,83 @@ class TestComposableRenderingPipeline:
                 f"should survive filter, got alpha={result[1, i, 3]}"
             )
 
+    def test_palette_roundtrip_parser_filter_render(self):
+        """Parser-to-render roundtrip guard against palette drift.
+
+        Uses HARDCODED production palette values rather than reading from
+        PRECIP_COLOURS at runtime, so a silent palette change can't regenerate
+        a matching synthetic tile. The sanity check catches the "palette changed,
+        test not updated" case with a descriptive message.
+        """
+        from custom_components.rain_incoming.providers.rainviewer import (
+            PRECIP_COLOURS,
+            TILE_SIZE,
+            _tile_to_intensity_array,
+        )
+        from custom_components.rain_incoming.radar.composite import (
+            filter_precipitation_pixels,
+            render_gif,
+        )
+        from tests.e2e.image_helpers import gif_has_precipitation_pixels
+
+        # PRECIP_COLOURS[3] - moderate rain. Must be updated in both files together.
+        _TILE_R, _TILE_G, _TILE_B = 81, 197, 232
+        _EXPECTED_INTENSITY = 0.38
+
+        tile_img = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (_TILE_R, _TILE_G, _TILE_B, 255))
+        buf = BytesIO()
+        tile_img.save(buf, format="PNG")
+        tile_bytes = buf.getvalue()
+
+        matching = [
+            (r, g, b, intensity)
+            for r, g, b, intensity in PRECIP_COLOURS
+            if abs(r - _TILE_R) < 2 and abs(g - _TILE_G) < 2 and abs(b - _TILE_B) < 2
+        ]
+        assert matching, (
+            f"Production PRECIP_COLOURS no longer contains the hardcoded tile colour "
+            f"({_TILE_R},{_TILE_G},{_TILE_B}) - palette has diverged. "
+            f"Update the hardcoded constants in this test AND in PRECIP_COLOURS "
+            f"to keep them in sync."
+        )
+
+        intensity_array = _tile_to_intensity_array(tile_bytes)
+
+        assert intensity_array.shape == (TILE_SIZE, TILE_SIZE), (
+            f"Expected intensity array shape ({TILE_SIZE}, {TILE_SIZE}), "
+            f"got {intensity_array.shape}"
+        )
+        assert np.allclose(intensity_array, _EXPECTED_INTENSITY, atol=0.01), (
+            f"Parser should produce intensity ~{_EXPECTED_INTENSITY} for "
+            f"the hardcoded production colour ({_TILE_R},{_TILE_G},{_TILE_B}), "
+            f"got mean={intensity_array.mean():.4f}. "
+            f"Check PRECIP_COLOURS in rainviewer.py still contains this entry."
+        )
+
+        rgba_array = np.array(Image.open(BytesIO(tile_bytes)), dtype=np.uint8)
+        filtered = filter_precipitation_pixels(rgba_array)
+
+        assert (filtered[:, :, 3] > 0).all(), (
+            f"filter_precipitation_pixels should preserve every pixel since the "
+            f"tile is filled with production colour ({_TILE_R},{_TILE_G},{_TILE_B}). "
+            f"Check _PRECIP_RGB in composite.py is derived from PRECIP_COLOURS."
+        )
+
+        filtered_img = Image.fromarray(filtered, mode="RGBA")
+        gif_bytes = render_gif([filtered_img])
+
+        has_precip, fraction = gif_has_precipitation_pixels(gif_bytes)
+        assert has_precip, (
+            f"Rendered GIF from production colour ({_TILE_R},{_TILE_G},{_TILE_B}) "
+            f"should be detected as precipitation by gif_has_precipitation_pixels, "
+            f"got has_precip={has_precip}, fraction={fraction:.4f}"
+        )
+        assert fraction > 0.9, (
+            f"GIF filled entirely with a production palette colour should have "
+            f"~100% precipitation pixels (>0.9 after GIF quantisation fringe), "
+            f"got fraction={fraction:.4f}"
+        )
+
     @pytest.mark.asyncio
     async def test_dry_radar_over_black_has_zero_precipitation_pixels(self):
         """Dry radar (transparent tiles) composited over black must have
