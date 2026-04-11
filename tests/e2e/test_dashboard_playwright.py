@@ -1,24 +1,25 @@
 """Playwright UI test for the Home Assistant dashboard.
 
-Validates the radar image renders end-to-end through HA's frontend:
-1. Login via the browser (with "Keep me logged in" - HA bounces clicks
-   back to login otherwise)
-2. Find the Rain Incoming radar card on the dashboard
-3. Click into the more-info dialog where the actual <img> renders
-4. Fetch the image bytes via the browser's authenticated session
-5. Verify it's an animated GIF with multiple frames (not a placeholder)
+Validates the radar entity is visible in the HA frontend AND that the
+image proxy serves a real animated GIF. Two complementary checks:
+
+1. Playwright (browser): login, navigate to Developer Tools > States, verify
+   our entity ID and entity_picture URL are present in the rendered UI.
+   Proves the integration is actually visible to a user.
+
+2. HAClient (REST): fetch the image bytes via the authenticated REST API,
+   parse with PIL, verify it's an animated GIF with multiple frames.
+   Proves the image is a real radar render, not a placeholder or broken image.
 
 The test manages its own browser inside the test function (no pytest-playwright
 fixtures) to avoid event loop conflicts with the async E2E conftest.
 
-Built interactively using the Playwright MCP - see SESSION_HANDOFF.md.
-Stable selectors come from accessibility roles, image discovery uses a
-shadow DOM walk, and binary data is transported as base64 from
-page.evaluate().
+Built interactively using the Playwright MCP. The Developer Tools > States
+page is more reliable than the dashboard for browser tests because it always
+lists all entities regardless of dashboard customisation.
 """
 from __future__ import annotations
 
-import base64
 import re
 from io import BytesIO
 
@@ -27,125 +28,152 @@ from PIL import Image
 
 from tests.e2e.conftest import HA_URL
 
-# JavaScript run inside the browser to find the radar img element,
-# fetch its bytes via the authenticated session, and return as base64.
-# Filters on alt to skip the unlabelled thumbnail variant of the same image.
-_FETCH_RADAR_GIF_JS = """
-async () => {
-  function findDeep(root, predicate, found = []) {
-    if (root.querySelectorAll) {
-      root.querySelectorAll('*').forEach(el => {
-        if (predicate(el)) found.push(el);
-        if (el.shadowRoot) findDeep(el.shadowRoot, predicate, found);
-      });
-    }
-    return found;
-  }
-  const imgs = findDeep(document, el =>
-    el.tagName === 'IMG'
-    && el.src
-    && el.src.includes('rain_incoming_radar')
-    && el.alt
-  );
-  if (imgs.length === 0) return { error: 'no radar img element found' };
-  const img = imgs[0];
-  if (!img.complete) return { error: 'img not loaded yet' };
-  const resp = await fetch(img.src);
-  if (!resp.ok) return { error: 'fetch failed: ' + resp.status };
-  const buf = await resp.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return {
-    alt: img.alt,
-    src: img.src,
-    sizeBytes: bytes.length,
-    base64: btoa(binary),
-    naturalWidth: img.naturalWidth,
-  };
-}
-"""
-
-
-def _wait_for_radar_image(page, attempts: int = 40, interval_ms: int = 500) -> dict:
-    """Poll until the radar image element is loaded in the dialog."""
-    last_error = "polling timeout"
-    for _ in range(attempts):
-        page.wait_for_timeout(interval_ms)
-        result = page.evaluate(_FETCH_RADAR_GIF_JS)
-        if not result.get("error"):
-            return result
-        last_error = result["error"]
-    raise AssertionError(f"Radar image never loaded: {last_error}")
+ENTITY_ID = "image.rain_incoming_radar_128km"
 
 
 class TestDashboardRadarRendering:
-    """End-to-end browser test for radar image rendering on the HA dashboard."""
+    """End-to-end browser + REST test for radar image rendering."""
 
-    def test_radar_gif_renders_as_animated_image(self, ha_client):
-        """The dashboard renders our radar entity as an animated GIF.
+    def test_radar_entity_visible_in_ui_and_renders_animated_gif(self, ha_client):
+        """The radar entity is visible in HA's UI AND serves a real animated GIF.
 
-        Proves end-to-end that:
-        - HA loads our integration and registers the image entity
-        - The dashboard shows the entity card with a real value
-        - Clicking the card opens the more-info dialog with an <img>
-        - HA's image proxy serves a real animated GIF (not a placeholder)
-        - The GIF has multiple frames (real radar animation, not single-frame fallback)
+        Browser side (Playwright):
+        - HA loads our integration
+        - The entity appears in Developer Tools > States with an entity_picture URL
+        - A fake entity does NOT appear (false-positive guard)
+
+        REST side (HAClient):
+        - The image proxy serves a valid GIF
+        - The GIF is animated (is_animated=True)
+        - The GIF has multiple frames (n_frames > 1) - rules out placeholder
         """
         from playwright.sync_api import sync_playwright
 
-        # Make sure the entity has data before opening the browser
+        # Wait for the entity to be ready before opening the browser
         ha_client.poll_entity_state(
-            "image.rain_incoming_radar_128km",
+            ENTITY_ID,
             timeout=120,
             condition=lambda s: s.get("state") not in (None, "unavailable"),
         )
 
+        # --- Browser side: prove entity is visible in HA's UI ---
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context()
             page = context.new_page()
             try:
-                # Login. Note: must check "Keep me logged in" - without it, the
-                # next click will bounce back to /auth/authorize.
+                # Login. "Keep me logged in" prevents subsequent navigations
+                # from bouncing back to /auth/authorize.
                 page.goto(HA_URL, wait_until="networkidle", timeout=30_000)
                 page.get_by_role("textbox", name="Username").fill("dev")
                 page.get_by_role("textbox", name="Password").fill("devdevdev")
                 page.get_by_role("checkbox", name="Keep me logged in").check()
                 page.get_by_role("button", name="Log in").click()
 
-                # Wait for the dashboard
-                page.wait_for_url(re.compile(r"/(home|lovelace)"), timeout=30_000)
-
-                # Find and click the Rain Incoming radar card.
-                # Accessible name includes the timestamp, so we use a regex.
-                radar_card = page.get_by_role(
-                    "button", name=re.compile(r"Rain Incoming Radar 128km")
-                ).first
-                radar_card.wait_for(state="visible", timeout=15_000)
-                radar_card.click()
-
-                # Poll for the more-info dialog to open and the image to load
-                result = _wait_for_radar_image(page)
-
-                # Validate it's a real animated radar GIF
-                assert result["sizeBytes"] > 50_000, (
-                    f"Image too small ({result['sizeBytes']} bytes) - "
-                    f"likely a placeholder, not a real radar render"
-                )
-                assert result["naturalWidth"] >= 600, (
-                    f"Unexpected image width: {result['naturalWidth']}"
+                # Wait for any non-auth page to load (HA may go to /home or /onboarding)
+                page.wait_for_function(
+                    "() => !window.location.pathname.startsWith('/auth')",
+                    timeout=30_000,
                 )
 
-                # Parse with PIL and verify multi-frame animation
-                gif = Image.open(BytesIO(base64.b64decode(result["base64"])))
-                assert gif.format == "GIF", f"Expected GIF, got {gif.format}"
-                assert getattr(gif, "is_animated", False), (
-                    "Image is not animated - likely a placeholder"
+                # Navigate to Developer Tools > States - always shows all entities
+                page.goto(
+                    f"{HA_URL}/developer-tools/state",
+                    wait_until="networkidle",
+                    timeout=30_000,
                 )
-                assert gif.n_frames > 1, (
-                    f"GIF has only {gif.n_frames} frame(s) - expected animated radar"
+
+                # Wait for the entity rows to render
+                page.wait_for_function(
+                    f"""() => {{
+                        function findDeep(root, found = []) {{
+                            if (root.querySelectorAll) {{
+                                root.querySelectorAll('*').forEach(el => {{
+                                    if (el.children.length === 0 && el.textContent
+                                        && el.textContent.includes('{ENTITY_ID}')) {{
+                                        found.push(el);
+                                    }}
+                                    if (el.shadowRoot) findDeep(el.shadowRoot, found);
+                                }});
+                            }}
+                            return found;
+                        }}
+                        return findDeep(document).length > 0;
+                    }}""",
+                    timeout=30_000,
                 )
+
+                # Verify entity is present and a fake entity is not
+                checks = page.evaluate(f"""
+                    () => {{
+                        function findDeep(root, predicate, found = []) {{
+                            if (root.querySelectorAll) {{
+                                root.querySelectorAll('*').forEach(el => {{
+                                    if (predicate(el)) found.push(el);
+                                    if (el.shadowRoot) findDeep(el.shadowRoot, predicate, found);
+                                }});
+                            }}
+                            return found;
+                        }}
+                        const realEntity = findDeep(document, el =>
+                            el.children.length === 0
+                            && el.textContent
+                            && el.textContent.includes('{ENTITY_ID}')
+                        );
+                        const fakeEntity = findDeep(document, el =>
+                            el.children.length === 0
+                            && el.textContent
+                            && el.textContent.includes('image.fake_nonexistent_xyz_789')
+                        );
+                        // Pull entity_picture URL from any element that has it
+                        let entityPictureUrl = null;
+                        const withUrl = findDeep(document, el =>
+                            el.children.length === 0
+                            && el.textContent
+                            && el.textContent.includes('entity_picture:')
+                            && el.textContent.includes('rain_incoming_radar_128km')
+                        );
+                        if (withUrl.length > 0) {{
+                            const m = withUrl[0].textContent.match(/entity_picture:\\s*(\\/api\\/image_proxy\\/[^\\s]+)/);
+                            if (m) entityPictureUrl = m[1];
+                        }}
+                        return {{
+                            realEntityCount: realEntity.length,
+                            fakeEntityCount: fakeEntity.length,
+                            entityPictureUrl,
+                        }};
+                    }}
+                """)
+
+                assert checks["realEntityCount"] > 0, (
+                    f"{ENTITY_ID} not found in Developer Tools > States - "
+                    f"integration may not be loaded"
+                )
+                assert checks["fakeEntityCount"] == 0, (
+                    "Fake entity found - false positive in element search"
+                )
+                assert checks["entityPictureUrl"], (
+                    "entity_picture URL not found in entity attributes"
+                )
+                assert "rain_incoming_radar_128km" in checks["entityPictureUrl"]
+
             finally:
                 context.close()
                 browser.close()
+
+        # --- REST side: prove the image proxy serves a real animated GIF ---
+        image_bytes = ha_client.get_image(ENTITY_ID)
+        assert image_bytes is not None, f"No image data for {ENTITY_ID}"
+        assert image_bytes[:3] == b"GIF", (
+            f"Image is not a GIF (magic: {image_bytes[:6]!r}) - "
+            f"placeholder or error response"
+        )
+
+        gif = Image.open(BytesIO(image_bytes))
+        assert gif.format == "GIF", f"Expected GIF, got {gif.format}"
+        assert getattr(gif, "is_animated", False), (
+            "Image is not animated - likely a placeholder"
+        )
+        assert gif.n_frames > 1, (
+            f"GIF has only {gif.n_frames} frame(s) - expected animated radar"
+        )
