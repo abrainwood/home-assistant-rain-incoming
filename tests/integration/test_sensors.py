@@ -97,6 +97,8 @@ async def test_arrival_sensor_has_timestamp_when_rain_coming(hass: HomeAssistant
     assert state is not None
     assert state.state != "unknown"
     assert state.state != "unavailable"
+    from datetime import datetime
+    datetime.fromisoformat(state.state)  # must be a parseable ISO 8601 timestamp
 
 
 @pytest.mark.asyncio
