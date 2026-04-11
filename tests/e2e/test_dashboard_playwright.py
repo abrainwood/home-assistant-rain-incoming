@@ -1,32 +1,34 @@
 """Playwright UI test for the Home Assistant dashboard.
 
-Two complementary E2E tests:
+One E2E test proves the full chain end-to-end:
 
-1. test_radar_entity_visible_in_dashboard_ui (Playwright/browser):
-   Login, navigate to Developer Tools > States, verify our entity ID and
-   entity_picture URL are present in the rendered UI, and verify a fake
-   entity does NOT appear (false-positive guard). Proves the integration
-   is actually visible to a user.
+    test_dashboard_links_to_real_animated_radar_gif
 
-2. test_radar_image_proxy_serves_animated_gif (REST/PIL):
-   Fetch image bytes via the authenticated REST API, parse with PIL, verify
-   it's an animated GIF with multiple frames. Proves the image is a real
-   radar render, not a placeholder or broken image.
+The test:
+  1. Opens a browser, logs in, navigates to Developer Tools > States.
+  2. Walks the shadow DOM to find our entity and extract the entity_picture URL
+     that the UI actually exposes.
+  3. Asserts the URL looks right (starts with /api/image_proxy/ and contains
+     the entity ID).
+  4. Fetches **that exact URL** from inside the browser (same session/cookies),
+     base64-encodes the response, and returns it to Python.
+  5. Decodes and validates with PIL: GIF magic bytes, animated, multi-frame.
 
-Each test is self-contained - both poll for entity readiness independently.
-The Docker container is the expensive part; a second Playwright session or
-REST call is cheap.
+Why one test: the image fetch URL comes from the browser extraction - you can't
+split the two halves without either passing state between tests (bad coupling)
+or re-doing the browser extraction in each test (wasteful). One test, one story:
+"the dashboard links to a real animated radar GIF".
 
-The browser test manages its own browser inside the test function (no
-pytest-playwright fixtures) to avoid event loop conflicts with the async
-E2E conftest.
+The test manages its own browser inside the test function (no pytest-playwright
+fixtures) to avoid event loop conflicts with the async E2E conftest.
 
-Built interactively using the Playwright MCP. The Developer Tools > States
-page is more reliable than the dashboard for browser tests because it always
-lists all entities regardless of dashboard customisation.
+Built interactively using the Playwright MCP. The Developer Tools > States page
+is more reliable than the dashboard for browser tests because it always lists
+all entities regardless of dashboard customisation.
 """
 from __future__ import annotations
 
+import base64
 from io import BytesIO
 
 import pytest
@@ -36,21 +38,45 @@ from tests.e2e.conftest import HA_URL
 
 ENTITY_ID = "image.rain_incoming_radar_128km"
 
+# JS that fetches a URL using the browser's own authenticated session,
+# base64-encodes the response body, and returns it. This exercises exactly
+# the same code path a real browser user would trigger.
+_FETCH_AS_BASE64_JS = """
+async (url) => {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error('fetch failed: ' + response.status + ' ' + url);
+    }
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+"""
 
-def test_radar_entity_visible_in_dashboard_ui(ha_client):
-    """The radar entity is visible in HA's Developer Tools > States UI.
 
-    Browser-side checks (Playwright):
-    - HA loads our integration
-    - The entity appears in Developer Tools > States with an entity_picture URL
-    - A fake entity does NOT appear (false-positive guard)
+def test_dashboard_links_to_real_animated_radar_gif(ha_client):
+    """UI renders entity -> with working entity_picture URL -> URL serves real animated GIF.
 
-    These four assertions share the same DOM walk and form one coherent check:
-    "our entity is visible in the HA UI with a working picture URL".
+    Steps:
+    1. Poll entity readiness via REST (so we don't open a browser to an empty state page).
+    2. Browser: login, navigate to Developer Tools > States.
+    3. Browser: shadow-DOM walk to find the entity and extract the entity_picture URL.
+    4. Assert URL shape: must start with /api/image_proxy/ and contain the entity ID.
+    5. Browser: fetch that exact URL via the authenticated browser session.
+    6. Python: decode base64, parse with PIL, assert GIF magic + animated + multi-frame.
+
+    False-positive guards:
+    - Assert realEntityCount > 0 (entity IS present).
+    - Assert fakeEntityCount == 0 (our element search doesn't match random text).
+    - Assert n_frames > 1 (rules out a single-frame placeholder).
     """
     from playwright.sync_api import sync_playwright
 
-    # Wait for the entity to be ready before opening the browser
+    # Wait for entity to be ready before opening the browser
     ha_client.poll_entity_state(
         ENTITY_ID,
         timeout=120,
@@ -62,8 +88,9 @@ def test_radar_entity_visible_in_dashboard_ui(ha_client):
         context = browser.new_context()
         page = context.new_page()
         try:
-            # Login. "Keep me logged in" prevents subsequent navigations
-            # from bouncing back to /auth/authorize.
+            # --- Step 1: Login ---
+            # "Keep me logged in" prevents subsequent navigations from
+            # bouncing back to /auth/authorize.
             page.goto(HA_URL, wait_until="networkidle", timeout=30_000)
             page.get_by_role("textbox", name="Username").fill("dev")
             page.get_by_role("textbox", name="Password").fill("devdevdev")
@@ -76,14 +103,14 @@ def test_radar_entity_visible_in_dashboard_ui(ha_client):
                 timeout=30_000,
             )
 
-            # Navigate to Developer Tools > States - always shows all entities
+            # --- Step 2: Navigate to Developer Tools > States ---
             page.goto(
                 f"{HA_URL}/developer-tools/state",
                 wait_until="networkidle",
                 timeout=30_000,
             )
 
-            # Wait for the entity rows to render
+            # Wait for entity rows to render in the shadow DOM
             page.wait_for_function(
                 f"""() => {{
                     function findDeep(root, found = []) {{
@@ -103,7 +130,7 @@ def test_radar_entity_visible_in_dashboard_ui(ha_client):
                 timeout=30_000,
             )
 
-            # Verify entity is present and a fake entity is not
+            # --- Step 3: Extract entity_picture URL from the shadow DOM ---
             checks = page.evaluate(f"""
                 () => {{
                     function findDeep(root, predicate, found = []) {{
@@ -125,7 +152,7 @@ def test_radar_entity_visible_in_dashboard_ui(ha_client):
                         && el.textContent
                         && el.textContent.includes('image.fake_nonexistent_xyz_789')
                     );
-                    // Pull entity_picture URL from any element that has it
+                    // Pull entity_picture URL from any element that contains it
                     let entityPictureUrl = null;
                     const withUrl = findDeep(document, el =>
                         el.children.length === 0
@@ -134,7 +161,9 @@ def test_radar_entity_visible_in_dashboard_ui(ha_client):
                         && el.textContent.includes('rain_incoming_radar_128km')
                     );
                     if (withUrl.length > 0) {{
-                        const m = withUrl[0].textContent.match(/entity_picture:\\s*(\\/api\\/image_proxy\\/[^\\s]+)/);
+                        const m = withUrl[0].textContent.match(
+                            /entity_picture:\\s*(\\/api\\/image_proxy\\/[^\\s]+)/
+                        );
                         if (m) entityPictureUrl = m[1];
                     }}
                     return {{
@@ -147,7 +176,7 @@ def test_radar_entity_visible_in_dashboard_ui(ha_client):
 
             assert checks["realEntityCount"] > 0, (
                 f"{ENTITY_ID} not found in Developer Tools > States - "
-                f"integration may not be loaded"
+                "integration may not be loaded"
             )
             assert checks["fakeEntityCount"] == 0, (
                 "Fake entity found - false positive in element search"
@@ -155,46 +184,41 @@ def test_radar_entity_visible_in_dashboard_ui(ha_client):
             assert checks["entityPictureUrl"], (
                 "entity_picture URL not found in entity attributes"
             )
-            assert "rain_incoming_radar_128km" in checks["entityPictureUrl"]
+
+            entity_picture_url: str = checks["entityPictureUrl"]
+
+            # --- Step 4: Assert URL shape ---
+            assert entity_picture_url.startswith("/api/image_proxy/"), (
+                f"entity_picture URL has unexpected prefix: {entity_picture_url!r}"
+            )
+            assert "rain_incoming_radar_128km" in entity_picture_url, (
+                f"entity_picture URL doesn't contain entity ID: {entity_picture_url!r}"
+            )
+
+            # --- Step 5: Fetch that exact URL via the browser's authenticated session ---
+            # Using page.evaluate() means we use the same cookies/auth as a real browser,
+            # not a separate HTTP client. This proves the link the UI shows actually works.
+            full_url = f"{HA_URL}{entity_picture_url}"
+            image_b64: str = page.evaluate(_FETCH_AS_BASE64_JS, full_url)
 
         finally:
             context.close()
             browser.close()
 
+    # --- Step 6: Validate the image bytes ---
+    image_bytes = base64.b64decode(image_b64)
 
-def test_radar_image_proxy_serves_animated_gif(ha_client):
-    """The image proxy serves a real animated GIF for our radar entity.
-
-    REST-side checks (HAClient + PIL):
-    - Image bytes are returned (not None)
-    - GIF magic bytes are present
-    - PIL parses it as GIF format
-    - The GIF is animated (is_animated=True)
-    - The GIF has multiple frames (n_frames > 1) - rules out a placeholder
-
-    These assertions form a ladder: bytes first, then parse, then frame count.
-    Splitting them would require duplicating the get_image + PIL parse in each
-    test, so they stay together as one compound assertion.
-    """
-    # Wait for the entity to be ready before fetching the image
-    ha_client.poll_entity_state(
-        ENTITY_ID,
-        timeout=120,
-        condition=lambda s: s.get("state") not in (None, "unavailable"),
-    )
-
-    image_bytes = ha_client.get_image(ENTITY_ID)
-    assert image_bytes is not None, f"No image data for {ENTITY_ID}"
     assert image_bytes[:3] == b"GIF", (
-        f"Image is not a GIF (magic: {image_bytes[:6]!r}) - "
-        f"placeholder or error response"
+        f"Image at {entity_picture_url!r} is not a GIF "
+        f"(magic: {image_bytes[:6]!r}) - placeholder or error response"
     )
 
     gif = Image.open(BytesIO(image_bytes))
     assert gif.format == "GIF", f"Expected GIF, got {gif.format}"
     assert getattr(gif, "is_animated", False), (
-        "Image is not animated - likely a placeholder"
+        f"Image at {entity_picture_url!r} is not animated - likely a placeholder"
     )
     assert gif.n_frames > 1, (
-        f"GIF has only {gif.n_frames} frame(s) - expected animated radar"
+        f"GIF at {entity_picture_url!r} has only {gif.n_frames} frame(s) - "
+        "expected animated radar"
     )
