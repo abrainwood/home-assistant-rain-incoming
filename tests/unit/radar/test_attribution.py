@@ -3,7 +3,8 @@
 TDD: written FIRST (red), then implementation makes them green.
 
 Requirements:
-- Attribution text "{style.attribution} | RainViewer" appears on each frame
+- Attribution text "rainviewer.com | {style.attribution}" appears on each frame
+- RainViewer attribution comes FIRST per their API terms (rainviewer.com/api.html)
 - Positioned along the bottom of the image (full width available - frame label is now at top)
 - Single-line for all styles including ESRI's 85-char attribution at the chosen font size
 """
@@ -80,13 +81,14 @@ def test_draw_attribution_includes_rainviewer():
 # ---------------------------------------------------------------------------
 
 def test_draw_attribution_esri_fits_single_line():
-    """ESRI's 85-char attribution must fit within img.width - 2*padding at the chosen font size.
+    """ESRI's full attribution with RainViewer prefix must fit within img.width - 2*padding.
 
     This is a regression guard: if someone bumps the font size up beyond what fits,
-    this test will catch it. The implementation uses 14pt which gives 546px for ESRI
-    on a 640px image (624px available after padding).
+    this test will catch it. The implementation uses 14pt. RainViewer is now FIRST,
+    so the string is "rainviewer.com | {esri_attribution}" (569px in a 624px available width).
     """
     from custom_components.rain_incoming.radar.map_styles import MapStyle, get_style
+    from custom_components.rain_incoming.const import RAINVIEWER_ATTRIBUTION
 
     padding = 8
     img_width = 640
@@ -99,7 +101,7 @@ def test_draw_attribution_esri_fits_single_line():
         font = ImageFont.load_default()
 
     esri_def = get_style(MapStyle.ESRI_IMAGERY)
-    text = f"{esri_def.attribution} | RainViewer"
+    text = f"{RAINVIEWER_ATTRIBUTION} | {esri_def.attribution}"
     bbox = font.getbbox(text)
     text_w = bbox[2] - bbox[0]
 
@@ -295,4 +297,52 @@ def test_composite_single_frame_has_label_at_top_and_attribution_at_bottom():
     assert bottom_text > 0, (
         f"Expected attribution pixels in the bottom {strip_h}px strip, "
         f"but found {bottom_text} text pixels. Attribution may not be at the bottom."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ordering: RainViewer attribution must come BEFORE the map provider attribution
+# ---------------------------------------------------------------------------
+
+def test_attribution_rainviewer_appears_first():
+    """RainViewer attribution must come before the map provider attribution.
+
+    Per RainViewer's API terms (rainviewer.com/api.html), we must credit them.
+    User direction: 'let's make RainViewer come first in the attributions'.
+
+    Mocks ImageDraw.text to capture the full attribution string and verifies
+    that 'rainviewer.com' appears before 'OpenStreetMap' in the rendered text.
+    """
+    from unittest.mock import patch
+    from PIL import ImageDraw
+
+    img = Image.new("RGBA", (640, 640), (0, 0, 0, 0))
+    style_def = get_style(MapStyle.OSM_STANDARD)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_attribution(img, style_def)
+
+    # Find the call that drew the attribution - it's the one containing both brand names
+    text_calls = [
+        c for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+    rainviewer_call = next(
+        (c for c in text_calls if "rainviewer" in c.args[1].lower()),
+        None,
+    )
+    assert rainviewer_call is not None, (
+        f"No draw.text call contained 'rainviewer'. Calls: {[c.args[1] for c in text_calls]}"
+    )
+    full_text = rainviewer_call.args[1]
+
+    rainviewer_pos = full_text.lower().find("rainviewer")
+    osm_pos = full_text.find("OpenStreetMap")
+
+    assert rainviewer_pos != -1, f"'rainviewer' not found in attribution text: {full_text!r}"
+    assert osm_pos != -1, f"'OpenStreetMap' not found in attribution text: {full_text!r}"
+    assert rainviewer_pos < osm_pos, (
+        f"RainViewer must appear before OpenStreetMap in the attribution string, "
+        f"but rainviewer_pos={rainviewer_pos} >= osm_pos={osm_pos}. "
+        f"Full text: {full_text!r}"
     )

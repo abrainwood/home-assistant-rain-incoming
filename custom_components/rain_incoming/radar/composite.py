@@ -10,7 +10,7 @@ import aiohttp
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from ..const import RAINVIEWER_ZOOM
+from ..const import RAINVIEWER_ATTRIBUTION, RAINVIEWER_ZOOM
 from ..http_retry import rate_limited_fetch
 from ..providers.rainviewer import (
     PRECIP_COLOURS,
@@ -296,12 +296,13 @@ def _draw_frame_label(
 
 
 def _draw_attribution(img: Image.Image, style_def: MapStyleDefinition) -> None:
-    """Draw the map provider + RainViewer attribution along the full bottom of the composite.
+    """Draw the RainViewer + map provider attribution along the full bottom of the composite.
 
+    RainViewer comes first per their API terms (rainviewer.com/api.html).
     Frame label is now at top-left, so the entire bottom edge is available.
-    14pt fits ESRI's 85-char attribution (546px) comfortably in a 640px image (624px available).
+    14pt fits the full string (569px for ESRI) comfortably in a 640px image (624px available).
     """
-    text = f"{style_def.attribution} | RainViewer"
+    text = f"{RAINVIEWER_ATTRIBUTION} | {style_def.attribution}"
     draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.load_default(size=14)
