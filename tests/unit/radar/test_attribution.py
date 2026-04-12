@@ -118,13 +118,15 @@ def test_draw_attribution_frame_label_position_is_top():
     After calling _draw_frame_label, the top strip should have non-black pixels
     and the very bottom strip should remain black (no text overlap between label and attribution).
     This verifies the layout separation: label at top, attribution at bottom.
+
+    Now also accepts frame_index and frame_count parameters for the frame counter.
     """
     from custom_components.rain_incoming.radar.composite import _draw_frame_label
     from datetime import datetime, timezone
 
     img = _blank_image()
     ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
-    _draw_frame_label(img, ts, "UTC", 128, "Sydney")
+    _draw_frame_label(img, ts, "UTC", 128, "Sydney", frame_index=3, frame_count=13)
 
     arr = np.array(img)[:, :, :3]
     h = arr.shape[0]
@@ -145,6 +147,171 @@ def test_draw_attribution_frame_label_position_is_top():
         f"Expected no frame label pixels in the bottom strip, "
         f"but found {bottom_nonblack} non-black pixels. Label may still be at the bottom."
     )
+
+
+# ---------------------------------------------------------------------------
+# New header layout: location (left), date/time (centre), range+counter (right)
+# ---------------------------------------------------------------------------
+
+def test_draw_frame_label_renders_frame_counter():
+    """_draw_frame_label must render the frame counter text (e.g. '3/13').
+
+    Mocks ImageDraw.text to capture all text rendered, then asserts that
+    at least one call includes a string matching the 'N/M' frame counter pattern.
+    """
+    from unittest.mock import patch
+    from datetime import datetime, timezone
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, ts, "UTC", 128, "Sydney", frame_index=3, frame_count=13)
+
+    all_text_strings = [
+        c.args[1] for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+
+    counter_calls = [s for s in all_text_strings if "3/13" in s]
+    assert counter_calls, (
+        f"Expected at least one draw.text call containing '3/13' for the frame counter, "
+        f"but none found. All rendered strings: {all_text_strings}"
+    )
+
+
+def test_draw_frame_label_location_drawn_at_left():
+    """Location name must be drawn near the left edge (x close to padding).
+
+    Verifies that 'Sydney' appears in a draw.text call with an x-coordinate
+    close to the padding value (8px), i.e. anchored at the left.
+    """
+    from unittest.mock import patch
+    from datetime import datetime, timezone
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, ts, "UTC", 128, "Sydney", frame_index=1, frame_count=5)
+
+    # Find the call that draws "Sydney"
+    sydney_calls = [
+        c for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str) and "Sydney" in c.args[1]
+    ]
+    assert sydney_calls, (
+        f"Expected a draw.text call containing 'Sydney', but none found. "
+        f"All calls: {[c.args for c in mock_text.call_args_list]}"
+    )
+
+    # The x coordinate of the position tuple should be close to left padding (8)
+    # We accept any call where x < img.width // 3 (clearly on the left third)
+    left_threshold = img.width // 3  # 213px for a 640px image
+    for call in sydney_calls:
+        pos = call.args[0]
+        x = pos[0]
+        if x < left_threshold:
+            break  # found at least one left-anchored call
+    else:
+        xs = [c.args[0][0] for c in sydney_calls]
+        assert False, (
+            f"'Sydney' was drawn but not near the left edge. "
+            f"x-coordinates: {xs}, left threshold: {left_threshold}px (img width: {img.width})"
+        )
+
+
+def test_draw_frame_label_datetime_drawn_at_centre():
+    """Date/time must be drawn near the horizontal centre of the image.
+
+    Verifies a draw.text call with the date string has an x-coordinate
+    near img.width // 2, using anchor='mt' (middle-top).
+    """
+    from unittest.mock import patch
+    from datetime import datetime, timezone
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()  # 640px wide
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, ts, "UTC", 128, "Sydney", frame_index=2, frame_count=10)
+
+    # Date or time substring to find the centre text call
+    # The date is "10/04/26" and time is "20:40 UTC"
+    centre_calls = [
+        c for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+        and ("10/04/26" in c.args[1] or "20:40" in c.args[1])
+    ]
+    assert centre_calls, (
+        f"Expected a draw.text call containing date/time ('10/04/26' or '20:40'), "
+        f"but none found. All strings: {[c.args[1] for c in mock_text.call_args_list if len(c.args) >= 2 and isinstance(c.args[1], str)]}"
+    )
+
+    # x should be close to the centre (320px for 640px image)
+    # Accept anchor='mt' style: x == img.width // 2 (within 20px tolerance)
+    centre_x = img.width // 2  # 320
+    tolerance = 20
+    for call in centre_calls:
+        pos = call.args[0]
+        x = pos[0]
+        if abs(x - centre_x) <= tolerance:
+            break
+    else:
+        xs = [c.args[0][0] for c in centre_calls]
+        assert False, (
+            f"Date/time text was drawn but not near the centre. "
+            f"x-coordinates: {xs}, expected ~{centre_x}px (±{tolerance}px)"
+        )
+
+
+def test_draw_frame_label_range_drawn_at_right():
+    """Range text (e.g. '128km') must be drawn near the right edge of the image.
+
+    Verifies a draw.text call containing the range string has an x-coordinate
+    near img.width - padding, indicating right-anchored placement.
+    """
+    from unittest.mock import patch
+    from datetime import datetime, timezone
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()  # 640px wide
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, ts, "UTC", 128, "Sydney", frame_index=1, frame_count=5)
+
+    # Find calls containing the range text
+    range_calls = [
+        c for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str) and "128km" in c.args[1]
+    ]
+    assert range_calls, (
+        f"Expected a draw.text call containing '128km', but none found. "
+        f"All strings: {[c.args[1] for c in mock_text.call_args_list if len(c.args) >= 2 and isinstance(c.args[1], str)]}"
+    )
+
+    # x should be near the right edge. With anchor='rt', x == img.width - padding.
+    # Accept any x >= img.width * 2 // 3 (right third of image)
+    right_threshold = img.width * 2 // 3  # ~427px for 640px image
+    for call in range_calls:
+        pos = call.args[0]
+        x = pos[0]
+        if x >= right_threshold:
+            break
+    else:
+        xs = [c.args[0][0] for c in range_calls]
+        assert False, (
+            f"Range text '128km' was drawn but not near the right edge. "
+            f"x-coordinates: {xs}, right threshold: {right_threshold}px (img width: {img.width})"
+        )
 
 
 # ---------------------------------------------------------------------------

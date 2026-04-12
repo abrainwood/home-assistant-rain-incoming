@@ -274,9 +274,16 @@ def _draw_frame_label(
     tz_name: str | None,
     radius_km: int,
     location_name: str | None = None,
+    *,
+    frame_index: int | None = None,
+    frame_count: int | None = None,
 ) -> None:
-    """Draw the BOM-style label in the top-left corner of a frame."""
-    label = build_frame_label(timestamp, tz_name, radius_km, location_name)
+    """Draw header labels across the top of a frame in three positions.
+
+    - Top-left: location name (e.g. "Sydney")
+    - Top-centre: date/time (e.g. "10/04/26  20:40 UTC"), anchor='mt'
+    - Top-right: range + frame counter (e.g. "128km  3/13"), anchor='rt'
+    """
     draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.load_default(size=16)
@@ -284,15 +291,27 @@ def _draw_frame_label(
         font = ImageFont.load_default()
 
     padding = 8
-    lx = padding
-    ly = padding
 
-    # White outline for readability on any background
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            if dx or dy:
-                draw.text((lx + dx, ly + dy), label, fill=(255, 255, 255, 220), font=font)
-    draw.text((lx, ly), label, fill=(0, 0, 0, 230), font=font)
+    # --- Top-left: location name ---
+    if location_name:
+        name = location_name
+        if len(name) > 30:
+            name = name[:29] + "\u2026"
+        _draw_text_with_outline(draw, padding, padding, name, font)
+
+    # --- Top-centre: date/time ---
+    if timestamp is not None:
+        tz_label = timestamp.strftime("%Z") or tz_name or "UTC"
+        datetime_text = f"{timestamp.strftime('%d/%m/%y')}  {timestamp.strftime(f'%H:%M {tz_label}')}"
+        cx = img.width // 2
+        _draw_text_with_outline_anchored(draw, cx, padding, datetime_text, font, anchor="mt")
+
+    # --- Top-right: range + frame counter ---
+    range_text = f"{radius_km}km"
+    if frame_index is not None and frame_count is not None:
+        range_text = f"{range_text}  {frame_index}/{frame_count}"
+    rx = img.width - padding
+    _draw_text_with_outline_anchored(draw, rx, padding, range_text, font, anchor="rt")
 
 
 def _draw_attribution(img: Image.Image, style_def: MapStyleDefinition) -> None:
@@ -334,6 +353,28 @@ def _draw_text_with_outline(
     draw.text((x, y), text, fill=(0, 0, 0, 230), font=font)
 
 
+def _draw_text_with_outline_anchored(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    text: str,
+    font,
+    anchor: str = "la",
+) -> None:
+    """Draw text with a white outline using a Pillow text anchor.
+
+    anchor='mt' for top-centre, anchor='rt' for top-right, anchor='la' for top-left.
+    """
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if dx or dy:
+                draw.text(
+                    (x + dx, y + dy), text,
+                    fill=(255, 255, 255, 220), font=font, anchor=anchor,
+                )
+    draw.text((x, y), text, fill=(0, 0, 0, 230), font=font, anchor=anchor)
+
+
 def _composite_single_frame(
     map_crop: Image.Image,
     radar_resized: Image.Image,
@@ -347,6 +388,8 @@ def _composite_single_frame(
     confidence_map: np.ndarray | None = None,
     location_name: str | None = None,
     style_def: MapStyleDefinition | None = None,
+    frame_index: int | None = None,
+    frame_count: int | None = None,
 ) -> Image.Image:
     """CPU-bound rendering: composite map + radar, draw overlays. Returns RGBA Image.
 
@@ -394,7 +437,10 @@ def _composite_single_frame(
     draw_range_rings(composite, cx, cy, radius_px, radius_km)
     draw_crosshair(composite, cx, cy)
 
-    _draw_frame_label(composite, timestamp, tz_name, radius_km, location_name)
+    _draw_frame_label(
+        composite, timestamp, tz_name, radius_km, location_name,
+        frame_index=frame_index, frame_count=frame_count,
+    )
 
     if style_def is None:
         style_def = get_style(MapStyle.VOYAGER)
@@ -725,6 +771,7 @@ def composite_frames(
     style_def = get_style(map_style)
     vp = _ViewportParams(lat, lon, radius_km, output_size)
     timestamps = frame_timestamps or [None] * len(radar_overlays)
+    total_frames = len(radar_overlays)
     frames: list[Image.Image] = []
     for i, radar_resized in enumerate(radar_overlays):
         ts = timestamps[i] if i < len(timestamps) else None
@@ -735,6 +782,8 @@ def composite_frames(
             confidence_map=conf_map,
             location_name=location_name,
             style_def=style_def,
+            frame_index=i + 1,
+            frame_count=total_frames,
         )
         frames.append(frame_img)
     return frames
