@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.start import async_at_started
 
 from .const import CONF_MAP_STYLE, DOMAIN
 from .coordinator import RainDetectorCoordinator
@@ -21,20 +21,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # The first radar fetch can take 10-30+ seconds. Instead, set up
     # platforms immediately (sensors show unavailable) and schedule the
     # first data fetch after HA has fully started.
+    #
+    # async_at_started handles both cases (already started vs. waiting for startup)
+    # and returns an unsubscribe callable that is safe to call at any time - including
+    # after the listener has already fired and auto-removed itself. This avoids a
+    # ValueError from the previous async_listen_once pattern where on_unload would
+    # attempt to remove an already-removed listener.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    async def _async_first_refresh(_event: Event) -> None:
+    async def _do_first_refresh(_hass: HomeAssistant) -> None:
         await coordinator.async_request_refresh()
 
-    # If HA is already running (e.g. config entry reloaded at runtime),
-    # trigger the refresh immediately. Otherwise wait for startup to finish.
-    if hass.is_running:
-        await coordinator.async_request_refresh()
-    else:
-        entry.async_on_unload(
-            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _async_first_refresh)
-        )
+    entry.async_on_unload(async_at_started(hass, _do_first_refresh))
 
     return True
 
