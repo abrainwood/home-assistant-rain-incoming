@@ -242,6 +242,13 @@ async def _fetch_map_tile(
     return tile
 
 
+def _truncate_location(name: str, max_len: int = 30) -> str:
+    """Truncate a location name to max_len chars, adding ellipsis if needed."""
+    if len(name) > max_len:
+        return name[:max_len - 1] + "\u2026"
+    return name
+
+
 def build_frame_label(
     timestamp: datetime | None,
     tz_name: str | None,
@@ -257,9 +264,7 @@ def build_frame_label(
     """
     parts = []
     if location_name:
-        if len(location_name) > 30:
-            location_name = location_name[:29] + "\u2026"
-        parts.append(location_name)
+        parts.append(_truncate_location(location_name))
     if timestamp is not None:
         tz_label = timestamp.strftime("%Z") or tz_name or "UTC"
         parts.append(timestamp.strftime("%d/%m/%y"))
@@ -294,10 +299,7 @@ def _draw_frame_label(
 
     # --- Top-left: location name ---
     if location_name:
-        name = location_name
-        if len(name) > 30:
-            name = name[:29] + "\u2026"
-        _draw_text_with_outline(draw, padding, padding, name, font)
+        _draw_text_with_outline(draw, padding, padding, _truncate_location(location_name), font)
 
     # --- Top-centre: date/time ---
     if timestamp is not None:

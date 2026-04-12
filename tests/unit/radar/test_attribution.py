@@ -314,6 +314,108 @@ def test_draw_frame_label_range_drawn_at_right():
         )
 
 
+def test_draw_frame_label_no_counter_when_indices_omitted():
+    """When frame_index/frame_count are None, no slash counter appears in any text."""
+    from unittest.mock import patch
+    from datetime import datetime, timezone
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, ts, "UTC", 128, "Sydney")
+
+    all_strings = [
+        c.args[1] for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+    # The range text should be just "128km" with no "N/M" counter appended.
+    range_strings = [s for s in all_strings if "128km" in s]
+    assert range_strings, f"Expected '128km' in draw calls, got: {all_strings}"
+    for s in range_strings:
+        assert s.strip() == "128km", (
+            f"Range text should be exactly '128km' when no frame counter, got: {s!r}"
+        )
+
+
+def test_draw_frame_label_no_location_no_crash():
+    """_draw_frame_label with location_name=None must not crash or draw 'None'."""
+    from unittest.mock import patch
+    from datetime import datetime, timezone
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, ts, "UTC", 128, None, frame_index=1, frame_count=5)
+
+    all_strings = [
+        c.args[1] for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+    none_strings = [s for s in all_strings if "None" in s]
+    assert not none_strings, (
+        f"'None' should never appear in rendered text, but found: {none_strings}"
+    )
+
+
+def test_draw_frame_label_no_timestamp_no_crash():
+    """_draw_frame_label with timestamp=None must not crash or draw date text."""
+    from unittest.mock import patch
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, None, None, 128, "Sydney", frame_index=1, frame_count=5)
+
+    all_strings = [
+        c.args[1] for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+    # Should still have location and range, but no date/time
+    assert any("Sydney" in s for s in all_strings), f"Location should appear: {all_strings}"
+    assert any("128km" in s for s in all_strings), f"Range should appear: {all_strings}"
+    date_strings = [s for s in all_strings if "/" in s and len(s) > 5 and any(c.isdigit() for c in s[:2])]
+    # Filter out "1/5" frame counter - we're looking for date-like patterns "DD/MM/YY"
+    date_like = [s for s in all_strings if any(sub in s for sub in ["26", "2026"])]
+    assert not date_like, (
+        f"No date text should be drawn when timestamp is None, but found: {date_like}"
+    )
+
+
+def test_draw_frame_label_truncates_long_location():
+    """_draw_frame_label must truncate location names > 30 chars via the live code path."""
+    from unittest.mock import patch
+    from datetime import datetime, timezone
+    from PIL import ImageDraw
+    from custom_components.rain_incoming.radar.composite import _draw_frame_label
+
+    img = _blank_image()
+    ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
+    long_name = "A" * 40
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_frame_label(img, ts, "UTC", 128, long_name, frame_index=1, frame_count=5)
+
+    all_strings = [
+        c.args[1] for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+    truncated = "A" * 29 + "\u2026"
+    assert any(truncated in s for s in all_strings), (
+        f"Expected truncated location '{truncated}' in draw calls, got: {all_strings}"
+    )
+    assert not any(long_name in s for s in all_strings), (
+        f"Full 40-char name should not appear untruncated, got: {all_strings}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # P0 regression: render_composite must pass style_def through _render_sync
 # ---------------------------------------------------------------------------
