@@ -37,6 +37,7 @@ class MapStyle(StrEnum):
     OSM_STANDARD = "osm_standard"
     OSM_DARK = "osm_dark"
     ESRI_IMAGERY = "esri_imagery"
+    DARK_MATTER = "dark_matter"
 
 
 FetchTileFn = Callable[[aiohttp.ClientSession, int, int, int], Awaitable[Image.Image | None]]
@@ -123,6 +124,14 @@ async def _fetch_osm_dark(
     return _apply_osm_dark_transform(base) if base is not None else None
 
 
+async def _fetch_dark_matter(
+    session: aiohttp.ClientSession, z: int, x: int, y: int
+) -> Image.Image | None:
+    return await _fetch_png(
+        session, f"https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+    )
+
+
 async def _fetch_esri_imagery(
     session: aiohttp.ClientSession, z: int, x: int, y: int
 ) -> Image.Image | None:
@@ -183,6 +192,12 @@ _STYLES: dict[MapStyle, MapStyleDefinition] = {
         display_name="ESRI World Imagery",
         attribution="Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
         fetch_tile=_fetch_esri_imagery,
+    ),
+    MapStyle.DARK_MATTER: MapStyleDefinition(
+        style=MapStyle.DARK_MATTER,
+        display_name="Dark Matter",
+        attribution="© CARTO, © OpenStreetMap contributors",
+        fetch_tile=_fetch_dark_matter,
     ),
 }
 
