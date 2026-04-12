@@ -268,3 +268,50 @@ class RainViewerProvider(RadarProvider):
         async with aiohttp.ClientSession() as session:
             resp = await fetch_with_retry(session, MANIFEST_URL)
             return await resp.json(content_type=None)
+
+
+async def check_coverage(
+    lat: float, lon: float, session: aiohttp.ClientSession | None = None,
+) -> bool:
+    """Probe RainViewer for radar coverage at the given coordinates.
+
+    Fetches a spread of recent radar frames and checks whether any tile
+    at this location contains non-transparent pixels. If all frames are
+    transparent, there is likely no radar coverage for this area.
+
+    Raises on network/API errors so the caller can decide how to handle.
+    """
+    tx, ty = lat_lon_to_tile(lat, lon, RainViewerProvider.ZOOM)
+
+    owns_session = session is None
+    if owns_session:
+        session = aiohttp.ClientSession()
+
+    try:
+        resp = await fetch_with_retry(session, MANIFEST_URL)
+        manifest = await resp.json(content_type=None)
+
+        past = manifest.get("radar", {}).get("past", [])
+        if not past:
+            return False
+
+        indices = {0, len(past) // 2, len(past) - 1}
+        for idx in indices:
+            frame = past[idx]
+            url = (
+                f"{TILE_BASE_URL}{frame['path']}"
+                f"/{TILE_SIZE}/{RainViewerProvider.ZOOM}/{tx}/{ty}"
+                f"/{RainViewerProvider.COLOUR_SCHEME}/0.png"
+            )
+            tile_resp = await fetch_with_retry(session, url)
+            tile_bytes = await tile_resp.read()
+
+            img = Image.open(BytesIO(tile_bytes)).convert("RGBA")
+            alpha = np.array(img)[:, :, 3]
+            if alpha.max() > 10:
+                return True
+
+        return False
+    finally:
+        if owns_session:
+            await session.close()

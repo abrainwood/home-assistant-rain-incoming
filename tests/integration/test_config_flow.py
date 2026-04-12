@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers.selector import SelectSelector
+from homeassistant.helpers.selector import LocationSelector, SelectSelector
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 
@@ -25,6 +25,23 @@ _MOCK_RESULT = DetectionResult(
     max_approaching_intensity=0.0,
 )
 
+_SYDNEY = {"latitude": -33.701, "longitude": 151.209}
+
+
+def _loc(lat: float = -33.701, lon: float = 151.209) -> dict:
+    """Build a location dict for LocationSelector input."""
+    return {"latitude": lat, "longitude": lon}
+
+
+@pytest.fixture(autouse=True)
+def mock_coverage_check():
+    """Mock the coverage check to return True (covered) by default."""
+    with patch(
+        "custom_components.rain_incoming.config_flow.RainIncomingConfigFlow._check_coverage",
+        new=AsyncMock(return_value=True),
+    ):
+        yield
+
 
 @pytest.mark.asyncio
 async def test_config_flow_shows_form(hass: HomeAssistant):
@@ -43,8 +60,7 @@ async def test_config_flow_creates_entry_with_valid_input(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
         },
     )
@@ -55,20 +71,19 @@ async def test_config_flow_creates_entry_with_valid_input(hass: HomeAssistant):
 
 
 @pytest.mark.asyncio
-async def test_config_flow_rejects_invalid_latitude(hass: HomeAssistant):
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "latitude": 999.0,
-            "longitude": 151.209,
-            "lookahead_minutes": 60,
-        },
-    )
-    assert result["type"] == FlowResultType.FORM
-    assert "latitude" in result["errors"]
+async def test_config_flow_uses_location_selector(hass: HomeAssistant):
+    """Config flow schema must use LocationSelector for the location field."""
+    from custom_components.rain_incoming.config_flow import _build_schema
+
+    schema = _build_schema(default_lat=-33.701, default_lon=151.209)
+    for key in schema.schema:
+        if getattr(key, "schema", None) == "location":
+            assert isinstance(schema.schema[key], LocationSelector), (
+                f"location field should use LocationSelector, "
+                f"got {type(schema.schema[key]).__name__}"
+            )
+            return
+    pytest.fail("'location' field not found in config flow schema")
 
 
 @pytest.mark.asyncio
@@ -79,8 +94,7 @@ async def test_config_flow_title_uses_location_name_when_provided(hass: HomeAssi
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
             "location_name": "Beach House",
         },
@@ -98,8 +112,7 @@ async def test_config_flow_title_uses_coordinates_when_name_empty(hass: HomeAssi
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
             "location_name": "",
         },
@@ -110,15 +123,13 @@ async def test_config_flow_title_uses_coordinates_when_name_empty(hass: HomeAssi
 
 @pytest.mark.asyncio
 async def test_config_flow_title_uses_coordinates_when_name_omitted(hass: HomeAssistant):
-    """Existing entries without location_name should still work."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
         },
     )
@@ -134,9 +145,8 @@ async def test_config_flow_rejects_lookahead_out_of_range(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
-            "lookahead_minutes": 200,  # > 120
+            "location": _loc(),
+            "lookahead_minutes": 200,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -150,17 +160,15 @@ async def test_config_flow_rejects_lookahead_out_of_range(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_config_flow_rejects_location_name_over_30_chars(hass: HomeAssistant):
-    """RED: location_name > 30 chars should be rejected with a validation error."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
-            "location_name": "A" * 40,  # 40 chars - over the 30-char limit
+            "location_name": "A" * 40,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -169,15 +177,13 @@ async def test_config_flow_rejects_location_name_over_30_chars(hass: HomeAssista
 
 @pytest.mark.asyncio
 async def test_config_flow_stores_map_style_in_entry(hass: HomeAssistant):
-    """RED: map_style should be stored in entry.data when submitted."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
             "map_style": "osm_dark",
         },
@@ -188,15 +194,13 @@ async def test_config_flow_stores_map_style_in_entry(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_config_flow_defaults_map_style_to_voyager(hass: HomeAssistant):
-    """Submitting without map_style should default to 'voyager'."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
         },
     )
@@ -206,11 +210,6 @@ async def test_config_flow_defaults_map_style_to_voyager(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_config_flow_rejects_invalid_map_style(hass: HomeAssistant):
-    """Submitting an unrecognised map_style string should be rejected.
-
-    With SelectSelector, HA validates the value against the allowed list at the
-    schema level and raises InvalidData before the flow returns a form with errors.
-    """
     from homeassistant.data_entry_flow import InvalidData
 
     result = await hass.config_entries.flow.async_init(
@@ -220,8 +219,7 @@ async def test_config_flow_rejects_invalid_map_style(hass: HomeAssistant):
         await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
-                "latitude": -33.701,
-                "longitude": 151.209,
+                "location": _loc(),
                 "lookahead_minutes": 60,
                 "map_style": "not_a_real_style",
             },
@@ -230,7 +228,6 @@ async def test_config_flow_rejects_invalid_map_style(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_options_flow_changes_map_style(hass: HomeAssistant):
-    """Options flow should persist a new map_style to entry.options."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -260,7 +257,6 @@ async def test_options_flow_changes_map_style(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_options_flow_rejects_location_name_over_30_chars(hass: HomeAssistant):
-    """Options flow should reject location_name > 30 chars."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -293,7 +289,6 @@ async def test_options_flow_rejects_location_name_over_30_chars(hass: HomeAssist
 
 @pytest.mark.asyncio
 async def test_migration_adds_map_style_to_v1_entry(hass: HomeAssistant):
-    """RED: a v1 entry without map_style should be migrated to v2 with map_style=voyager."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -305,18 +300,15 @@ async def test_migration_adds_map_style_to_v1_entry(hass: HomeAssistant):
     )
     entry.add_to_hass(hass)
 
-    # Loading the integration should trigger async_migrate_entry and bump the version.
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    # After migration, the entry should be on version 2 with map_style set.
     assert entry.version == 2
     assert entry.data.get(CONF_MAP_STYLE) == "voyager"
 
 
 @pytest.mark.asyncio
 async def test_migration_preserves_long_location_name(hass: HomeAssistant):
-    """v1 entry with location_name > 30 chars should migrate without rejection."""
     long_name = "A" * 50
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -333,15 +325,13 @@ async def test_migration_preserves_long_location_name(hass: HomeAssistant):
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    # Migration should succeed - render-time truncation handles display.
     assert entry.version == 2
     assert entry.data.get(CONF_MAP_STYLE) == "voyager"
-    assert entry.data["location_name"] == long_name  # preserved, not truncated
+    assert entry.data["location_name"] == long_name
 
 
 @pytest.mark.asyncio
 async def test_migration_does_not_re_migrate_v2_entry(hass: HomeAssistant):
-    """A v2 entry should not be migrated a second time."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -357,7 +347,6 @@ async def test_migration_does_not_re_migrate_v2_entry(hass: HomeAssistant):
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    # map_style should remain unchanged at the value set at v2 creation.
     assert entry.version == 2
     assert entry.data[CONF_MAP_STYLE] == "osm_dark"
 
@@ -369,7 +358,6 @@ async def test_migration_does_not_re_migrate_v2_entry(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_coordinator_uses_options_map_style_over_data(hass: HomeAssistant):
-    """Coordinator should prefer entry.options[CONF_MAP_STYLE] over entry.data."""
     from custom_components.rain_incoming.coordinator import RainDetectorCoordinator
 
     entry = MockConfigEntry(
@@ -391,7 +379,6 @@ async def test_coordinator_uses_options_map_style_over_data(hass: HomeAssistant)
 
 @pytest.mark.asyncio
 async def test_coordinator_falls_back_to_data_map_style(hass: HomeAssistant):
-    """Coordinator uses entry.data[CONF_MAP_STYLE] when options doesn't have it."""
     from custom_components.rain_incoming.coordinator import RainDetectorCoordinator
 
     entry = MockConfigEntry(
@@ -413,7 +400,6 @@ async def test_coordinator_falls_back_to_data_map_style(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_coordinator_defaults_to_voyager_when_no_style_set(hass: HomeAssistant):
-    """Coordinator defaults to voyager when neither options nor data has map_style."""
     from custom_components.rain_incoming.coordinator import RainDetectorCoordinator
 
     entry = MockConfigEntry(
@@ -433,53 +419,41 @@ async def test_coordinator_defaults_to_voyager_when_no_style_set(hass: HomeAssis
 
 
 # ---------------------------------------------------------------------------
-# Fix 1: SelectSelector for map_style dropdown
+# Selector type tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_map_style_field_uses_select_selector_in_config_flow(hass: HomeAssistant):
-    """CONF_MAP_STYLE in config flow schema must use SelectSelector for dropdown UI."""
     from custom_components.rain_incoming.config_flow import _build_schema
 
-    schema = _build_schema(
-        default_lat=-33.701,
-        default_lon=151.209,
-    )
+    schema = _build_schema(default_lat=-33.701, default_lon=151.209)
     for key in schema.schema:
         if getattr(key, "schema", None) == CONF_MAP_STYLE:
-            assert isinstance(schema.schema[key], SelectSelector), (
-                f"CONF_MAP_STYLE should use SelectSelector for dropdown UI, "
-                f"got {type(schema.schema[key]).__name__}"
-            )
+            assert isinstance(schema.schema[key], SelectSelector)
             return
     pytest.fail("CONF_MAP_STYLE not found in config flow schema")
 
 
 @pytest.mark.asyncio
 async def test_map_style_field_uses_select_selector_in_options_flow(hass: HomeAssistant):
-    """CONF_MAP_STYLE in options flow schema must use SelectSelector for dropdown UI."""
     from custom_components.rain_incoming.config_flow import _build_options_schema
 
     schema = _build_options_schema()
     for key in schema.schema:
         if getattr(key, "schema", None) == CONF_MAP_STYLE:
-            assert isinstance(schema.schema[key], SelectSelector), (
-                f"CONF_MAP_STYLE should use SelectSelector for dropdown UI, "
-                f"got {type(schema.schema[key]).__name__}"
-            )
+            assert isinstance(schema.schema[key], SelectSelector)
             return
     pytest.fail("CONF_MAP_STYLE not found in options flow schema")
 
 
 # ---------------------------------------------------------------------------
-# Fix 2: async_schedule_reload assertion in options flow test
+# Options flow reload + boundary tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_options_flow_schedules_reload_after_save(hass: HomeAssistant):
-    """Options flow must call async_schedule_reload after saving so changes take effect."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -511,24 +485,17 @@ async def test_options_flow_schedules_reload_after_save(hass: HomeAssistant):
     mock_reload.assert_called_once_with(entry.entry_id)
 
 
-# ---------------------------------------------------------------------------
-# Fix 3: boundary test for 30-char location name
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_config_flow_accepts_location_name_exactly_30_chars(hass: HomeAssistant):
-    """Location name of exactly 30 chars must be accepted (boundary at limit)."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
-            "location_name": "A" * 30,  # exactly at the 30-char limit
+            "location_name": "A" * 30,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -542,7 +509,6 @@ async def test_config_flow_accepts_location_name_exactly_30_chars(hass: HomeAssi
 
 @pytest.mark.asyncio
 async def test_config_flow_rejects_when_at_location_limit(hass: HomeAssistant):
-    """RED: with 4 existing entries the flow must abort with too_many_locations."""
     for i in range(4):
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -565,7 +531,6 @@ async def test_config_flow_rejects_when_at_location_limit(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_config_flow_accepts_when_below_location_limit(hass: HomeAssistant):
-    """With 3 existing entries the form renders normally and a 4th entry can be created."""
     for i in range(3):
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -588,8 +553,7 @@ async def test_config_flow_accepts_when_below_location_limit(hass: HomeAssistant
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
+            "location": _loc(),
             "lookahead_minutes": 60,
         },
     )
@@ -598,7 +562,6 @@ async def test_config_flow_accepts_when_below_location_limit(hass: HomeAssistant
 
 @pytest.mark.asyncio
 async def test_config_flow_rejects_when_above_location_limit(hass: HomeAssistant):
-    """Defensive boundary: 5 existing entries also aborts with too_many_locations."""
     for i in range(5):
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -620,29 +583,22 @@ async def test_config_flow_rejects_when_above_location_limit(hass: HomeAssistant
 
 
 # ---------------------------------------------------------------------------
-# Task 125 Fix 1: sticky inputs on validation error
+# Sticky inputs on validation error
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_config_flow_preserves_user_input_on_validation_error(hass: HomeAssistant):
-    """When validation fails the form re-renders with the user's typed values.
-
-    We submit an invalid location name (too long) alongside a non-default lookahead.
-    The re-rendered schema's default for lookahead_minutes must reflect what the
-    user typed - not the system default - so the user doesn't have to retype it.
-    """
+    """When validation fails the form re-renders with the user's typed values."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
-    # Submit with a too-long location name and a non-default lookahead.
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "latitude": -33.701,
-            "longitude": 151.209,
-            "lookahead_minutes": 45,  # non-default (default is 60)
-            "location_name": "X" * 40,  # too long, will be rejected
+            "location": _loc(),
+            "lookahead_minutes": 45,
+            "location_name": "X" * 40,
             "map_style": "voyager",
         },
     )
@@ -650,7 +606,6 @@ async def test_config_flow_preserves_user_input_on_validation_error(hass: HomeAs
     assert result["type"] == FlowResultType.FORM
     assert "location_name" in result["errors"]
 
-    # Introspect the re-rendered schema to verify defaults reflect user input.
     schema = result["data_schema"]
     defaults = {
         (key.schema if hasattr(key, "schema") else str(key)): (
@@ -660,17 +615,16 @@ async def test_config_flow_preserves_user_input_on_validation_error(hass: HomeAs
     }
 
     assert defaults.get("lookahead_minutes") == 45, (
-        f"Expected lookahead_minutes default to be 45 (user's value), got {defaults.get('lookahead_minutes')}"
+        f"Expected lookahead_minutes default to be 45, got {defaults.get('lookahead_minutes')}"
     )
-    assert defaults.get("latitude") == -33.701
-    assert defaults.get("longitude") == 151.209
+    location_default = defaults.get("location")
+    assert location_default == {"latitude": -33.701, "longitude": 151.209}, (
+        f"Expected location default to preserve user's coordinates, got {location_default}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_options_flow_preserves_user_input_on_validation_error(hass: HomeAssistant):
-    """Options flow: form re-renders with user's typed values after validation error."""
-    from custom_components.rain_incoming.const import CONF_LOOKAHEAD_MINUTES
-
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -686,12 +640,11 @@ async def test_options_flow_preserves_user_input_on_validation_error(hass: HomeA
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] == FlowResultType.FORM
 
-    # Submit with an invalid location name and a non-default lookahead.
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            "location_name": "Y" * 40,  # too long
-            "lookahead_minutes": 25,  # non-default
+            "location_name": "Y" * 40,
+            "lookahead_minutes": 25,
             CONF_MAP_STYLE: "osm_dark",
         },
     )
@@ -708,17 +661,16 @@ async def test_options_flow_preserves_user_input_on_validation_error(hass: HomeA
     }
 
     assert defaults.get("lookahead_minutes") == 25, (
-        f"Expected lookahead_minutes default to be 25 (user's value), got {defaults.get('lookahead_minutes')}"
+        f"Expected lookahead_minutes default to be 25, got {defaults.get('lookahead_minutes')}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Task 125 Fix 2: constraint hints in field labels (translation file checks)
+# Translation file checks
 # ---------------------------------------------------------------------------
 
 
 def test_translation_includes_location_name_max_length():
-    """location_name label in config flow must mention the 30-char limit."""
     import json
     import os
 
@@ -730,14 +682,11 @@ def test_translation_includes_location_name_max_length():
         translations = json.load(f)
 
     label = translations["config"]["step"]["user"]["data"]["location_name"]
-    assert "30" in label, f"Expected '30' in location_name label, got: {label!r}"
-    assert "character" in label.lower(), (
-        f"Expected 'character' in location_name label, got: {label!r}"
-    )
+    assert "30" in label
+    assert "character" in label.lower()
 
 
 def test_translation_includes_lookahead_range_in_config_flow():
-    """lookahead_minutes label in config flow must mention the 20-60 range."""
     import json
     import os
 
@@ -749,13 +698,10 @@ def test_translation_includes_lookahead_range_in_config_flow():
         translations = json.load(f)
 
     label = translations["config"]["step"]["user"]["data"]["lookahead_minutes"]
-    assert "20" in label and "60" in label, (
-        f"Expected '20' and '60' in lookahead_minutes label, got: {label!r}"
-    )
+    assert "20" in label and "60" in label
 
 
 def test_translation_includes_location_name_max_length_in_options_flow():
-    """location_name label in options flow must mention the 30-char limit."""
     import json
     import os
 
@@ -767,14 +713,11 @@ def test_translation_includes_location_name_max_length_in_options_flow():
         translations = json.load(f)
 
     label = translations["options"]["step"]["init"]["data"]["location_name"]
-    assert "30" in label, f"Expected '30' in options location_name label, got: {label!r}"
-    assert "character" in label.lower(), (
-        f"Expected 'character' in options location_name label, got: {label!r}"
-    )
+    assert "30" in label
+    assert "character" in label.lower()
 
 
 def test_translation_includes_lookahead_range_in_options_flow():
-    """lookahead_minutes label in options flow must mention the 20-60 range."""
     import json
     import os
 
@@ -786,19 +729,16 @@ def test_translation_includes_lookahead_range_in_options_flow():
         translations = json.load(f)
 
     label = translations["options"]["step"]["init"]["data"]["lookahead_minutes"]
-    assert "20" in label and "60" in label, (
-        f"Expected '20' and '60' in options lookahead_minutes label, got: {label!r}"
-    )
+    assert "20" in label and "60" in label
 
 
 # ---------------------------------------------------------------------------
-# Fix 4: lat/lon immutability via options flow
+# Lat/lon immutability via options flow
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_options_flow_does_not_modify_latitude_longitude(hass: HomeAssistant):
-    """Lat/lon in entry.data must be unchanged after an options flow save."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -814,8 +754,6 @@ async def test_options_flow_does_not_modify_latitude_longitude(hass: HomeAssista
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] == FlowResultType.FORM
 
-    # Submit with only the fields the options flow knows about (no lat/lon).
-    # Lat/lon are not in the options schema so they cannot be submitted.
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
@@ -826,6 +764,128 @@ async def test_options_flow_does_not_modify_latitude_longitude(hass: HomeAssista
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
-    # Verify latitude/longitude in entry.data are unchanged.
     assert entry.data[CONF_LATITUDE] == -33.701
     assert entry.data[CONF_LONGITUDE] == 151.209
+
+
+# ---------------------------------------------------------------------------
+# Coverage check tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_config_flow_creates_entry_when_coverage_confirmed(
+    hass: HomeAssistant,
+):
+    """When coverage check returns True, entry is created directly."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "location": _loc(),
+            "lookahead_minutes": 60,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.asyncio
+async def test_config_flow_shows_confirm_when_no_coverage(
+    hass: HomeAssistant, mock_coverage_check,
+):
+    """When coverage check returns False, show confirmation step."""
+    with patch(
+        "custom_components.rain_incoming.config_flow.RainIncomingConfigFlow._check_coverage",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "user"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "location": _loc(0.0, 0.0),
+                "lookahead_minutes": 60,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "confirm_no_coverage"
+
+
+@pytest.mark.asyncio
+async def test_config_flow_creates_entry_after_confirm_no_coverage(
+    hass: HomeAssistant, mock_coverage_check,
+):
+    """User confirming the no-coverage warning creates the entry."""
+    with patch(
+        "custom_components.rain_incoming.config_flow.RainIncomingConfigFlow._check_coverage",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "user"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "location": _loc(0.0, 0.0),
+                "lookahead_minutes": 60,
+                "location_name": "Middle of Ocean",
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "confirm_no_coverage"
+
+    # User confirms
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"]["latitude"] == 0.0
+    assert result["data"]["longitude"] == 0.0
+    assert result["data"]["location_name"] == "Middle of Ocean"
+
+
+@pytest.mark.asyncio
+async def test_config_flow_creates_entry_when_coverage_check_fails(
+    hass: HomeAssistant, mock_coverage_check,
+):
+    """When coverage check raises an exception, fail open and create entry."""
+    with patch(
+        "custom_components.rain_incoming.config_flow.RainIncomingConfigFlow._check_coverage",
+        new=AsyncMock(return_value=None),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "user"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "location": _loc(),
+                "lookahead_minutes": 60,
+            },
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.asyncio
+async def test_config_flow_stores_flat_lat_lon_not_location_dict(hass: HomeAssistant):
+    """Entry data must contain flat latitude/longitude keys, not the location dict."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "location": _loc(-37.814, 144.963),
+            "lookahead_minutes": 60,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert "location" not in result["data"]
+    assert result["data"]["latitude"] == -37.814
+    assert result["data"]["longitude"] == 144.963

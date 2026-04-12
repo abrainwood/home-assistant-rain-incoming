@@ -15,6 +15,7 @@ from custom_components.rain_incoming.providers.rainviewer import (
     _colour_to_intensity,
     _resolve_url,
     _tile_bounds,
+    check_coverage,
 )
 from custom_components.rain_incoming.radar.geo import lat_lon_to_tile
 
@@ -179,3 +180,80 @@ class TestRainViewerProvider:
         ):
             with pytest.raises(ClientError):
                 await provider.get_frames(-33.701, 151.209, count=3)
+
+
+# --- check_coverage tests ---
+
+from io import BytesIO
+from PIL import Image
+
+
+def _make_tile_png(has_precip: bool) -> bytes:
+    """Create a minimal 256x256 PNG tile for testing."""
+    img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    if has_precip:
+        # Paint some non-transparent pixels to simulate precipitation
+        for x in range(10, 20):
+            for y in range(10, 20):
+                img.putpixel((x, y), (0, 154, 213, 255))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestCheckCoverage:
+    @pytest.mark.asyncio
+    async def test_returns_true_when_tile_has_precipitation(self):
+        manifest_resp = AsyncMock()
+        manifest_resp.json = AsyncMock(return_value=MANIFEST)
+
+        tile_resp = AsyncMock()
+        tile_resp.read = AsyncMock(return_value=_make_tile_png(has_precip=True))
+
+        mock_session = MagicMock()
+        with patch(
+            "custom_components.rain_incoming.providers.rainviewer.fetch_with_retry",
+            side_effect=[manifest_resp, tile_resp],
+        ):
+            result = await check_coverage(-33.701, 151.209, session=mock_session)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_all_tiles_transparent(self):
+        manifest_resp = AsyncMock()
+        manifest_resp.json = AsyncMock(return_value=MANIFEST)
+
+        tile_resp = AsyncMock()
+        tile_resp.read = AsyncMock(return_value=_make_tile_png(has_precip=False))
+
+        mock_session = MagicMock()
+        with patch(
+            "custom_components.rain_incoming.providers.rainviewer.fetch_with_retry",
+            side_effect=[manifest_resp, tile_resp, tile_resp, tile_resp],
+        ):
+            result = await check_coverage(0.0, 0.0, session=mock_session)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_past_frames(self):
+        empty_manifest = {"radar": {"past": []}}
+        manifest_resp = AsyncMock()
+        manifest_resp.json = AsyncMock(return_value=empty_manifest)
+
+        mock_session = MagicMock()
+        with patch(
+            "custom_components.rain_incoming.providers.rainviewer.fetch_with_retry",
+            return_value=manifest_resp,
+        ):
+            result = await check_coverage(-33.701, 151.209, session=mock_session)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_raises_on_network_error(self):
+        mock_session = MagicMock()
+        with patch(
+            "custom_components.rain_incoming.providers.rainviewer.fetch_with_retry",
+            side_effect=ClientError(),
+        ):
+            with pytest.raises(ClientError):
+                await check_coverage(-33.701, 151.209, session=mock_session)
