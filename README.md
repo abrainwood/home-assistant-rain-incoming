@@ -25,9 +25,9 @@
 ### Method 1: HACS (recommended)
 
 1. Make sure [HACS](https://hacs.xyz) is installed
-2. Go to **HACS > Integrations > Explore & Download Repositories**
-3. Search for **"Rain Incoming"**
-4. Click **Download**
+2. In HACS, click the three-dot menu (top right) and choose **Custom repositories**
+3. Add `https://github.com/abrainwood/home-assistant-rain-incoming` as an **Integration**
+4. Find **Rain Incoming** in the HACS list and click **Download**
 5. Restart Home Assistant
 6. Go to **Settings > Integrations > Add Integration** and search for **"Rain Incoming"**
 
@@ -44,13 +44,14 @@
 
 No YAML needed - everything is configured through the Home Assistant UI.
 
-The latitude and longitude default to your Home Assistant home location (set in **Settings > General**), so for most people you just hit Save and you're done.
+The map defaults to your Home Assistant home location, so for most people you just confirm the pin and hit Submit.
 
-| Option | Default | Range | Description |
-|---|---|---|---|
-| Latitude | Your HA home location | -90 to 90 | Location to monitor |
-| Longitude | Your HA home location | -180 to 180 | Location to monitor |
-| Lookahead | 60 min | 20-60 min | How far ahead to predict (nowcast window) |
+| Option | Default | Description |
+|---|---|---|
+| Location | Your HA home location | Pin on map - drag or click to adjust |
+| Lookahead | 60 min | How far ahead to predict (nowcast window, 20-60 min) |
+| Location name | _(optional)_ | Label shown on radar images and entity names |
+| Map style | CARTO Voyager | Background map used for radar overlays |
 
 ### Changing settings after setup
 
