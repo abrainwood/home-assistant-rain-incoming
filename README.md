@@ -221,7 +221,22 @@ Bug reports, feature requests, and PRs are welcome. See [CONTRIBUTING.md](CONTRI
 
 ## Attribution
 
-Radar data provided by [RainViewer](https://www.rainviewer.com/). Free for personal and educational use with attribution.
+**Radar data:** [RainViewer](https://www.rainviewer.com/) - free for personal and educational use with attribution. See [RainViewer API terms](https://www.rainviewer.com/api.html).
+
+**Map tiles** (depending on selected style):
+
+| Style | Provider | Attribution |
+|---|---|---|
+| CARTO Voyager _(default)_ | [CARTO](https://carto.com/) | © CARTO, © OpenStreetMap contributors |
+| OpenStreetMap | [OpenStreetMap](https://www.openstreetmap.org/) | © OpenStreetMap contributors |
+| OpenStreetMap Dark | [OpenStreetMap](https://www.openstreetmap.org/) | © OpenStreetMap contributors |
+| ESRI Satellite Imagery | [Esri](https://www.esri.com/) | Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community |
+| Dark Matter | [CARTO](https://carto.com/) | © CARTO, © OpenStreetMap contributors |
+
+OpenStreetMap data is available under the [Open Database License](https://opendatacommons.org/licenses/odbl/).
+CARTO tiles are provided under [CARTO's basemap service terms](https://carto.com/legal/).
+
+These attributions are also displayed on every radar image rendered by the integration.
 
 ## License
 
