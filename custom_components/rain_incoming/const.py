@@ -8,6 +8,14 @@ CONF_MAP_STYLE = "map_style"
 # Location name display limit (chars). Longer names overlap the attribution line.
 MAX_LOCATION_NAME_CHARS = 30
 
+# Maximum number of rain_incoming locations a user can configure.
+# RainViewer's free tier rate-limits parallel tile fetching across multiple
+# locations. Empirically, 4 locations is the practical maximum without
+# degraded performance (5+ second slow-tile-fetch warnings start appearing).
+# This limit can be raised when #87 (shared global tile cache) lands and
+# reduces per-location fetch cost.
+MAX_LOCATIONS = 4
+
 # Lookahead bounds
 DEFAULT_LOOKAHEAD_MINUTES = 60
 MIN_LOOKAHEAD_MINUTES = 20

@@ -21,7 +21,8 @@
       "invalid_map_style": "Please select a valid map style"
     },
     "abort": {
-      "already_configured": "This location is already configured"
+      "already_configured": "This location is already configured",
+      "too_many_locations": "Cannot add more than 4 rain_incoming locations. RainViewer's free tier rate-limits parallel tile fetching, and 4 locations is the practical maximum without degraded performance. Remove an existing location before adding a new one."
     }
   },
   "options": {
