@@ -40,3 +40,9 @@ RAINVIEWER_ZOOM = 7
 RAINVIEWER_TILE_SIZE = 256
 RAINVIEWER_COLOUR_SCHEME = 6
 RAINVIEWER_ANALYSIS_GRID = 2  # fetch (2*N+1)^2 tiles centred on location
+
+# Required attribution for RainViewer tile data per their API terms.
+# rainviewer.com/api.html: "We kindly ask you to mention the Rain Viewer API
+# as a source of the data on your website with a link: https://www.rainviewer.com/"
+# We can't render hyperlinks in a baked GIF, so we include the domain in the text.
+RAINVIEWER_ATTRIBUTION = "rainviewer.com"
