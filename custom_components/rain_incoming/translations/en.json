@@ -7,8 +7,8 @@
         "data": {
           "latitude": "Latitude",
           "longitude": "Longitude",
-          "lookahead_minutes": "Lookahead (minutes)",
-          "location_name": "Location name (optional)",
+          "lookahead_minutes": "Lookahead (minutes, 20-60)",
+          "location_name": "Location name (optional, max 30 characters)",
           "map_style": "Map style"
         }
       }
@@ -29,8 +29,8 @@
       "init": {
         "title": "Configure Rain Incoming",
         "data": {
-          "lookahead_minutes": "Lookahead (minutes)",
-          "location_name": "Location name (optional)",
+          "lookahead_minutes": "Lookahead (minutes, 20-60)",
+          "location_name": "Location name (optional, max 30 characters)",
           "map_style": "Map style"
         }
       }
