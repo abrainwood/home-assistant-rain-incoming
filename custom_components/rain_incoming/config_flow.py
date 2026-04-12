@@ -61,7 +61,7 @@ def _validate_input(user_input: dict) -> dict[str, str]:
 
 
 def _validate_options_input(user_input: dict) -> dict[str, str]:
-    """Validate options flow input (no lat/lon)."""
+    """Validate options flow input."""
     errors: dict[str, str] = {}
 
     lookahead = user_input.get(CONF_LOOKAHEAD_MINUTES)
@@ -75,6 +75,14 @@ def _validate_options_input(user_input: dict) -> dict[str, str]:
     map_style = user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE)
     if map_style not in _VALID_MAP_STYLES:
         errors[CONF_MAP_STYLE] = "invalid_map_style"
+
+    lat = user_input.get(CONF_LATITUDE)
+    if lat is not None and not (-90.0 <= lat <= 90.0):
+        errors[CONF_LATITUDE] = "invalid_latitude"
+
+    lon = user_input.get(CONF_LONGITUDE)
+    if lon is not None and not (-180.0 <= lon <= 180.0):
+        errors[CONF_LONGITUDE] = "invalid_longitude"
 
     return errors
 
@@ -115,12 +123,16 @@ def _build_schema(
 
 
 def _build_options_schema(
+    default_lat: float = 0.0,
+    default_lon: float = 0.0,
     default_lookahead: int = DEFAULT_LOOKAHEAD_MINUTES,
     default_location_name: str = "",
     default_map_style: str = _DEFAULT_MAP_STYLE,
 ) -> vol.Schema:
     return vol.Schema(
         {
+            vol.Required(CONF_LATITUDE, default=default_lat): vol.Coerce(float),
+            vol.Required(CONF_LONGITUDE, default=default_lon): vol.Coerce(float),
             vol.Required(CONF_LOOKAHEAD_MINUTES, default=default_lookahead): vol.Coerce(int),
             vol.Optional(CONF_LOCATION_NAME, default=default_location_name): str,
             vol.Optional(CONF_MAP_STYLE, default=default_map_style): SelectSelector(
@@ -242,6 +254,10 @@ class RainIncomingOptionsFlow(OptionsFlow):
             if not errors:
                 # Merge the new options into entry.data so the title reflects changes.
                 merged_data = dict(self._config_entry.data)
+                if CONF_LATITUDE in user_input:
+                    merged_data[CONF_LATITUDE] = user_input[CONF_LATITUDE]
+                if CONF_LONGITUDE in user_input:
+                    merged_data[CONF_LONGITUDE] = user_input[CONF_LONGITUDE]
                 if CONF_LOCATION_NAME in user_input:
                     merged_data[CONF_LOCATION_NAME] = user_input[CONF_LOCATION_NAME]
                 if CONF_LOOKAHEAD_MINUTES in user_input:
@@ -263,11 +279,15 @@ class RainIncomingOptionsFlow(OptionsFlow):
         current_data = self._config_entry.data
         if user_input is not None:
             # Re-render after validation failure: restore what the user typed.
+            default_lat = user_input.get(CONF_LATITUDE, current_data.get(CONF_LATITUDE, 0.0))
+            default_lon = user_input.get(CONF_LONGITUDE, current_data.get(CONF_LONGITUDE, 0.0))
             default_lookahead = user_input.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES)
             default_location_name = user_input.get(CONF_LOCATION_NAME, "")
             default_map_style = user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE)
         else:
             # First render: use persisted values.
+            default_lat = current_data.get(CONF_LATITUDE, 0.0)
+            default_lon = current_data.get(CONF_LONGITUDE, 0.0)
             default_lookahead = current_options.get(
                 CONF_LOOKAHEAD_MINUTES,
                 current_data.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
@@ -281,6 +301,8 @@ class RainIncomingOptionsFlow(OptionsFlow):
                 current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
             )
         schema = _build_options_schema(
+            default_lat=default_lat,
+            default_lon=default_lon,
             default_lookahead=default_lookahead,
             default_location_name=default_location_name,
             default_map_style=default_map_style,
