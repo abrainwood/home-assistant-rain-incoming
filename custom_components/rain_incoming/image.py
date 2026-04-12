@@ -225,14 +225,15 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         """Return the pre-rendered GIF bytes from cache.
 
         The cache is populated by _render_to_cache() which runs as a background
-        task after every coordinator update (greedy rendering). This method is
-        therefore never on the critical path of a slow render - it just returns
-        what's already in memory.
-
-        The placeholder is only returned on genuine cold-start: the dashboard is
-        loaded before the very first coordinator cycle has had a chance to render
-        anything. After the first cycle the cache is always warm.
+        task after every coordinator update (greedy rendering). If a render is
+        in-flight when this is called, we await it so the caller gets real data
+        instead of a placeholder.
         """
+        if self._render_task is not None and not self._render_task.done():
+            try:
+                await self._render_task
+            except Exception:
+                pass  # _render_to_cache already logs the error
         if self._cached_image is not None:
             return self._cached_image
         _LOGGER.debug("Radar %dkm: returning placeholder (cache not yet populated)", self._radius_km)
