@@ -147,16 +147,14 @@ def test_strings_json_has_config_step_user():
     user_step = strings["config"]["step"]["user"]
     assert "title" in user_step
     assert "data" in user_step
-    assert "latitude" in user_step["data"]
-    assert "longitude" in user_step["data"]
+    assert "location" in user_step["data"]
     assert "lookahead_minutes" in user_step["data"]
 
 
 def test_strings_json_has_config_errors():
     strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
     errors = strings["config"]["error"]
-    assert "invalid_latitude" in errors
-    assert "invalid_longitude" in errors
+    assert "invalid_lookahead" in errors
     assert "invalid_lookahead" in errors
 
 

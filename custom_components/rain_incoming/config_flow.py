@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    LocationSelector,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -22,36 +25,28 @@ from .const import (
     MIN_LOOKAHEAD_MINUTES,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 _VALID_MAP_STYLES = ["voyager", "osm_standard", "osm_dark", "esri_imagery", "dark_matter"]
 _DEFAULT_MAP_STYLE = "voyager"
 
-
-def _validate_map_style(value: str) -> str:
-    if value not in _VALID_MAP_STYLES:
-        raise vol.Invalid(f"Invalid map style: {value!r}")
-    return value
+CONF_LOCATION = "location"
 
 
-def _validate_location_name(value: str) -> str:
-    if len(value) > MAX_LOCATION_NAME_CHARS:
-        raise vol.Invalid(
-            f"Location name must be {MAX_LOCATION_NAME_CHARS} characters or fewer"
-            " (avoids overlap with map attribution on the bottom of the composite)."
-        )
-    return value
+def _flatten_location(user_input: dict) -> dict:
+    """Extract lat/lon from the LocationSelector dict into flat config keys."""
+    if CONF_LOCATION in user_input:
+        location = user_input.pop(CONF_LOCATION)
+        user_input[CONF_LATITUDE] = location[CONF_LATITUDE]
+        user_input[CONF_LONGITUDE] = location[CONF_LONGITUDE]
+    return user_input
 
 
 def _validate_input(user_input: dict) -> dict[str, str]:
     errors: dict[str, str] = {}
-    lat = user_input[CONF_LATITUDE]
-    lon = user_input[CONF_LONGITUDE]
     lookahead = user_input[CONF_LOOKAHEAD_MINUTES]
 
-    if not (-90 <= lat <= 90):
-        errors[CONF_LATITUDE] = "invalid_latitude"
-    elif not (-180 <= lon <= 180):
-        errors[CONF_LONGITUDE] = "invalid_longitude"
-    elif not (MIN_LOOKAHEAD_MINUTES <= lookahead <= MAX_LOOKAHEAD_MINUTES):
+    if not (MIN_LOOKAHEAD_MINUTES <= lookahead <= MAX_LOOKAHEAD_MINUTES):
         errors[CONF_LOOKAHEAD_MINUTES] = "invalid_lookahead"
 
     location_name = user_input.get(CONF_LOCATION_NAME, "")
@@ -66,7 +61,7 @@ def _validate_input(user_input: dict) -> dict[str, str]:
 
 
 def _validate_options_input(user_input: dict) -> dict[str, str]:
-    """Validate options flow input (no lat/lon)."""
+    """Validate options flow input."""
     errors: dict[str, str] = {}
 
     lookahead = user_input.get(CONF_LOOKAHEAD_MINUTES)
@@ -80,6 +75,14 @@ def _validate_options_input(user_input: dict) -> dict[str, str]:
     map_style = user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE)
     if map_style not in _VALID_MAP_STYLES:
         errors[CONF_MAP_STYLE] = "invalid_map_style"
+
+    lat = user_input.get(CONF_LATITUDE)
+    if lat is not None and not (-90.0 <= lat <= 90.0):
+        errors[CONF_LATITUDE] = "invalid_latitude"
+
+    lon = user_input.get(CONF_LONGITUDE)
+    if lon is not None and not (-180.0 <= lon <= 180.0):
+        errors[CONF_LONGITUDE] = "invalid_longitude"
 
     return errors
 
@@ -102,8 +105,10 @@ def _build_schema(
 ) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Required(CONF_LATITUDE, default=default_lat): vol.Coerce(float),
-            vol.Required(CONF_LONGITUDE, default=default_lon): vol.Coerce(float),
+            vol.Required(
+                CONF_LOCATION,
+                default={CONF_LATITUDE: default_lat, CONF_LONGITUDE: default_lon},
+            ): LocationSelector(),
             vol.Required(CONF_LOOKAHEAD_MINUTES, default=default_lookahead): vol.Coerce(int),
             vol.Optional(CONF_LOCATION_NAME, default=default_location_name): str,
             vol.Optional(CONF_MAP_STYLE, default=default_map_style): SelectSelector(
@@ -118,12 +123,16 @@ def _build_schema(
 
 
 def _build_options_schema(
+    default_lat: float = 0.0,
+    default_lon: float = 0.0,
     default_lookahead: int = DEFAULT_LOOKAHEAD_MINUTES,
     default_location_name: str = "",
     default_map_style: str = _DEFAULT_MAP_STYLE,
 ) -> vol.Schema:
     return vol.Schema(
         {
+            vol.Required(CONF_LATITUDE, default=default_lat): vol.Coerce(float),
+            vol.Required(CONF_LONGITUDE, default=default_lon): vol.Coerce(float),
             vol.Required(CONF_LOOKAHEAD_MINUTES, default=default_lookahead): vol.Coerce(int),
             vol.Optional(CONF_LOCATION_NAME, default=default_location_name): str,
             vol.Optional(CONF_MAP_STYLE, default=default_map_style): SelectSelector(
@@ -142,16 +151,28 @@ class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 2
 
+    def __init__(self) -> None:
+        """Initialise flow state."""
+        super().__init__()
+        self._pending_input: dict | None = None
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         return RainIncomingOptionsFlow(config_entry)
 
+    def _create_entry(self, user_input: dict) -> ConfigFlowResult:
+        """Create a config entry from validated, flattened user input."""
+        if CONF_MAP_STYLE not in user_input:
+            user_input = {**user_input, CONF_MAP_STYLE: _DEFAULT_MAP_STYLE}
+        return self.async_create_entry(
+            title=_build_title(user_input),
+            data=user_input,
+        )
+
     async def async_step_user(
         self, user_input: dict | None = None
     ) -> ConfigFlowResult:
-        # Check the location limit BEFORE rendering the form or accepting input.
-        # This prevents the user from typing data they can't actually save.
         existing = self.hass.config_entries.async_entries(DOMAIN)
         if len(existing) >= MAX_LOCATIONS:
             return self.async_abort(reason="too_many_locations")
@@ -159,19 +180,19 @@ class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            _flatten_location(user_input)
             errors = _validate_input(user_input)
             if not errors:
-                # Normalise: ensure map_style is present with default
-                if CONF_MAP_STYLE not in user_input:
-                    user_input = {**user_input, CONF_MAP_STYLE: _DEFAULT_MAP_STYLE}
                 lat = user_input[CONF_LATITUDE]
                 lon = user_input[CONF_LONGITUDE]
                 await self.async_set_unique_id(f"{lat:.4f}_{lon:.4f}")
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=_build_title(user_input),
-                    data=user_input,
-                )
+
+                coverage = await self._check_coverage(lat, lon)
+                if coverage is False:
+                    self._pending_input = user_input
+                    return await self.async_step_confirm_no_coverage()
+                return self._create_entry(user_input)
 
         schema = _build_schema(
             default_lat=user_input.get(CONF_LATITUDE, self.hass.config.latitude) if user_input else self.hass.config.latitude,
@@ -183,6 +204,35 @@ class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user", data_schema=schema, errors=errors
         )
+
+    async def async_step_confirm_no_coverage(
+        self, user_input: dict | None = None
+    ) -> ConfigFlowResult:
+        """Ask user to confirm setup when no radar coverage was detected."""
+        if user_input is not None:
+            return self._create_entry(self._pending_input)
+
+        return self.async_show_form(step_id="confirm_no_coverage")
+
+    async def _check_coverage(self, lat: float, lon: float) -> bool | None:
+        """Probe RainViewer for radar coverage at the given coordinates.
+
+        Returns True if coverage detected, False if not, None if the
+        check could not be completed (API error - fail open).
+        """
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+        from .providers.rainviewer import check_coverage
+
+        try:
+            session = async_get_clientsession(self.hass)
+            return await check_coverage(lat, lon, session=session)
+        except Exception:
+            _LOGGER.warning(
+                "Could not verify RainViewer coverage at (%.4f, %.4f) - "
+                "proceeding with setup anyway",
+                lat, lon,
+            )
+            return None
 
 
 class RainIncomingOptionsFlow(OptionsFlow):
@@ -204,6 +254,10 @@ class RainIncomingOptionsFlow(OptionsFlow):
             if not errors:
                 # Merge the new options into entry.data so the title reflects changes.
                 merged_data = dict(self._config_entry.data)
+                if CONF_LATITUDE in user_input:
+                    merged_data[CONF_LATITUDE] = user_input[CONF_LATITUDE]
+                if CONF_LONGITUDE in user_input:
+                    merged_data[CONF_LONGITUDE] = user_input[CONF_LONGITUDE]
                 if CONF_LOCATION_NAME in user_input:
                     merged_data[CONF_LOCATION_NAME] = user_input[CONF_LOCATION_NAME]
                 if CONF_LOOKAHEAD_MINUTES in user_input:
@@ -225,11 +279,15 @@ class RainIncomingOptionsFlow(OptionsFlow):
         current_data = self._config_entry.data
         if user_input is not None:
             # Re-render after validation failure: restore what the user typed.
+            default_lat = user_input.get(CONF_LATITUDE, current_data.get(CONF_LATITUDE, 0.0))
+            default_lon = user_input.get(CONF_LONGITUDE, current_data.get(CONF_LONGITUDE, 0.0))
             default_lookahead = user_input.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES)
             default_location_name = user_input.get(CONF_LOCATION_NAME, "")
             default_map_style = user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE)
         else:
             # First render: use persisted values.
+            default_lat = current_data.get(CONF_LATITUDE, 0.0)
+            default_lon = current_data.get(CONF_LONGITUDE, 0.0)
             default_lookahead = current_options.get(
                 CONF_LOOKAHEAD_MINUTES,
                 current_data.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
@@ -243,6 +301,8 @@ class RainIncomingOptionsFlow(OptionsFlow):
                 current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
             )
         schema = _build_options_schema(
+            default_lat=default_lat,
+            default_lon=default_lon,
             default_lookahead=default_lookahead,
             default_location_name=default_location_name,
             default_map_style=default_map_style,

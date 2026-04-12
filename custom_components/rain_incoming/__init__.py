@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,8 +15,23 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["binary_sensor", "image", "sensor"]
 
 
+_STARTUP_STAGGER_SECONDS = 25
+"""Seconds between each location's first coordinator refresh at startup.
+
+All coordinators fire their first refresh when HA finishes booting. Without
+staggering, N locations blast N×200+ concurrent tile requests at RainViewer
+simultaneously and immediately hit rate limits. Staggering spreads the burst
+so each location's initial fetch largely completes before the next one starts.
+"""
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = RainDetectorCoordinator(hass, entry)
+
+    # Count how many coordinators are already registered to derive this entry's
+    # startup slot. Entry 0 starts immediately; entry 1 starts after 25s, etc.
+    entry_index = len(hass.data.get(DOMAIN, {}))
+    startup_delay = entry_index * _STARTUP_STAGGER_SECONDS
 
     # Don't block HA startup with async_config_entry_first_refresh().
     # The first radar fetch can take 10-30+ seconds. Instead, set up
@@ -31,6 +47,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     async def _do_first_refresh(_hass: HomeAssistant) -> None:
+        if startup_delay > 0:
+            _LOGGER.debug(
+                "Staggering first refresh for %s by %ds (entry index %d)",
+                entry.entry_id, startup_delay, entry_index,
+            )
+            await asyncio.sleep(startup_delay)
         await coordinator.async_request_refresh()
 
     entry.async_on_unload(async_at_started(hass, _do_first_refresh))
