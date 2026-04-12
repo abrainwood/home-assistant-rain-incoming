@@ -38,28 +38,46 @@ def _make_png_bytes(size=(256, 256), color=(100, 150, 200, 255)) -> bytes:
 
 
 class _MockResponse:
+    """Mock aiohttp response compatible with fetch_with_retry's direct-await pattern.
+
+    fetch_with_retry does `resp = await session.get(url, timeout=...)` and then
+    reads resp.status, resp.headers, resp.raise_for_status(), resp.read(), resp.release()
+    directly - NOT as a context manager.
+    """
+
     def __init__(self, status=200, body=b""):
         self.status = status
         self._body = body
+        self.headers: dict = {}
 
-    async def read(self):
+    async def read(self) -> bytes:
         return self._body
 
-    async def __aenter__(self):
-        return self
+    def raise_for_status(self) -> None:
+        if self.status >= 400:
+            import aiohttp
+            raise aiohttp.ClientResponseError(
+                request_info=None,  # type: ignore[arg-type]
+                history=(),
+                status=self.status,
+            )
 
-    async def __aexit__(self, *args):
-        return None
+    def release(self) -> None:
+        pass
 
 
 class _TrackingSession:
-    """Minimal mock aiohttp session that records URLs fetched."""
+    """Minimal mock aiohttp session that records URLs fetched.
+
+    session.get() must be an async function returning a response directly,
+    not a context manager - to match fetch_with_retry's calling convention.
+    """
 
     def __init__(self, url_to_bytes: dict[str, bytes]) -> None:
         self._url_to_bytes = url_to_bytes
         self.calls: list[str] = []
 
-    def get(self, url: str, **kwargs):
+    async def get(self, url: str, **kwargs):
         self.calls.append(url)
         if url in self._url_to_bytes:
             return _MockResponse(status=200, body=self._url_to_bytes[url])
