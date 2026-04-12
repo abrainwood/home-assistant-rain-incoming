@@ -1,6 +1,6 @@
 # Rain Incoming
 
-**Know before it hits.** Rain Incoming watches weather radar and tells you when rain is heading your way - before it arrives. Get animated radar maps and sensors you can use to trigger automations.
+**Know before it hits.** Rain Incoming watches weather radar and tells you when rain is heading your way - before it arrives. It uses nowcasting: short-term prediction (0-60 minutes out) driven by live radar data, not forecast models. Get animated radar maps and sensors you can use to trigger automations.
 
 ![Radar showing heavy rain approaching Vancouver](docs/radar_vancouver_128km.gif)
 
@@ -11,7 +11,7 @@
 ## 🌧️ What you get
 
 - **Binary sensor** - is rain incoming? (`on`/`off`, use it in any automation)
-- **Arrival time prediction** - when will it arrive?
+- **Arrival time prediction** - when will it arrive? (based on current radar motion)
 - **Intensity level** - light / moderate / heavy / extreme
 - **Animated radar maps** at 3 zoom levels (64 / 128 / 256km)
 - **Multi-location support** - up to 4 locations per installation
@@ -50,7 +50,7 @@ The latitude and longitude default to your Home Assistant home location (set in 
 |---|---|---|---|
 | Latitude | Your HA home location | -90 to 90 | Location to monitor |
 | Longitude | Your HA home location | -180 to 180 | Location to monitor |
-| Lookahead | 60 min | 20-60 min | How far ahead to predict |
+| Lookahead | 60 min | 20-60 min | How far ahead to predict (nowcast window) |
 
 ### Changing settings after setup
 
