@@ -238,7 +238,7 @@ async def _fetch_map_tile(
     return tile
 
 
-def _truncate_location(name: str, max_len: int = 30) -> str:
+def _truncate_location(name: str, max_len: int = 16) -> str:
     """Truncate a location name to max_len chars, adding ellipsis if needed."""
     if len(name) > max_len:
         return name[:max_len - 1] + "\u2026"
@@ -255,8 +255,8 @@ def build_frame_label(
 
     Format: "Location  DD/MM/YY  HH:MM TZ  Rangekm"
     Location is omitted if not set.
-    Location names > 30 chars are truncated to 29 chars + ellipsis as a
-    render-time safety net (config validation is PR 3's job).
+    Location names > 16 chars are truncated to 15 chars + ellipsis as a
+    render-time safety net (config validation enforces MAX_LOCATION_NAME_CHARS).
     """
     parts = []
     if location_name:

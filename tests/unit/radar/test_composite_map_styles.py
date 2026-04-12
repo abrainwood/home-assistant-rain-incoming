@@ -5,8 +5,8 @@ TDD: written FIRST (red), then implementation makes them green.
 Covers:
 - fetch_map_crop defaults to VOYAGER style
 - fetch_map_crop passes the style parameter through to the correct fetch_tile
-- build_frame_label truncates location names > 30 chars
-- build_frame_label leaves names <= 30 chars untouched
+- build_frame_label truncates location names over MAX_LOCATION_NAME_CHARS
+- build_frame_label leaves names <= MAX_LOCATION_NAME_CHARS untouched
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from custom_components.rain_incoming.radar.composite import (
     fetch_map_crop,
 )
 from custom_components.rain_incoming.radar.map_styles import MapStyle
+from custom_components.rain_incoming.const import MAX_LOCATION_NAME_CHARS
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +128,12 @@ async def test_fetch_map_crop_passes_style_through(style: MapStyle, url_fragment
 # ---------------------------------------------------------------------------
 
 def test_build_frame_label_truncates_long_location_names():
-    """Location names > 30 chars must be truncated to 29 chars + ellipsis."""
+    """Location names over MAX_LOCATION_NAME_CHARS must be truncated to (limit-1) chars + ellipsis."""
     long_name = "A" * 40  # 40 chars - clearly over the limit
     label = build_frame_label(
         timestamp=None, tz_name=None, radius_km=128, location_name=long_name,
     )
-    truncated = "A" * 29 + "\u2026"
+    truncated = "A" * (MAX_LOCATION_NAME_CHARS - 1) + "\u2026"
     assert truncated in label, (
         f"Expected truncated name {truncated!r} in label, got: {label!r}"
     )
@@ -140,44 +141,46 @@ def test_build_frame_label_truncates_long_location_names():
         f"Full 40-char name should not appear in label, got: {label!r}"
     )
 
-    # Boundary case: 31 chars is the FIRST length that triggers truncation.
+    # Boundary case: MAX_LOCATION_NAME_CHARS + 1 is the FIRST length that triggers truncation.
     # Off-by-one bugs live here (e.g. > vs >= in the length check).
-    name_31 = "D" * 31
-    label_31 = build_frame_label(
-        timestamp=None, tz_name=None, radius_km=128, location_name=name_31,
+    name_over = "D" * (MAX_LOCATION_NAME_CHARS + 1)
+    label_over = build_frame_label(
+        timestamp=None, tz_name=None, radius_km=128, location_name=name_over,
     )
-    truncated_31 = "D" * 29 + "\u2026"
-    assert truncated_31 in label_31, (
-        f"31-char name should be truncated to 29 chars + ellipsis, got: {label_31!r}"
+    truncated_over = "D" * (MAX_LOCATION_NAME_CHARS - 1) + "\u2026"
+    assert truncated_over in label_over, (
+        f"{MAX_LOCATION_NAME_CHARS + 1}-char name should be truncated to "
+        f"{MAX_LOCATION_NAME_CHARS - 1} chars + ellipsis, got: {label_over!r}"
     )
-    assert name_31 not in label_31, (
-        f"Full 31-char name should not appear in label, got: {label_31!r}"
+    assert name_over not in label_over, (
+        f"Full {MAX_LOCATION_NAME_CHARS + 1}-char name should not appear in label, got: {label_over!r}"
     )
 
-    # Boundary just below: 30-char name must NOT be truncated
-    name_30_boundary = "E" * 30
-    label_30 = build_frame_label(
-        timestamp=None, tz_name=None, radius_km=128, location_name=name_30_boundary,
+    # Boundary just below: MAX_LOCATION_NAME_CHARS-char name must NOT be truncated
+    name_boundary = "E" * MAX_LOCATION_NAME_CHARS
+    label_boundary = build_frame_label(
+        timestamp=None, tz_name=None, radius_km=128, location_name=name_boundary,
     )
-    assert name_30_boundary in label_30, (
-        f"30-char name (on the boundary) should NOT be truncated, got: {label_30!r}"
+    assert name_boundary in label_boundary, (
+        f"{MAX_LOCATION_NAME_CHARS}-char name (on the boundary) should NOT be truncated, "
+        f"got: {label_boundary!r}"
     )
 
 
 def test_build_frame_label_leaves_short_names_intact():
-    """Location names <= 30 chars must not be truncated."""
-    name_30 = "B" * 30  # exactly 30 chars - on the boundary
+    """Location names <= MAX_LOCATION_NAME_CHARS must not be truncated."""
+    name_at_limit = "B" * MAX_LOCATION_NAME_CHARS  # exactly at the limit
     label = build_frame_label(
-        timestamp=None, tz_name=None, radius_km=128, location_name=name_30,
+        timestamp=None, tz_name=None, radius_km=128, location_name=name_at_limit,
     )
-    assert name_30 in label, (
-        f"30-char name should appear unchanged in label, got: {label!r}"
+    assert name_at_limit in label, (
+        f"{MAX_LOCATION_NAME_CHARS}-char name should appear unchanged in label, got: {label!r}"
     )
 
-    name_29 = "C" * 29  # 29 chars - under the limit
+    name_under = "C" * (MAX_LOCATION_NAME_CHARS - 1)  # one under the limit
     label2 = build_frame_label(
-        timestamp=None, tz_name=None, radius_km=128, location_name=name_29,
+        timestamp=None, tz_name=None, radius_km=128, location_name=name_under,
     )
-    assert name_29 in label2, (
-        f"29-char name should appear unchanged in label, got: {label2!r}"
+    assert name_under in label2, (
+        f"{MAX_LOCATION_NAME_CHARS - 1}-char name should appear unchanged in label, got: {label2!r}"
     )
