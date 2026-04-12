@@ -167,8 +167,11 @@ class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
 
         schema = _build_schema(
-            self.hass.config.latitude,
-            self.hass.config.longitude,
+            default_lat=user_input.get(CONF_LATITUDE, self.hass.config.latitude) if user_input else self.hass.config.latitude,
+            default_lon=user_input.get(CONF_LONGITUDE, self.hass.config.longitude) if user_input else self.hass.config.longitude,
+            default_lookahead=user_input.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES) if user_input else DEFAULT_LOOKAHEAD_MINUTES,
+            default_location_name=user_input.get(CONF_LOCATION_NAME, "") if user_input else "",
+            default_map_style=user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE) if user_input else _DEFAULT_MAP_STYLE,
         )
         return self.async_show_form(
             step_id="user", data_schema=schema, errors=errors
@@ -209,21 +212,33 @@ class RainIncomingOptionsFlow(OptionsFlow):
                 return self.async_create_entry(data=user_input)
 
         # Pre-populate from current options (preferred) then data (fallback).
+        # When re-rendering after a validation error, use what the user typed so
+        # they don't have to retype values they already entered correctly.
         current_options = self._config_entry.options
         current_data = self._config_entry.data
-        schema = _build_options_schema(
-            default_lookahead=current_options.get(
+        if user_input is not None:
+            # Re-render after validation failure: restore what the user typed.
+            default_lookahead = user_input.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES)
+            default_location_name = user_input.get(CONF_LOCATION_NAME, "")
+            default_map_style = user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE)
+        else:
+            # First render: use persisted values.
+            default_lookahead = current_options.get(
                 CONF_LOOKAHEAD_MINUTES,
                 current_data.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
-            ),
-            default_location_name=current_options.get(
+            )
+            default_location_name = current_options.get(
                 CONF_LOCATION_NAME,
                 current_data.get(CONF_LOCATION_NAME, ""),
-            ),
-            default_map_style=current_options.get(
+            )
+            default_map_style = current_options.get(
                 CONF_MAP_STYLE,
                 current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
-            ),
+            )
+        schema = _build_options_schema(
+            default_lookahead=default_lookahead,
+            default_location_name=default_location_name,
+            default_map_style=default_map_style,
         )
         return self.async_show_form(
             step_id="init", data_schema=schema, errors=errors

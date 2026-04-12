@@ -536,6 +536,178 @@ async def test_config_flow_accepts_location_name_exactly_30_chars(hass: HomeAssi
 
 
 # ---------------------------------------------------------------------------
+# Task 125 Fix 1: sticky inputs on validation error
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_config_flow_preserves_user_input_on_validation_error(hass: HomeAssistant):
+    """When validation fails the form re-renders with the user's typed values.
+
+    We submit an invalid location name (too long) alongside a non-default lookahead.
+    The re-rendered schema's default for lookahead_minutes must reflect what the
+    user typed - not the system default - so the user doesn't have to retype it.
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    # Submit with a too-long location name and a non-default lookahead.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 45,  # non-default (default is 60)
+            "location_name": "X" * 40,  # too long, will be rejected
+            "map_style": "voyager",
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert "location_name" in result["errors"]
+
+    # Introspect the re-rendered schema to verify defaults reflect user input.
+    schema = result["data_schema"]
+    defaults = {
+        (key.schema if hasattr(key, "schema") else str(key)): (
+            key.default() if callable(getattr(key, "default", None)) else None
+        )
+        for key in schema.schema.keys()
+    }
+
+    assert defaults.get("lookahead_minutes") == 45, (
+        f"Expected lookahead_minutes default to be 45 (user's value), got {defaults.get('lookahead_minutes')}"
+    )
+    assert defaults.get("latitude") == -33.701
+    assert defaults.get("longitude") == 151.209
+
+
+@pytest.mark.asyncio
+async def test_options_flow_preserves_user_input_on_validation_error(hass: HomeAssistant):
+    """Options flow: form re-renders with user's typed values after validation error."""
+    from custom_components.rain_incoming.const import CONF_LOOKAHEAD_MINUTES
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            CONF_MAP_STYLE: "voyager",
+        },
+        version=2,
+    )
+    await setup_integration(hass, entry, _MOCK_RESULT)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+
+    # Submit with an invalid location name and a non-default lookahead.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "location_name": "Y" * 40,  # too long
+            "lookahead_minutes": 25,  # non-default
+            CONF_MAP_STYLE: "osm_dark",
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert "location_name" in result["errors"]
+
+    schema = result["data_schema"]
+    defaults = {
+        (key.schema if hasattr(key, "schema") else str(key)): (
+            key.default() if callable(getattr(key, "default", None)) else None
+        )
+        for key in schema.schema.keys()
+    }
+
+    assert defaults.get("lookahead_minutes") == 25, (
+        f"Expected lookahead_minutes default to be 25 (user's value), got {defaults.get('lookahead_minutes')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 125 Fix 2: constraint hints in field labels (translation file checks)
+# ---------------------------------------------------------------------------
+
+
+def test_translation_includes_location_name_max_length():
+    """location_name label in config flow must mention the 30-char limit."""
+    import json
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "../../custom_components/rain_incoming/translations/en.json",
+    )
+    with open(path) as f:
+        translations = json.load(f)
+
+    label = translations["config"]["step"]["user"]["data"]["location_name"]
+    assert "30" in label, f"Expected '30' in location_name label, got: {label!r}"
+    assert "character" in label.lower(), (
+        f"Expected 'character' in location_name label, got: {label!r}"
+    )
+
+
+def test_translation_includes_lookahead_range_in_config_flow():
+    """lookahead_minutes label in config flow must mention the 20-60 range."""
+    import json
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "../../custom_components/rain_incoming/translations/en.json",
+    )
+    with open(path) as f:
+        translations = json.load(f)
+
+    label = translations["config"]["step"]["user"]["data"]["lookahead_minutes"]
+    assert "20" in label and "60" in label, (
+        f"Expected '20' and '60' in lookahead_minutes label, got: {label!r}"
+    )
+
+
+def test_translation_includes_location_name_max_length_in_options_flow():
+    """location_name label in options flow must mention the 30-char limit."""
+    import json
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "../../custom_components/rain_incoming/translations/en.json",
+    )
+    with open(path) as f:
+        translations = json.load(f)
+
+    label = translations["options"]["step"]["init"]["data"]["location_name"]
+    assert "30" in label, f"Expected '30' in options location_name label, got: {label!r}"
+    assert "character" in label.lower(), (
+        f"Expected 'character' in options location_name label, got: {label!r}"
+    )
+
+
+def test_translation_includes_lookahead_range_in_options_flow():
+    """lookahead_minutes label in options flow must mention the 20-60 range."""
+    import json
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "../../custom_components/rain_incoming/translations/en.json",
+    )
+    with open(path) as f:
+        translations = json.load(f)
+
+    label = translations["options"]["step"]["init"]["data"]["lookahead_minutes"]
+    assert "20" in label and "60" in label, (
+        f"Expected '20' and '60' in options lookahead_minutes label, got: {label!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fix 4: lat/lon immutability via options flow
 # ---------------------------------------------------------------------------
 
