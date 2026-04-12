@@ -1,0 +1,451 @@
+"""Integration tests for RadarImageEntity greedy rendering.
+
+TDD: tests written FIRST. Initially red against the lazy implementation,
+then green after _handle_coordinator_update / _render_to_cache are added.
+
+Red → green cycle documented for tests 1, 4, and 5 as required.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from custom_components.rain_incoming.image import RadarImageEntity
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_coordinator(
+    latest_frame_path: str | None = "/v2/radar/latest",
+    frame_paths: list[str] | None = None,
+    map_style: str = "voyager",
+):
+    coord = MagicMock()
+    coord.latest_frame_path = latest_frame_path
+    coord.frame_paths = frame_paths or ["/v2/radar/f1", "/v2/radar/f2", "/v2/radar/latest"]
+    coord.frame_timestamps = [
+        datetime(2026, 4, 10, 10, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 10, 10, 10, tzinfo=timezone.utc),
+        datetime(2026, 4, 10, 10, 20, tzinfo=timezone.utc),
+    ]
+    coord.confidence_maps = None
+    coord.tracked_cells = []
+    coord.last_update_success = True
+    coord.last_update_success_time = datetime.now(timezone.utc)
+    coord.map_style = map_style
+    coord.data = MagicMock()
+    return coord
+
+
+def _make_entry():
+    entry = MagicMock()
+    entry.data = {
+        "latitude": -33.7,
+        "longitude": 151.2,
+    }
+    entry.entry_id = "test_entry_greedy"
+    return entry
+
+
+def _make_entity(
+    latest_frame_path: str | None = "/v2/radar/latest",
+    frame_paths: list[str] | None = None,
+) -> RadarImageEntity:
+    coord = _make_coordinator(latest_frame_path=latest_frame_path, frame_paths=frame_paths)
+    entry = _make_entry()
+    entity = RadarImageEntity(coord, entry, 128)
+
+    # Attach a minimal mock hass
+    hass = MagicMock()
+    hass.config.latitude = -33.7
+    hass.config.longitude = 151.2
+    hass.config.time_zone = "Australia/Sydney"
+    entity.hass = hass
+    return entity
+
+
+# ---------------------------------------------------------------------------
+# Test 1 (RED first): coordinator update schedules a render
+# ---------------------------------------------------------------------------
+
+class TestHandleCoordinatorUpdateSchedulesRender:
+    """_handle_coordinator_update must schedule a background render task.
+
+    RED: passes before implementation because _handle_coordinator_update
+    does NOT call _schedule_render in the original lazy code.
+    """
+
+    @pytest.mark.asyncio
+    async def test_handle_coordinator_update_schedules_render(self):
+        """Triggering a coordinator update must cause render_animated_composite
+        to be called (via the scheduled background task)."""
+        entity = _make_entity()
+
+        # Track render calls
+        render_called = asyncio.Event()
+
+        async def fake_render(*args, **kwargs):
+            render_called.set()
+            return b"GIF89a_fake"
+
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+            new=fake_render,
+        ):
+            with patch("custom_components.rain_incoming.image.async_get_clientsession", return_value=MagicMock()):
+                # Capture tasks created via hass.async_create_task.
+                # async_create_task is synchronous in HA - it wraps the coroutine
+                # into a Task and returns it.
+                created_tasks: list[asyncio.Task] = []
+
+                def capture_task(coro, *, name=None):
+                    task = asyncio.ensure_future(coro)
+                    created_tasks.append(task)
+                    return task
+
+                entity.hass.async_create_task = capture_task
+
+                # async_write_ha_state requires a real HA entity registration; patch it
+                # out since we're only testing that a render task gets scheduled.
+                with patch.object(entity, "async_write_ha_state"):
+                    entity._handle_coordinator_update()
+
+                # Wait for all created tasks to complete
+                if created_tasks:
+                    await asyncio.gather(*created_tasks, return_exceptions=True)
+
+                assert render_called.is_set(), (
+                    "_handle_coordinator_update must schedule a background render; "
+                    "render_animated_composite was never called"
+                )
+
+
+# ---------------------------------------------------------------------------
+# Test 2: async_image returns cached bytes immediately (no rendering)
+# ---------------------------------------------------------------------------
+
+class TestAsyncImageReturnsCachedBytes:
+    """When cache is warm, async_image must return bytes without rendering."""
+
+    @pytest.mark.asyncio
+    async def test_async_image_returns_cached_bytes_when_warm(self):
+        entity = _make_entity()
+        entity._cached_image = b"GIF89a_from_cache"
+
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+        ) as mock_render:
+            result = await entity.async_image()
+
+        assert result == b"GIF89a_from_cache"
+        mock_render.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 3: placeholder on cold start
+# ---------------------------------------------------------------------------
+
+class TestAsyncImageReturnsPlaceholderWhenCold:
+    """Fresh entity with no cache or data returns a valid GIF placeholder."""
+
+    @pytest.mark.asyncio
+    async def test_async_image_returns_placeholder_when_cold(self):
+        entity = _make_entity(latest_frame_path=None)
+
+        result = await entity.async_image()
+
+        assert result is not None, "Must return placeholder bytes, not None"
+        assert result[:3] == b"GIF", (
+            "Placeholder must be a valid GIF (starts with GIF signature)"
+        )
+        assert len(result) > 100, "Placeholder GIF must have non-trivial content"
+
+
+# ---------------------------------------------------------------------------
+# Test 4 (RED first): render timeout falls back to placeholder
+# ---------------------------------------------------------------------------
+
+class TestRenderTimeoutFallback:
+    """When render_animated_composite takes longer than the timeout,
+    the cache must NOT be populated and async_image must return placeholder.
+
+    RED: old code had no asyncio.wait_for around the render, so a slow
+    render would just block forever rather than timing out gracefully.
+    """
+
+    @pytest.mark.asyncio
+    async def test_render_timeout_returns_placeholder(self):
+        entity = _make_entity()
+        # No previous cache
+        entity._cached_image = None
+
+        async def slow_render(*args, **kwargs):
+            await asyncio.sleep(60)
+            return b"GIF89a_too_late"
+
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+            new=slow_render,
+        ):
+            with patch(
+                "custom_components.rain_incoming.image._RENDER_TIMEOUT_SECONDS",
+                1.0,  # speed up the test
+            ):
+                with patch("custom_components.rain_incoming.image.async_get_clientsession", return_value=MagicMock()):
+                    await entity._render_to_cache()
+
+        # Cache must NOT have been populated
+        assert entity._cached_image is None, (
+            "Cache must not be populated when render timed out"
+        )
+        assert entity._cached_frame_path is None, (
+            "On timeout, _cached_frame_path must NOT be updated, otherwise the "
+            "next coordinator update would skip rendering this frame"
+        )
+
+        # async_image must fall back to placeholder
+        result = await entity.async_image()
+        assert result is not None
+        assert result[:3] == b"GIF", "Timeout fallback must return a valid GIF"
+
+
+# ---------------------------------------------------------------------------
+# Test 5 (RED first): double-render guard
+# ---------------------------------------------------------------------------
+
+class TestDoubleRenderGuard:
+    """Calling _schedule_render twice before the first task finishes must
+    NOT create a second task.
+
+    RED: old code had no _render_task tracking at all.
+    """
+
+    @pytest.mark.asyncio
+    async def test_double_render_guard(self):
+        entity = _make_entity()
+
+        render_start = asyncio.Event()
+        render_hold = asyncio.Event()
+
+        async def slow_render(*args, **kwargs):
+            render_start.set()
+            await render_hold.wait()
+            return b"GIF89a_held"
+
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+            new=slow_render,
+        ):
+            with patch("custom_components.rain_incoming.image.async_get_clientsession", return_value=MagicMock()):
+                tasks_created: list[asyncio.Task] = []
+
+                def capture_task(coro, *, name=None):
+                    task = asyncio.ensure_future(coro)
+                    tasks_created.append(task)
+                    return task
+
+                entity.hass.async_create_task = capture_task
+
+                # First schedule
+                entity._schedule_render()
+                # Wait for the render to start so the task is definitely running
+                await render_start.wait()
+
+                # Second schedule - should be a no-op
+                entity._schedule_render()
+
+                assert len(tasks_created) == 1, (
+                    f"Expected exactly 1 render task, got {len(tasks_created)}. "
+                    "Double-render guard must prevent duplicate tasks."
+                )
+
+                # Release the held render task so it completes cleanly
+                render_hold.set()
+                if tasks_created:
+                    await asyncio.gather(*tasks_created, return_exceptions=True)
+
+
+# ---------------------------------------------------------------------------
+# Test 6: render failure logs error and does not update cache
+# ---------------------------------------------------------------------------
+
+class TestRenderFailureLogsError:
+    """render_animated_composite raising RuntimeError must log at ERROR
+    and leave the cache unchanged."""
+
+    @pytest.mark.asyncio
+    async def test_render_failure_logs_error(self, caplog):
+        entity = _make_entity()
+        entity._cached_image = None
+
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+            side_effect=RuntimeError("tile fetch exploded"),
+        ):
+            with patch("custom_components.rain_incoming.image.async_get_clientsession", return_value=MagicMock()):
+                with caplog.at_level(logging.ERROR, logger="custom_components.rain_incoming.image"):
+                    await entity._render_to_cache()
+
+        assert entity._cached_image is None, "Cache must not be populated after render failure"
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert any(
+            "render failed" in r.getMessage().lower() for r in error_records
+        ), f"Expected an ERROR log mentioning 'render failed', got: {[r.getMessage() for r in error_records]}"
+
+
+# ---------------------------------------------------------------------------
+# Test 7: async_added_to_hass triggers render when data already present
+# ---------------------------------------------------------------------------
+
+class TestAsyncAddedToHassTriggersRender:
+    """If the coordinator already has frame data when the entity is added to
+    hass, async_added_to_hass must schedule an immediate render."""
+
+    @pytest.mark.asyncio
+    async def test_async_added_to_hass_triggers_render_when_data_present(self):
+        entity = _make_entity(latest_frame_path="/v2/radar/existing")
+
+        tasks_created: list[asyncio.Task] = []
+
+        def capture_task(coro, *, name=None):
+            task = asyncio.ensure_future(coro)
+            tasks_created.append(task)
+            return task
+
+        entity.hass.async_create_task = capture_task
+
+        # async_added_to_hass calls super().async_added_to_hass() which calls
+        # coordinator.async_add_listener - mock that out
+        entity.coordinator.async_add_listener = MagicMock(return_value=lambda: None)
+        entity.coordinator.last_update_success = True
+        entity.coordinator.last_update_success_time = datetime.now(timezone.utc)
+
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+            new=AsyncMock(return_value=b"GIF89a_preload"),
+        ):
+            with patch("custom_components.rain_incoming.image.async_get_clientsession", return_value=MagicMock()):
+                await entity.async_added_to_hass()
+                # Let scheduled tasks run
+                if tasks_created:
+                    await asyncio.gather(*tasks_created, return_exceptions=True)
+
+        assert len(tasks_created) == 1, (
+            f"Expected exactly 1 render task, got {len(tasks_created)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 8: async_added_to_hass does NOT render when no data present
+# ---------------------------------------------------------------------------
+
+class TestAsyncAddedToHassNoRenderWhenNoData:
+    """If the coordinator has no frame data yet, async_added_to_hass must
+    NOT schedule a render (nothing to render)."""
+
+    @pytest.mark.asyncio
+    async def test_async_added_to_hass_does_not_render_when_data_absent(self):
+        entity = _make_entity(latest_frame_path=None)
+
+        tasks_created: list[asyncio.Task] = []
+
+        def capture_task(coro, *, name=None):
+            task = asyncio.ensure_future(coro)
+            tasks_created.append(task)
+            return task
+
+        entity.hass.async_create_task = capture_task
+        entity.coordinator.async_add_listener = MagicMock(return_value=lambda: None)
+
+        await entity.async_added_to_hass()
+        # Drain pending event loop callbacks - this is NOT a timing wait;
+        # it's the standard idiom for letting scheduled coroutines start.
+        await asyncio.sleep(0)
+
+        assert len(tasks_created) == 0, (
+            "async_added_to_hass must not schedule a render when coordinator has no data"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 9: render skipped when frame path unchanged
+# ---------------------------------------------------------------------------
+
+class TestRenderSkippedWhenFramePathUnchanged:
+    """_render_to_cache must be a no-op when the frame hasn't changed."""
+
+    @pytest.mark.asyncio
+    async def test_render_skipped_when_frame_path_unchanged(self):
+        entity = _make_entity(latest_frame_path="/v2/radar/latest")
+        entity._cached_image = b"GIF89a_already_rendered"
+        entity._cached_frame_path = "/v2/radar/latest"  # same as coordinator
+
+        # _render_to_cache should short-circuit before calling async_get_clientsession
+        # or render_animated_composite when the frame path hasn't changed.
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+        ) as mock_render:
+            with patch("custom_components.rain_incoming.image.async_get_clientsession"):
+                await entity._render_to_cache()
+
+        mock_render.assert_not_called()
+        assert entity._cached_image == b"GIF89a_already_rendered"
+
+
+# ---------------------------------------------------------------------------
+# Test 10: render task cancelled on entity removal
+# ---------------------------------------------------------------------------
+
+class TestRenderTaskCancelledOnEntityRemoval:
+    """async_will_remove_from_hass must cancel any in-flight render task."""
+
+    @pytest.mark.asyncio
+    async def test_render_task_cancelled_on_entity_removal(self):
+        entity = _make_entity()
+
+        render_hold = asyncio.Event()
+
+        async def slow_render(*args, **kwargs):
+            await render_hold.wait()
+            return b"GIF89a_held"
+
+        with patch(
+            "custom_components.rain_incoming.image.render_animated_composite",
+            new=slow_render,
+        ):
+            with patch("custom_components.rain_incoming.image.async_get_clientsession", return_value=MagicMock()):
+                def capture_task(coro, *, name=None):
+                    task = asyncio.ensure_future(coro)
+                    entity._render_task = task
+                    return task
+
+                entity.hass.async_create_task = capture_task
+                entity._schedule_render()
+
+                # Give the event loop a tick so the task actually starts
+                # Drain pending event loop callbacks - this is NOT a timing wait;
+                # it's the standard idiom for letting scheduled coroutines start.
+                await asyncio.sleep(0)
+
+                task = entity._render_task
+                assert task is not None, "A render task must have been created"
+                assert not task.done(), "Task should still be running"
+
+                await entity.async_will_remove_from_hass()
+
+                # Give the event loop ticks to propagate the cancellation
+                # through the task's coroutine stack.
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+
+        assert task.cancelled() or task.done(), (
+            "async_will_remove_from_hass must cancel the in-flight render task"
+        )

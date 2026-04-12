@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from io import BytesIO
@@ -11,7 +12,7 @@ from homeassistant.components.image import ImageEntity
 _LOGGER = logging.getLogger(__name__)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -20,6 +21,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import CONF_LOCATION_NAME, DOMAIN, RADAR_GIF_FRAME_DURATION_MS, RADAR_RADII_KM
 from .coordinator import RainDetectorCoordinator
 from .radar.composite import render_animated_composite
+
+# Per-render timeout: set below HA image_proxy's ~60s default so a slow render
+# falls back gracefully to the placeholder instead of letting image_proxy time out
+# and return a broken-image icon.
+_RENDER_TIMEOUT_SECONDS = 45.0
 
 
 async def async_setup_entry(
@@ -49,6 +55,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         self._attr_unique_id = f"{entry.entry_id}_radar_{radius_km}km"
         self._cached_image: bytes | None = None
         self._cached_frame_path: str | None = None
+        self._render_task: asyncio.Task | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -81,6 +88,123 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
             attrs["stale_since"] = self.coordinator.last_update_success_time.isoformat()
         return attrs
 
+    # ------------------------------------------------------------------
+    # Greedy rendering - pre-render on every coordinator update
+    # ------------------------------------------------------------------
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Called by CoordinatorEntity whenever coordinator data refreshes.
+
+        Calls the parent to update internal HA state, then schedules a
+        background render so the cache is warm before the next frontend request.
+        """
+        super()._handle_coordinator_update()
+        self._schedule_render()
+
+    def _schedule_render(self) -> None:
+        """Start a background render task if one isn't already running."""
+        if self._render_task is not None and not self._render_task.done():
+            return
+        self._render_task = self.hass.async_create_task(
+            self._render_to_cache(),
+            name=f"rain_incoming_render_{self._radius_km}km",
+        )
+
+    async def _render_to_cache(self) -> None:
+        """Render the composite GIF and store in self._cached_image.
+
+        Skips the render if the frame hasn't changed since the last render.
+        Wraps the render with a timeout so a slow network call never blocks
+        indefinitely and explicitly falls back rather than letting image_proxy
+        return a broken-image icon.
+        """
+        frame_path = self.coordinator.latest_frame_path
+        if frame_path is None:
+            return  # nothing to render yet
+
+        if frame_path == self._cached_frame_path and self._cached_image is not None:
+            return  # already cached this frame
+
+        frame_paths = self.coordinator.frame_paths
+        if not frame_paths:
+            return
+
+        data = self._entry.data
+        lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
+        lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
+
+        import zoneinfo
+        ha_tz = zoneinfo.ZoneInfo(self.hass.config.time_zone)
+        local_timestamps = [
+            ts.astimezone(ha_tz) for ts in self.coordinator.frame_timestamps
+        ] if self.coordinator.frame_timestamps else None
+
+        session = async_get_clientsession(self.hass)
+        conf_maps = self.coordinator.confidence_maps or None
+        location_name = data.get(CONF_LOCATION_NAME) or None
+        map_style = self.coordinator.map_style
+
+        _LOGGER.debug(
+            "Radar %dkm: background render starting, %d frames for %s (style=%s)",
+            self._radius_km, len(frame_paths), location_name or "default location", map_style,
+        )
+
+        try:
+            result = await asyncio.wait_for(
+                render_animated_composite(
+                    lat=lat,
+                    lon=lon,
+                    radius_km=self._radius_km,
+                    frame_paths=frame_paths,
+                    frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
+                    frame_timestamps=local_timestamps,
+                    tz_name=self.hass.config.time_zone,
+                    confidence_maps=conf_maps,
+                    location_name=location_name,
+                    session=session,
+                    run_in_executor=self.hass.async_add_executor_job,
+                    map_style=map_style,
+                ),
+                timeout=_RENDER_TIMEOUT_SECONDS,
+            )
+            self._cached_image = result
+            self._cached_frame_path = frame_path
+            _LOGGER.debug(
+                "Radar %dkm: rendered %d bytes",
+                self._radius_km, len(self._cached_image) if self._cached_image else 0,
+            )
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Radar %dkm: render timed out after %.0fs for %s; keeping previous cache or placeholder",
+                self._radius_km, _RENDER_TIMEOUT_SECONDS, location_name or "default location",
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Radar %dkm: render failed for %s",
+                self._radius_km, location_name or "default location",
+            )
+
+    async def async_added_to_hass(self) -> None:
+        """Register coordinator listener and kick off a render if data is ready.
+
+        If the integration was reloaded and the coordinator already has frame
+        data, render immediately so the cache is warm before the first request.
+        """
+        await super().async_added_to_hass()
+        if self.coordinator.latest_frame_path is not None:
+            self._schedule_render()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel any in-flight render task before the entity is removed."""
+        if self._render_task is not None and not self._render_task.done():
+            self._render_task.cancel()
+        await super().async_will_remove_from_hass()
+
+    # ------------------------------------------------------------------
+    # Image serving - return from cache only (render happens in background)
+    # ------------------------------------------------------------------
+
     def _make_placeholder(self) -> bytes:
         """Generate a placeholder GIF with 'Waiting for radar data...' text."""
         img = Image.new("RGB", (640, 640), (30, 30, 30))
@@ -98,75 +222,19 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         return buf.getvalue()
 
     async def async_image(self) -> bytes | None:
-        frame_path = self.coordinator.latest_frame_path
-        if frame_path is None:
-            if self._cached_image is not None:
-                _LOGGER.debug("Radar %dkm: returning stale cached image (no fresh data)", self._radius_km)
-                return self._cached_image
-            _LOGGER.debug("Radar %dkm: returning placeholder (no data yet)", self._radius_km)
-            return self._make_placeholder()
+        """Return the pre-rendered GIF bytes from cache.
 
-        # Only re-render if the latest frame path changed
-        if frame_path == self._cached_frame_path and self._cached_image is not None:
+        The cache is populated by _render_to_cache() which runs as a background
+        task after every coordinator update (greedy rendering). If a render is
+        in-flight when this is called, we await it so the caller gets real data
+        instead of a placeholder.
+        """
+        if self._render_task is not None and not self._render_task.done():
+            try:
+                await self._render_task
+            except Exception:
+                pass  # _render_to_cache already logs the error
+        if self._cached_image is not None:
             return self._cached_image
-
-        frame_paths = self.coordinator.frame_paths
-        if not frame_paths:
-            if self._cached_image is not None:
-                _LOGGER.debug("Radar %dkm: returning stale cached image (no frame paths)", self._radius_km)
-                return self._cached_image
-            _LOGGER.debug("Radar %dkm: returning placeholder (no frame paths)", self._radius_km)
-            return self._make_placeholder()
-
-        data = self._entry.data
-        lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
-        lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
-
-        # Convert timestamps to HA's configured timezone for display
-        import zoneinfo
-        ha_tz = zoneinfo.ZoneInfo(self.hass.config.time_zone)
-        local_timestamps = [
-            ts.astimezone(ha_tz) for ts in self.coordinator.frame_timestamps
-        ] if self.coordinator.frame_timestamps else None
-
-        session = async_get_clientsession(self.hass)
-        conf_maps = self.coordinator.confidence_maps or None
-        location_name = data.get(CONF_LOCATION_NAME) or None
-
-        map_style = self.coordinator.map_style
-
-        _LOGGER.debug(
-            "Radar %dkm: rendering %d frames for %s (style=%s)",
-            self._radius_km, len(frame_paths), location_name or "default location", map_style,
-        )
-        try:
-            self._cached_image = await render_animated_composite(
-                lat=lat,
-                lon=lon,
-                radius_km=self._radius_km,
-                frame_paths=frame_paths,
-                frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
-                frame_timestamps=local_timestamps,
-                tz_name=self.hass.config.time_zone,
-                confidence_maps=conf_maps,
-                location_name=location_name,
-                session=session,
-                run_in_executor=self.hass.async_add_executor_job,
-                map_style=map_style,
-            )
-            self._cached_frame_path = frame_path
-            _LOGGER.debug(
-                "Radar %dkm: rendered %d bytes",
-                self._radius_km, len(self._cached_image) if self._cached_image else 0,
-            )
-        except Exception:
-            _LOGGER.exception(
-                "Radar %dkm: rendering failed for %s",
-                self._radius_km, location_name or "default location",
-            )
-            # Return whatever we have - stale cache or placeholder
-            if self._cached_image is not None:
-                return self._cached_image
-            return self._make_placeholder()
-
-        return self._cached_image
+        _LOGGER.debug("Radar %dkm: returning placeholder (cache not yet populated)", self._radius_km)
+        return self._make_placeholder()
