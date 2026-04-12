@@ -49,6 +49,7 @@ class MapStyleDefinition:
     display_name: str
     attribution: str
     fetch_tile: FetchTileFn
+    is_dark: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +187,7 @@ _STYLES: dict[MapStyle, MapStyleDefinition] = {
         display_name="OpenStreetMap Dark",
         attribution="© OpenStreetMap contributors",
         fetch_tile=_fetch_osm_dark,
+        is_dark=True,
     ),
     MapStyle.ESRI_IMAGERY: MapStyleDefinition(
         style=MapStyle.ESRI_IMAGERY,
@@ -198,6 +200,7 @@ _STYLES: dict[MapStyle, MapStyleDefinition] = {
         display_name="Dark Matter",
         attribution="© CARTO, © OpenStreetMap contributors",
         fetch_tile=_fetch_dark_matter,
+        is_dark=True,
     ),
 }
 

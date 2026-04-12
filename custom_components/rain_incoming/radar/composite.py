@@ -173,6 +173,7 @@ def draw_crosshair(img: Image.Image, cx: int, cy: int) -> None:
 
 def draw_range_rings(
     img: Image.Image, cx: int, cy: int, full_radius_px: int, radius_km: int,
+    is_dark: bool = False,
 ) -> None:
     """Draw subtle range rings at half-radius and full-radius with distance labels."""
     draw = ImageDraw.Draw(img)
@@ -193,12 +194,7 @@ def draw_range_rings(
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         lx = cx + 4
         ly = cy - r - th - 2
-        # White outline for readability
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx or dy:
-                    draw.text((lx + dx, ly + dy), label, fill=(255, 255, 255, 255), font=font)
-        draw.text((lx, ly), label, fill=(0, 0, 0, 200), font=font)
+        _draw_text_with_outline(draw, lx, ly, label, font, is_dark=is_dark)
 
 
 async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
@@ -282,6 +278,7 @@ def _draw_frame_label(
     *,
     frame_index: int | None = None,
     frame_count: int | None = None,
+    is_dark: bool = False,
 ) -> None:
     """Draw header labels across the top of a frame in three positions.
 
@@ -299,21 +296,21 @@ def _draw_frame_label(
 
     # --- Top-left: location name ---
     if location_name:
-        _draw_text_with_outline(draw, padding, padding, _truncate_location(location_name), font)
+        _draw_text_with_outline(draw, padding, padding, _truncate_location(location_name), font, is_dark=is_dark)
 
     # --- Top-centre: date/time ---
     if timestamp is not None:
         tz_label = timestamp.strftime("%Z") or tz_name or "UTC"
         datetime_text = f"{timestamp.strftime('%d/%m/%y')}  {timestamp.strftime(f'%H:%M {tz_label}')}"
         cx = img.width // 2
-        _draw_text_with_outline_anchored(draw, cx, padding, datetime_text, font, anchor="mt")
+        _draw_text_with_outline_anchored(draw, cx, padding, datetime_text, font, anchor="mt", is_dark=is_dark)
 
     # --- Top-right: range + frame counter ---
     range_text = f"{radius_km}km"
     if frame_index is not None and frame_count is not None:
         range_text = f"{range_text}  {frame_index}/{frame_count}"
     rx = img.width - padding
-    _draw_text_with_outline_anchored(draw, rx, padding, range_text, font, anchor="rt")
+    _draw_text_with_outline_anchored(draw, rx, padding, range_text, font, anchor="rt", is_dark=is_dark)
 
 
 def _draw_attribution(img: Image.Image, style_def: MapStyleDefinition) -> None:
@@ -337,7 +334,14 @@ def _draw_attribution(img: Image.Image, style_def: MapStyleDefinition) -> None:
     lx = padding
     ly = img.height - text_h - padding
 
-    _draw_text_with_outline(draw, lx, ly, text, font)
+    _draw_text_with_outline(draw, lx, ly, text, font, is_dark=style_def.is_dark)
+
+
+def _text_colours(is_dark: bool) -> tuple[tuple, tuple]:
+    """Return (outline_colour, fill_colour) for text on light or dark backgrounds."""
+    if is_dark:
+        return (0, 0, 0, 200), (255, 255, 255, 230)
+    return (255, 255, 255, 220), (0, 0, 0, 230)
 
 
 def _draw_text_with_outline(
@@ -346,13 +350,19 @@ def _draw_text_with_outline(
     y: int,
     text: str,
     font,
+    is_dark: bool = False,
 ) -> None:
-    """Draw text with a white outline and dark fill for readability on any background."""
+    """Draw text with a contrasting outline for readability on any background.
+
+    On light maps: black text, white outline.
+    On dark maps: white text, black outline.
+    """
+    outline, fill = _text_colours(is_dark)
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             if dx or dy:
-                draw.text((x + dx, y + dy), text, fill=(255, 255, 255, 220), font=font)
-    draw.text((x, y), text, fill=(0, 0, 0, 230), font=font)
+                draw.text((x + dx, y + dy), text, fill=outline, font=font)
+    draw.text((x, y), text, fill=fill, font=font)
 
 
 def _draw_text_with_outline_anchored(
@@ -362,19 +372,21 @@ def _draw_text_with_outline_anchored(
     text: str,
     font,
     anchor: str = "la",
+    is_dark: bool = False,
 ) -> None:
-    """Draw text with a white outline using a Pillow text anchor.
+    """Draw text with a contrasting outline using a Pillow text anchor.
 
     anchor='mt' for top-centre, anchor='rt' for top-right, anchor='la' for top-left.
     """
+    outline, fill = _text_colours(is_dark)
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             if dx or dy:
                 draw.text(
                     (x + dx, y + dy), text,
-                    fill=(255, 255, 255, 220), font=font, anchor=anchor,
+                    fill=outline, font=font, anchor=anchor,
                 )
-    draw.text((x, y), text, fill=(0, 0, 0, 230), font=font, anchor=anchor)
+    draw.text((x, y), text, fill=fill, font=font, anchor=anchor)
 
 
 def _composite_single_frame(
@@ -436,16 +448,18 @@ def _composite_single_frame(
     radius_px = int(radius_km / kpp) if kpp > 0 else output_size // 2
 
     cx, cy = output_size // 2, output_size // 2
-    draw_range_rings(composite, cx, cy, radius_px, radius_km)
+    if style_def is None:
+        style_def = get_style(MapStyle.VOYAGER)
+
+    draw_range_rings(composite, cx, cy, radius_px, radius_km, is_dark=style_def.is_dark)
     draw_crosshair(composite, cx, cy)
 
     _draw_frame_label(
         composite, timestamp, tz_name, radius_km, location_name,
         frame_index=frame_index, frame_count=frame_count,
+        is_dark=style_def.is_dark,
     )
 
-    if style_def is None:
-        style_def = get_style(MapStyle.VOYAGER)
     _draw_attribution(composite, style_def)
 
     return composite
