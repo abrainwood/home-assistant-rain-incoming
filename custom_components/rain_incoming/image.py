@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageFont
@@ -56,6 +56,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         self._cached_image: bytes | None = None
         self._cached_frame_path: str | None = None
         self._render_task: asyncio.Task | None = None
+        self._created_at: datetime = datetime.now(timezone.utc)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -70,7 +71,10 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
 
     @property
     def image_last_updated(self) -> datetime | None:
-        return self.coordinator.last_update_success_time
+        # Must never return None - HA's image proxy won't generate a valid URL
+        # without a timestamp, so async_image() would never be called and the
+        # frontend would show a broken-image icon instead of the placeholder.
+        return self.coordinator.last_update_success_time or self._created_at
 
     @property
     def available(self) -> bool:
