@@ -127,6 +127,7 @@ def test_all_attributions_nonempty():
         MapStyle.OSM_STANDARD: "OpenStreetMap",
         MapStyle.OSM_DARK: "OpenStreetMap",
         MapStyle.ESRI_IMAGERY: "Esri",
+        MapStyle.DARK_MATTER: "CARTO",
     }
     for style in MapStyle:
         defn = get_style(style)
@@ -134,6 +135,45 @@ def test_all_attributions_nonempty():
         assert expected_substrings[style] in defn.attribution, (
             f"{style} attribution missing expected provider. Got: {defn.attribution!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Dark Matter tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dark_matter_fetches_from_correct_url():
+    expected_url = "https://basemaps.cartocdn.com/dark_all/7/115/78.png"
+    session = _mock_session({expected_url: _make_png_bytes()})
+
+    defn = get_style(MapStyle.DARK_MATTER)
+    await defn.fetch_tile(session, 7, 115, 78)
+
+    assert expected_url in _calls_made(session)
+
+
+@pytest.mark.asyncio
+async def test_dark_matter_returns_rgba_image():
+    url = "https://basemaps.cartocdn.com/dark_all/7/115/78.png"
+    session = _mock_session({url: _make_png_bytes()})
+
+    defn = get_style(MapStyle.DARK_MATTER)
+    result = await defn.fetch_tile(session, 7, 115, 78)
+
+    assert result is not None
+    assert isinstance(result, Image.Image)
+    assert result.mode == "RGBA"
+    assert result.size == (256, 256)
+
+
+@pytest.mark.asyncio
+async def test_dark_matter_returns_none_on_404():
+    session = _mock_session({})  # all URLs 404
+
+    defn = get_style(MapStyle.DARK_MATTER)
+    result = await defn.fetch_tile(session, 7, 115, 78)
+
+    assert result is None
 
 
 # ---------------------------------------------------------------------------

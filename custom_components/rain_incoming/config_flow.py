@@ -21,7 +21,7 @@ from .const import (
     MIN_LOOKAHEAD_MINUTES,
 )
 
-_VALID_MAP_STYLES = ["voyager", "osm_standard", "osm_dark", "esri_imagery"]
+_VALID_MAP_STYLES = ["voyager", "osm_standard", "osm_dark", "esri_imagery", "dark_matter"]
 _DEFAULT_MAP_STYLE = "voyager"
 
 
