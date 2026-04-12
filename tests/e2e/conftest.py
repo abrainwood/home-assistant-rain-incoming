@@ -365,11 +365,19 @@ def ha_client(ha_container) -> HAClient:
     # Add integration
     flow = _raw_request("POST", "/api/config/config_entries/flow",
                          {"handler": "rain_incoming"}, token=token)
-    _raw_request("POST", f"/api/config/config_entries/flow/{flow['flow_id']}", {
-        "latitude": -33.701,
-        "longitude": 151.209,
+    result = _raw_request("POST", f"/api/config/config_entries/flow/{flow['flow_id']}", {
+        "location": {"latitude": -33.701, "longitude": 151.209},
         "lookahead_minutes": 60,
     }, token=token)
+    # If no radar coverage was detected (e.g. mock server has transparent tiles),
+    # the flow pauses at a confirmation step - submit it to proceed anyway.
+    if isinstance(result, dict) and result.get("step_id") == "confirm_no_coverage":
+        _raw_request(
+            "POST",
+            f"/api/config/config_entries/flow/{flow['flow_id']}",
+            {},
+            token=token,
+        )
 
     # Wait for coordinator to do its first update
     client = HAClient(token)
@@ -408,12 +416,19 @@ def configure_location(ha_client):
             "POST",
             f"/api/config/config_entries/flow/{flow['flow_id']}",
             {
-                "latitude": lat,
-                "longitude": lon,
+                "location": {"latitude": lat, "longitude": lon},
                 "lookahead_minutes": 60,
                 "location_name": name,
             },
         )
+        # If no radar coverage was detected (mock server has transparent tiles),
+        # the flow pauses at a confirmation step - submit it to proceed anyway.
+        if isinstance(result, dict) and result.get("step_id") == "confirm_no_coverage":
+            result = ha_client.request(
+                "POST",
+                f"/api/config/config_entries/flow/{flow['flow_id']}",
+                {},
+            )
         if result and "result" in result:
             entry_id = result.get("result")
             if isinstance(entry_id, dict):
