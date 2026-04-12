@@ -159,7 +159,7 @@ async def test_config_flow_rejects_lookahead_out_of_range(hass: HomeAssistant):
 
 
 @pytest.mark.asyncio
-async def test_config_flow_rejects_location_name_over_30_chars(hass: HomeAssistant):
+async def test_config_flow_rejects_location_name_over_16_chars(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
@@ -168,7 +168,7 @@ async def test_config_flow_rejects_location_name_over_30_chars(hass: HomeAssista
         {
             "location": _loc(),
             "lookahead_minutes": 60,
-            "location_name": "A" * 40,
+            "location_name": "A" * 17,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -256,7 +256,7 @@ async def test_options_flow_changes_map_style(hass: HomeAssistant):
 
 
 @pytest.mark.asyncio
-async def test_options_flow_rejects_location_name_over_30_chars(hass: HomeAssistant):
+async def test_options_flow_rejects_location_name_over_16_chars(hass: HomeAssistant):
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -273,7 +273,7 @@ async def test_options_flow_rejects_location_name_over_30_chars(hass: HomeAssist
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            "location_name": "B" * 40,
+            "location_name": "B" * 17,
             "lookahead_minutes": 60,
             CONF_MAP_STYLE: "voyager",
         },
@@ -486,7 +486,7 @@ async def test_options_flow_schedules_reload_after_save(hass: HomeAssistant):
 
 
 @pytest.mark.asyncio
-async def test_config_flow_accepts_location_name_exactly_30_chars(hass: HomeAssistant):
+async def test_config_flow_accepts_location_name_exactly_16_chars(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
@@ -495,11 +495,11 @@ async def test_config_flow_accepts_location_name_exactly_30_chars(hass: HomeAssi
         {
             "location": _loc(),
             "lookahead_minutes": 60,
-            "location_name": "A" * 30,
+            "location_name": "A" * 16,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_LOCATION_NAME] == "A" * 30
+    assert result["data"][CONF_LOCATION_NAME] == "A" * 16
 
 
 # ---------------------------------------------------------------------------

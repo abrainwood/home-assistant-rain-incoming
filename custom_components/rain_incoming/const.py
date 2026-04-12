@@ -5,8 +5,9 @@ CONF_LOCATION_NAME = "location_name"
 CONF_LOOKAHEAD_MINUTES = "lookahead_minutes"
 CONF_MAP_STYLE = "map_style"
 
-# Location name display limit (chars). Longer names overlap the attribution line.
-MAX_LOCATION_NAME_CHARS = 30
+# Location name display limit (chars). Names longer than this overflow the
+# date/time field in the radar image header at all three zoom levels.
+MAX_LOCATION_NAME_CHARS = 16
 
 # Maximum number of rain_incoming locations a user can configure.
 # RainViewer's free tier rate-limits parallel tile fetching across multiple

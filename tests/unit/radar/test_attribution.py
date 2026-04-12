@@ -390,11 +390,12 @@ def test_draw_frame_label_no_timestamp_no_crash():
 
 
 def test_draw_frame_label_truncates_long_location():
-    """_draw_frame_label must truncate location names > 30 chars via the live code path."""
+    """_draw_frame_label must truncate location names over the limit via the live code path."""
     from unittest.mock import patch
     from datetime import datetime, timezone
     from PIL import ImageDraw
     from custom_components.rain_incoming.radar.composite import _draw_frame_label
+    from custom_components.rain_incoming.const import MAX_LOCATION_NAME_CHARS
 
     img = _blank_image()
     ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
@@ -407,7 +408,7 @@ def test_draw_frame_label_truncates_long_location():
         c.args[1] for c in mock_text.call_args_list
         if len(c.args) >= 2 and isinstance(c.args[1], str)
     ]
-    truncated = "A" * 29 + "\u2026"
+    truncated = "A" * (MAX_LOCATION_NAME_CHARS - 1) + "\u2026"
     assert any(truncated in s for s in all_strings), (
         f"Expected truncated location '{truncated}' in draw calls, got: {all_strings}"
     )
