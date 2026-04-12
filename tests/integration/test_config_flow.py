@@ -536,6 +536,90 @@ async def test_config_flow_accepts_location_name_exactly_30_chars(hass: HomeAssi
 
 
 # ---------------------------------------------------------------------------
+# Location limit (MAX_LOCATIONS = 4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_config_flow_rejects_when_at_location_limit(hass: HomeAssistant):
+    """RED: with 4 existing entries the flow must abort with too_many_locations."""
+    for i in range(4):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                "latitude": float(i),
+                "longitude": float(i),
+                "lookahead_minutes": 60,
+                CONF_MAP_STYLE: "voyager",
+            },
+            version=2,
+        )
+        entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "too_many_locations"
+
+
+@pytest.mark.asyncio
+async def test_config_flow_accepts_when_below_location_limit(hass: HomeAssistant):
+    """With 3 existing entries the form renders normally and a 4th entry can be created."""
+    for i in range(3):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                "latitude": float(i),
+                "longitude": float(i),
+                "lookahead_minutes": 60,
+                CONF_MAP_STYLE: "voyager",
+            },
+            version=2,
+        )
+        entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+
+@pytest.mark.asyncio
+async def test_config_flow_rejects_when_above_location_limit(hass: HomeAssistant):
+    """Defensive boundary: 5 existing entries also aborts with too_many_locations."""
+    for i in range(5):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                "latitude": float(i),
+                "longitude": float(i),
+                "lookahead_minutes": 60,
+                CONF_MAP_STYLE: "voyager",
+            },
+            version=2,
+        )
+        entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "too_many_locations"
+
+
+# ---------------------------------------------------------------------------
 # Task 125 Fix 1: sticky inputs on validation error
 # ---------------------------------------------------------------------------
 

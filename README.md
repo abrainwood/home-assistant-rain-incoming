@@ -14,7 +14,7 @@
 - **Arrival time prediction** - when will it arrive?
 - **Intensity level** - light / moderate / heavy / extreme
 - **Animated radar maps** at 3 zoom levels (64 / 128 / 256km)
-- **Multi-location support** - add as many instances as you need
+- **Multi-location support** - up to 4 locations per installation
 - **Works worldwide** - powered by [RainViewer](https://www.rainviewer.com/), free, no API key needed
 - **Smart noise filtering** - QC pipeline handles radar artifacts so you don't get false alarms
 
@@ -57,6 +57,20 @@ The latitude and longitude default to your Home Assistant home location (set in 
 **Settings > Integrations > Rain Incoming > Configure**
 
 Changes take effect immediately on the next poll.
+
+### Maximum number of locations
+
+You can configure up to 4 separate rain_incoming locations per Home Assistant
+installation. This limit exists because RainViewer's free tile API rate-limits
+parallel tile fetching across multiple locations, and 4 is the practical
+maximum without degraded performance.
+
+If you have a use case that genuinely requires more than 4 locations, you can
+either:
+- Wait for shared global tile caching (issue #87) which will reduce per-location
+  fetch cost
+- Switch to RainViewer's commercial tier and adjust the integration's
+  rate-limit handling
 
 ---
 

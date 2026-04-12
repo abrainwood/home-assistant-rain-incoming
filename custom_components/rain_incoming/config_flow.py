@@ -17,6 +17,7 @@ from .const import (
     DEFAULT_LOOKAHEAD_MINUTES,
     DOMAIN,
     MAX_LOCATION_NAME_CHARS,
+    MAX_LOCATIONS,
     MAX_LOOKAHEAD_MINUTES,
     MIN_LOOKAHEAD_MINUTES,
 )
@@ -149,6 +150,12 @@ class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict | None = None
     ) -> ConfigFlowResult:
+        # Check the location limit BEFORE rendering the form or accepting input.
+        # This prevents the user from typing data they can't actually save.
+        existing = self.hass.config_entries.async_entries(DOMAIN)
+        if len(existing) >= MAX_LOCATIONS:
+            return self.async_abort(reason="too_many_locations")
+
         errors: dict[str, str] = {}
 
         if user_input is not None:
