@@ -194,6 +194,7 @@ _STYLES: dict[MapStyle, MapStyleDefinition] = {
         display_name="ESRI World Imagery",
         attribution="Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
         fetch_tile=_fetch_esri_imagery,
+        is_dark=True,
     ),
     MapStyle.DARK_MATTER: MapStyleDefinition(
         style=MapStyle.DARK_MATTER,

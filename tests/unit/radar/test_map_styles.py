@@ -467,3 +467,32 @@ async def test_esri_uses_y_x_url_order():
             assert tile_x == str(x), (
                 f"ESRI URL should have x={x} last, got .../{tile_z}/{tile_y}/{tile_x} in {url}"
             )
+
+
+# ---------------------------------------------------------------------------
+# is_dark flag correctness (issue #70)
+# ---------------------------------------------------------------------------
+
+def test_esri_imagery_is_dark():
+    """ESRI satellite imagery has a dark/complex background - must use white text."""
+    defn = get_style(MapStyle.ESRI_IMAGERY)
+    assert defn.is_dark is True, (
+        "ESRI World Imagery must be marked is_dark=True so labels render with "
+        "white text. Satellite backgrounds make black text illegible."
+    )
+
+
+def test_dark_matter_is_dark():
+    """Dark Matter is a dark basemap - must use white text."""
+    assert get_style(MapStyle.DARK_MATTER).is_dark is True
+
+
+def test_osm_dark_is_dark():
+    """OSM Dark is a dark basemap - must use white text."""
+    assert get_style(MapStyle.OSM_DARK).is_dark is True
+
+
+def test_light_styles_are_not_dark():
+    """Voyager and OSM Standard are light maps - must use dark text."""
+    assert get_style(MapStyle.VOYAGER).is_dark is False
+    assert get_style(MapStyle.OSM_STANDARD).is_dark is False
