@@ -20,7 +20,7 @@ Contributions are welcome whether or not you use AI tools. The same DCO sign-off
 
 ```bash
 git clone https://github.com/abrainwood/home-assistant-rain-incoming.git
-cd incoming_rain
+cd home-assistant-rain-incoming
 
 # Create virtualenv and install dev dependencies
 python -m venv .venv
