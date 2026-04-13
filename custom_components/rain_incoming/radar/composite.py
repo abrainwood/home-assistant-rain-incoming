@@ -648,7 +648,10 @@ async def _fetch_radar_overlay(
             tile = await _fetch_tile(session, url)
             elapsed = _time.monotonic() - t0
             if elapsed > 5:
-                _LOGGER.warning(
+                # DEBUG not WARNING: at WARNING this floods the HA system log
+                # (~36 entries per 10-minute poll) and triggers HA's internal log
+                # throttler. Slow-but-successful fetches are not actionable for users.
+                _LOGGER.debug(
                     "Slow tile fetch: %.1fs for z=%d x=%d y=%d (%s)",
                     elapsed, radar_zoom, tx, ty, frame_path[-8:],
                 )
