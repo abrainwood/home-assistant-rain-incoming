@@ -32,7 +32,11 @@ HOME_LOCATION = {
     "currency": "AUD",
     "language": "en",
 }
-INTEGRATION_CONFIG = {"latitude": -33.701, "longitude": 151.209, "lookahead_minutes": 60}
+INTEGRATION_CONFIG = {
+    "location": {"latitude": -33.701, "longitude": 151.209},
+    "lookahead_minutes": 60,
+    "location_name": "Sydney",
+}
 
 
 def _request(method: str, path: str, data: dict | None = None,

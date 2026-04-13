@@ -7,8 +7,10 @@ HA custom integration that detects approaching rain using RainViewer radar data 
 ```bash
 git clone https://github.com/abrainwood/home-assistant-rain-incoming.git
 cd incoming_rain
-python -m venv .venv
+# Requires Python 3.12+. macOS system Python is too old - use the pyenv version directly.
+$(pyenv which python) -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
 pip install -e ".[dev]"
 
 # Run unit + integration
