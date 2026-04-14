@@ -222,20 +222,6 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # zeros until the tiles have been fetched and stitched.
         session = async_get_clientsession(self.hass)
 
-        async def _fetch_frame(frame):
-            try:
-                await frame._fetch_stitched_grid(bounds, W, H, session, budget=self._rate_limit_budget)
-            except aiohttp.ClientResponseError as e:
-                _LOGGER.warning(
-                    "Radar grid fetch failed: HTTP %d for frame %s",
-                    e.status, frame.timestamp,
-                )
-            except Exception as e:
-                _LOGGER.warning(
-                    "Radar grid fetch failed: %s: %s for frame %s",
-                    type(e).__name__, e, frame.timestamp,
-                )
-
         # Incremental fetch: reuse cached frames for paths we've already fetched,
         # only hit the network for genuinely new frames.
         reused = []
@@ -252,7 +238,10 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         )
 
         if to_fetch:
-            await asyncio.gather(*[_fetch_frame(f) for f in to_fetch])
+            await self._provider.prefetch_frames(
+                to_fetch, bounds, W, H, session,
+                budget=self._rate_limit_budget,
+            )
 
         # Build the resolved frame list in manifest order, substituting cached
         # objects for known paths so their pre-populated _cached_grid is used.

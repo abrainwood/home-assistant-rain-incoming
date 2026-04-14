@@ -47,3 +47,23 @@ class RadarProvider(ABC):
         Fetch the most recent `count` frames centred on (lat, lon),
         ordered oldest-first. May return fewer than `count` if unavailable.
         """
+
+    @abstractmethod
+    async def prefetch_frames(
+        self,
+        frames: list[RadarFrame],
+        bounds: BoundingBox,
+        width: int,
+        height: int,
+        session,
+        **kwargs,
+    ) -> None:
+        """Pre-fetch grid data for frames so get_intensity_grid returns real data.
+
+        Each provider handles its own transport (HTTP, file, etc.) and
+        concurrency strategy. The coordinator calls this once per update
+        cycle instead of reaching into individual frame internals.
+
+        Frames that fail to fetch should log a warning and be skipped -
+        the coordinator handles partial failures via the _cached_grid check.
+        """
