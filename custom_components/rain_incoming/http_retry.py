@@ -86,13 +86,17 @@ async def fetch_with_retry(
     max_retries: int = 3,
     base_delay: float = 1.0,
     budget: RateLimitBudget | None = None,
+    timeout_total: float = 30.0,
 ) -> aiohttp.ClientResponse:
     """Fetch a URL with retry on 429/5xx, respecting Retry-After headers.
 
     Returns the successful response. Raises aiohttp.ClientResponseError if all
     retries are exhausted or a non-retryable error status is returned.
+
+    timeout_total: per-request timeout in seconds. Default 30s. Tile fetches
+        use 15s to fail fast when the tile server is slow.
     """
-    request_timeout = aiohttp.ClientTimeout(total=30)
+    request_timeout = aiohttp.ClientTimeout(total=timeout_total)
     for attempt in range(max_retries + 1):
         if budget is not None:
             delay = budget.suggested_delay()

@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from ..const import RAINVIEWER_ATTRIBUTION, RAINVIEWER_ZOOM
-from ..http_retry import rate_limited_fetch
+from ..http_retry import fetch_with_retry, rate_limited_fetch
 from ..providers.rainviewer import (
     PRECIP_COLOURS,
     TILE_BASE_URL,
@@ -198,8 +198,15 @@ def draw_range_rings(
 
 
 async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
-    resp = await rate_limited_fetch(session, url, semaphore=_get_tile_semaphore())
-    data = await asyncio.wait_for(resp.read(), timeout=10)
+    # Hold the semaphore for the full connection lifecycle: request + body read.
+    # Previously the semaphore was released when fetch_with_retry returned the
+    # response object (headers received), allowing more simultaneous connections
+    # than the limit. Holding through resp.read() closes that gap.
+    async with _get_tile_semaphore():
+        resp = await fetch_with_retry(
+            session, url, max_retries=1, timeout_total=15.0
+        )
+        data = await asyncio.wait_for(resp.read(), timeout=10)
     return Image.open(BytesIO(data)).convert("RGBA")
 
 
@@ -223,7 +230,10 @@ async def _fetch_map_tile(
     if cached is not None:
         return cached
 
-    tile = await style_def.fetch_tile(session, zoom, tx, ty)
+    # Gate cache-miss fetches through the shared semaphore so map tiles count
+    # against the same concurrency limit as radar tiles.
+    async with _get_tile_semaphore():
+        tile = await style_def.fetch_tile(session, zoom, tx, ty)
     if tile is None:
         return None
 
@@ -858,7 +868,9 @@ async def render_animated_composite(
     t2 = _time.monotonic()
     _LOGGER.debug("render %dkm: %d radar overlays fetched in %.1fs", radius_km, len(radar_overlays), t2 - t1)
 
-    frames = composite_frames(
+    import functools
+    _composite = functools.partial(
+        composite_frames,
         background=map_crop,
         radar_overlays=radar_overlays,
         lat=lat, lon=lon, radius_km=radius_km,
@@ -869,6 +881,10 @@ async def render_animated_composite(
         location_name=location_name,
         map_style=map_style,
     )
+    if run_in_executor is not None:
+        frames = await run_in_executor(_composite)
+    else:
+        frames = _composite()
     t3 = _time.monotonic()
     _LOGGER.debug("render %dkm: %d frames composited in %.1fs", radius_km, len(frames), t3 - t2)
 

@@ -314,3 +314,30 @@ class TestRateLimitBudget:
         result = await fetch_with_retry(session, "http://example.com/test")
         assert result is ok_resp
         assert session.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_total_parameter_applied_to_request(self) -> None:
+        """fetch_with_retry must accept a timeout_total parameter and apply it
+        to the aiohttp request timeout instead of the hardcoded 30s default.
+
+        Tile fetches need a shorter timeout (15s) to fail fast when RainViewer
+        is slow, rather than holding connections for the full 30s.
+        """
+        session = AsyncMock(spec=aiohttp.ClientSession)
+        ok_resp = _make_response(200)
+
+        applied_timeout = None
+
+        async def capturing_get(url, timeout=None, **kwargs):
+            nonlocal applied_timeout
+            applied_timeout = timeout
+            return ok_resp
+
+        session.get = capturing_get
+
+        await fetch_with_retry(session, "http://example.com/tile", timeout_total=15.0)
+
+        assert applied_timeout is not None, "timeout kwarg was not passed to session.get"
+        assert applied_timeout.total == 15.0, (
+            f"Expected timeout.total=15.0, got {applied_timeout.total}"
+        )

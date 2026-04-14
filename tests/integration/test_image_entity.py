@@ -449,3 +449,156 @@ class TestRenderTaskCancelledOnEntityRemoval:
         assert task.cancelled() or task.done(), (
             "async_will_remove_from_hass must cancel the in-flight render task"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: Concurrent renders across radii must be serialized
+# ---------------------------------------------------------------------------
+
+class TestRenderSerialization:
+    """Render tasks across different radius entities must not run concurrently.
+
+    With 3 radii (64, 128, 256km), all render tasks fire when the coordinator
+    updates. Without a global lock they run simultaneously, multiplying
+    connection load by 3x and causing HA-wide lockups when tiles are slow.
+
+    Fix: a module-level asyncio.Lock ensures only one render runs at a time.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_renders_across_radii_are_serialized(self):
+        """Two _render_to_cache calls must not execute render_animated_composite
+        simultaneously — the second must wait for the first to complete."""
+        entity_128 = _make_entity()
+        entity_256 = _make_entity()  # different radius, same coordinator update
+
+        concurrent_count = 0
+        max_concurrent = 0
+
+        async def tracked_render(*args, **kwargs):
+            nonlocal concurrent_count, max_concurrent
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            await asyncio.sleep(0.02)  # simulate non-trivial render work
+            concurrent_count -= 1
+            return b"GIF89a_test"
+
+        with (
+            patch(
+                "custom_components.rain_incoming.image.render_animated_composite",
+                new=tracked_render,
+            ),
+            patch(
+                "custom_components.rain_incoming.image.async_get_clientsession",
+                return_value=MagicMock(),
+            ),
+        ):
+            await asyncio.gather(
+                entity_128._render_to_cache(),
+                entity_256._render_to_cache(),
+            )
+
+        assert max_concurrent == 1, (
+            f"Renders ran concurrently (max={max_concurrent}). "
+            "A global render lock must serialize renders across all radius entities."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: async_image must not await the render task when cache is already warm
+# ---------------------------------------------------------------------------
+
+class TestAsyncImageNonBlockingWhenCacheWarm:
+    """When _cached_image is populated, async_image() must return immediately
+    without awaiting the in-flight render task.
+
+    With the global render lock, the 2nd/3rd radius task can spend a full
+    render-cycle (≤55s) waiting for the lock before even starting. If
+    async_image() awaits that task unconditionally, a frontend request that
+    arrives mid-wait will also block for lock_wait + render_time, easily
+    exceeding HA's ~60s image_proxy timeout and producing a broken-image icon.
+
+    Fix: only await the render task when _cached_image is None (cold start).
+    Once the cache is warm, return from cache immediately and let the render
+    update it in the background.
+
+    RED → GREEN note: before the fix, async_image() always awaits _render_task.
+    The test detects this by attaching a never-resolving task and wrapping
+    async_image() in a 0.1s wait_for — if the task is awaited the test raises
+    TimeoutError (fails fast, not by sleeping).
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_image_does_not_await_render_task_when_cache_warm(self):
+        entity = _make_entity()
+        entity._cached_image = b"GIF89a_cached"
+
+        # A task that would block forever if awaited — represents a render
+        # queued behind the global lock (e.g. 256km waiting behind 64km).
+        never_done: asyncio.Future = asyncio.get_event_loop().create_future()
+
+        async def blocking_coro():
+            await never_done
+
+        task = asyncio.create_task(blocking_coro())
+        entity._render_task = task
+
+        try:
+            # If async_image() awaits the blocking task this raises TimeoutError,
+            # making the test fail clearly. 0.1s is a safety net, not a timing
+            # assertion — the fixed path returns in microseconds.
+            result = await asyncio.wait_for(entity.async_image(), timeout=0.1)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        assert result == b"GIF89a_cached", (
+            "async_image must return cached bytes immediately when cache is warm, "
+            "without waiting for the in-flight render task"
+        )
+
+    @pytest.mark.asyncio
+    async def test_inverse_blocking_task_does_not_block_stale_cache_return(self):
+        """Inverse validation: confirm that WITHOUT the fix (cache empty), the
+        task IS awaited and the result reflects the task's output, not a
+        placeholder. This proves the non-blocking path is selective, not broken."""
+        entity = _make_entity()
+        entity._cached_image = None  # cold start — no cache yet
+
+        populated = asyncio.Event()
+
+        async def quick_render_coro():
+            # Simulates _render_to_cache populating the cache
+            entity._cached_image = b"GIF89a_from_render"
+            populated.set()
+
+        task = asyncio.create_task(quick_render_coro())
+        entity._render_task = task
+
+        result = await entity.async_image()
+
+        assert result == b"GIF89a_from_render", (
+            "On first load (no cache), async_image must await the render task "
+            "so the caller gets real data instead of a placeholder"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3b: Render timeout must be 55s
+# ---------------------------------------------------------------------------
+
+class TestRenderTimeout:
+    """Render timeout must be 55s — long enough for slow-but-successful
+    tile fetches (up to 15s each) while still staying below HA's ~60s
+    image_proxy timeout."""
+
+    def test_render_timeout_is_55_seconds(self):
+        from custom_components.rain_incoming.image import _RENDER_TIMEOUT_SECONDS
+
+        assert _RENDER_TIMEOUT_SECONDS == 55.0, (
+            f"Render timeout must be 55s to give more headroom for slow tiles "
+            f"while staying under HA's ~60s proxy timeout. Got {_RENDER_TIMEOUT_SECONDS}s."
+        )

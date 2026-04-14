@@ -14,6 +14,7 @@ Data sources:
 from __future__ import annotations
 
 import os
+import time
 
 from tests.e2e.image_helpers import gif_has_precipitation_pixels, images_differ_significantly
 
@@ -85,12 +86,24 @@ class TestCanberraGoldenV2:
             condition=lambda s: s.get("state") == "off",
         )
 
-        # Force image re-render by fetching after coordinator update
-        baseline_gif = ha_client.get_image(image_id)
+        # Wait for the image render to reflect the new dry scenario.
+        # async_image() returns from cache immediately when a cached image
+        # exists (to avoid blocking on the render lock), so the render may
+        # still be in flight when the sensor state has already changed.
+        # Poll until the image bytes differ from the rain image.
+        baseline_gif = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            candidate = ha_client.get_image(image_id)
+            if candidate and candidate != rain_gif:
+                baseline_gif = candidate
+                break
+            time.sleep(2)
+
         if baseline_gif:
             _save_gif(baseline_gif, "/tmp/golden_v2_canberra_norain.gif")
 
-        assert baseline_gif and len(baseline_gif) > 100, "Baseline GIF missing"
+        assert baseline_gif and len(baseline_gif) > 100, "Baseline GIF missing or still stale after 30s"
 
         differs, fraction = images_differ_significantly(rain_gif, baseline_gif)
         assert differs, (
