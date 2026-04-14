@@ -472,7 +472,7 @@ def test_render_composite_uses_passed_style_for_attribution():
         "custom_components.rain_incoming.radar.composite._draw_attribution",
         side_effect=_capture_draw_attribution,
     ):
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             render_composite(
                 lat=-33.7,
                 lon=151.2,
