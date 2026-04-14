@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 
 from .base import BoundingBox, RadarFrame, RadarProvider
-from ..http_retry import fetch_with_retry
+from ..http_retry import RateLimitBudget, fetch_with_retry
 from ..radar.geo import lat_lon_to_tile
 
 import os
@@ -157,6 +157,7 @@ class RainViewerFrame(RadarFrame):
         width: int,
         height: int,
         session: aiohttp.ClientSession,
+        budget: RateLimitBudget | None = None,
     ) -> np.ndarray:
         """Fetch tiles covering bounds, stitch, and resample to (height, width)."""
         cx, cy = lat_lon_to_tile(
@@ -199,7 +200,7 @@ class RainViewerFrame(RadarFrame):
                 f"{TILE_BASE_URL}{self._path}"
                 f"/{TILE_SIZE}/{self._zoom}/{tx}/{ty}/{self._colour_scheme}/0.png"
             )
-            resp = await fetch_with_retry(session, url)
+            resp = await fetch_with_retry(session, url, budget=budget)
             tile_bytes = await resp.read()
 
             tile_arr = _tile_to_intensity_array(tile_bytes)

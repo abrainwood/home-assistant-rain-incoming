@@ -48,6 +48,7 @@ from .const import (
     RAINVIEWER_ZOOM,
     RAINVIEWER_TILE_SIZE,
 )
+from .http_retry import RateLimitBudget
 from .providers.base import BoundingBox
 from .providers.rainviewer import RainViewerProvider
 from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
@@ -150,6 +151,9 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # Avoids re-fetching tile grids for frames that haven't changed between polls.
         self._frame_cache: dict[str, object] = {}
 
+        # Rate limit budget - shared across all tile fetches in a polling cycle
+        self._rate_limit_budget = RateLimitBudget()
+
     @property
     def map_style(self) -> str:
         """Return the active map style, reading options first then data then default."""
@@ -220,7 +224,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         async def _fetch_frame(frame):
             try:
-                await frame._fetch_stitched_grid(bounds, W, H, session)
+                await frame._fetch_stitched_grid(bounds, W, H, session, budget=self._rate_limit_budget)
             except aiohttp.ClientResponseError as e:
                 _LOGGER.warning(
                     "Radar grid fetch failed: HTTP %d for frame %s",
