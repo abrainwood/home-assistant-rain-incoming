@@ -176,6 +176,65 @@ async def test_partial_rate_limit_does_not_raise_update_failed(hass: HomeAssista
     assert isinstance(result, DetectionResult)
 
 
+@pytest.mark.asyncio
+async def test_partial_rate_limit_failed_frames_produce_zero_grids_for_detection(hass: HomeAssistant):
+    """Frames that 429 produce all-zero grids when the coordinator reads them for detection.
+
+    Verifies via get_intensity_grid (public method) that a failed frame contributes
+    zeros, not stale data from a prior fetch. The check is on what the coordinator
+    actually reads, not on internal cache state.
+    """
+    entry = _make_entry()
+    coordinator = RainDetectorCoordinator(hass, entry)
+
+    base_ts = 1_700_000_000
+    frames = [_make_frame(base_ts + i * 600) for i in range(3)]
+    _patch_frame_fetch_succeeds(frames[0])
+    _patch_frame_fetch_raises_429(frames[1])
+    _patch_frame_fetch_succeeds(frames[2])
+
+    # Spy on get_intensity_grid to capture what the coordinator reads per frame.
+    grids_read: dict[int, np.ndarray] = {}
+    for frame in frames:
+        original = frame.get_intensity_grid
+        def _make_spy(f, orig):
+            def spy(bounds, width, height):
+                result = orig(bounds, width, height)
+                grids_read[id(f)] = result
+                return result
+            return spy
+        frame.get_intensity_grid = _make_spy(frame, original)
+
+    mock_session = MagicMock()
+
+    with (
+        patch.object(coordinator._provider, "get_frames", new=AsyncMock(return_value=frames)),
+        patch(
+            "custom_components.rain_incoming.coordinator.async_get_clientsession",
+            return_value=mock_session,
+        ),
+        patch(
+            "custom_components.rain_incoming.coordinator.detect",
+            return_value=EMPTY_RESULT,
+        ),
+    ):
+        await coordinator._async_update_data()
+
+    assert id(frames[0]) in grids_read, "Frame 0: get_intensity_grid was never called"
+    assert id(frames[1]) in grids_read, "Frame 1: get_intensity_grid was never called"
+    assert id(frames[2]) in grids_read, "Frame 2: get_intensity_grid was never called"
+
+    assert np.any(grids_read[id(frames[0])] != 0), (
+        "Frame 0 succeeded - its grid should be non-zero"
+    )
+    assert np.all(grids_read[id(frames[1])] == 0), (
+        "Frame 1 got 429 - its grid should be all-zero (no stale data from a prior fetch)"
+    )
+    assert np.any(grids_read[id(frames[2])] != 0), (
+        "Frame 2 succeeded - its grid should be non-zero"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test 2: All fetches fail - total rate limit
 # ---------------------------------------------------------------------------
