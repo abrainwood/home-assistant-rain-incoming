@@ -91,4 +91,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        # Clear tile caches when the last entry is unloaded to free memory
+        if not hass.data[DOMAIN]:
+            from .radar.composite import clear_tile_caches
+            clear_tile_caches()
     return unload_ok
