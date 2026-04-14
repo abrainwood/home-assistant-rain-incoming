@@ -265,6 +265,38 @@ class RainViewerProvider(RadarProvider):
             for entry in selected
         ]
 
+    async def prefetch_frames(
+        self,
+        frames: list[RadarFrame],
+        bounds: BoundingBox,
+        width: int,
+        height: int,
+        session,
+        **kwargs,
+    ) -> None:
+        """Pre-fetch stitched grids for all frames.
+
+        Fetches each frame's tiles individually (C2 will add concurrency).
+        Failures are logged as warnings and the frame is skipped - the
+        coordinator checks _cached_grid to detect partial failures.
+        """
+        budget = kwargs.get("budget")
+        for frame in frames:
+            if not isinstance(frame, RainViewerFrame):
+                continue
+            try:
+                await frame._fetch_stitched_grid(bounds, width, height, session, budget=budget)
+            except aiohttp.ClientResponseError as e:
+                _LOGGER.warning(
+                    "Radar grid fetch failed: HTTP %d for frame %s",
+                    e.status, frame.timestamp,
+                )
+            except Exception as e:
+                _LOGGER.warning(
+                    "Radar grid fetch failed: %s: %s for frame %s",
+                    type(e).__name__, e, frame.timestamp,
+                )
+
     async def _fetch_manifest(self) -> dict:
         async with aiohttp.ClientSession() as session:
             resp = await fetch_with_retry(session, MANIFEST_URL)
