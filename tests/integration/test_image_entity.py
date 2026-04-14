@@ -449,3 +449,74 @@ class TestRenderTaskCancelledOnEntityRemoval:
         assert task.cancelled() or task.done(), (
             "async_will_remove_from_hass must cancel the in-flight render task"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: Concurrent renders across radii must be serialized
+# ---------------------------------------------------------------------------
+
+class TestRenderSerialization:
+    """Render tasks across different radius entities must not run concurrently.
+
+    With 3 radii (64, 128, 256km), all render tasks fire when the coordinator
+    updates. Without a global lock they run simultaneously, multiplying
+    connection load by 3x and causing HA-wide lockups when tiles are slow.
+
+    Fix: a module-level asyncio.Lock ensures only one render runs at a time.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_renders_across_radii_are_serialized(self):
+        """Two _render_to_cache calls must not execute render_animated_composite
+        simultaneously — the second must wait for the first to complete."""
+        entity_128 = _make_entity()
+        entity_256 = _make_entity()  # different radius, same coordinator update
+
+        concurrent_count = 0
+        max_concurrent = 0
+
+        async def tracked_render(*args, **kwargs):
+            nonlocal concurrent_count, max_concurrent
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            await asyncio.sleep(0.02)  # simulate non-trivial render work
+            concurrent_count -= 1
+            return b"GIF89a_test"
+
+        with (
+            patch(
+                "custom_components.rain_incoming.image.render_animated_composite",
+                new=tracked_render,
+            ),
+            patch(
+                "custom_components.rain_incoming.image.async_get_clientsession",
+                return_value=MagicMock(),
+            ),
+        ):
+            await asyncio.gather(
+                entity_128._render_to_cache(),
+                entity_256._render_to_cache(),
+            )
+
+        assert max_concurrent == 1, (
+            f"Renders ran concurrently (max={max_concurrent}). "
+            "A global render lock must serialize renders across all radius entities."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3b: Render timeout must be 55s
+# ---------------------------------------------------------------------------
+
+class TestRenderTimeout:
+    """Render timeout must be 55s — long enough for slow-but-successful
+    tile fetches (up to 15s each) while still staying below HA's ~60s
+    image_proxy timeout."""
+
+    def test_render_timeout_is_55_seconds(self):
+        from custom_components.rain_incoming.image import _RENDER_TIMEOUT_SECONDS
+
+        assert _RENDER_TIMEOUT_SECONDS == 55.0, (
+            f"Render timeout must be 55s to give more headroom for slow tiles "
+            f"while staying under HA's ~60s proxy timeout. Got {_RENDER_TIMEOUT_SECONDS}s."
+        )

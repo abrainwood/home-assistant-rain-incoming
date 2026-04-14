@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import datetime, timezone
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -13,9 +14,11 @@ from custom_components.rain_incoming.radar.composite import (
     _map_tile_cache,
     _radar_tile_cache,
     calculate_map_zoom,
+    composite_frames,
     draw_crosshair,
     draw_range_rings,
     filter_precipitation_pixels,
+    fetch_map_crop,
     km_per_pixel,
     render_animated_composite,
     render_composite,
@@ -651,5 +654,193 @@ class TestConfidenceWeightedRendering:
         smooth_green = smooth_frame[:, :, 1].mean()
         speckle_green = speckle_frame[:, :, 1].mean()
         assert smooth_green > speckle_green
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: Semaphore must be held for the full connection lifecycle
+# ---------------------------------------------------------------------------
+
+class TestTileSemaphoreLifecycle:
+    """The tile semaphore must cover response body reading, not just the request.
+
+    Previously: semaphore released when fetch_with_retry returned the response
+    object (headers received), before resp.read() was called. This meant
+    connections were open outside the semaphore, making the limit ineffective.
+
+    Fix: semaphore held until body is fully read.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clear_tile_caches(self):
+        _map_tile_cache.clear()
+        _radar_tile_cache.clear()
+        yield
+        _map_tile_cache.clear()
+        _radar_tile_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_semaphore_held_during_body_read(self):
+        """With semaphore(1), two concurrent tile fetches must not overlap
+        during resp.read() — the second must wait until the first completes
+        its full read, not just until headers arrive."""
+        from custom_components.rain_incoming.radar.composite import _fetch_tile
+
+        overlap_detected = False
+        reading_count = 0
+
+        async def slow_read():
+            nonlocal reading_count, overlap_detected
+            reading_count += 1
+            if reading_count > 1:
+                overlap_detected = True
+            await asyncio.sleep(0)  # yield so the other task can attempt to proceed
+            reading_count -= 1
+            return _make_tile_png((0, 0, 0, 0))
+
+        resp = MagicMock()
+        resp.status = 200
+        resp.headers = {}
+        resp.raise_for_status = MagicMock()
+        resp.read = AsyncMock(side_effect=slow_read)
+
+        session = MagicMock()
+        session.get = AsyncMock(return_value=resp)
+
+        test_semaphore = asyncio.Semaphore(1)
+        with patch(
+            "custom_components.rain_incoming.radar.composite._get_tile_semaphore",
+            return_value=test_semaphore,
+        ):
+            await asyncio.gather(
+                _fetch_tile(session, "http://example.com/tile1"),
+                _fetch_tile(session, "http://example.com/tile2"),
+            )
+
+        assert not overlap_detected, (
+            "Two tile fetches ran concurrently during resp.read() — "
+            "semaphore was released before the body was fully read"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: composite_frames must be offloaded to the executor
+# ---------------------------------------------------------------------------
+
+class TestCompositeFramesOffloading:
+    """When run_in_executor is provided to render_animated_composite,
+    the CPU-bound composite_frames work must run through the executor,
+    not synchronously on the event loop."""
+
+    @pytest.fixture(autouse=True)
+    def clear_tile_caches(self):
+        _map_tile_cache.clear()
+        _radar_tile_cache.clear()
+        yield
+        _map_tile_cache.clear()
+        _radar_tile_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_composite_frames_dispatched_via_executor(self):
+        """render_animated_composite must route composite_frames through
+        run_in_executor when one is provided."""
+        import functools
+
+        executor_fns: list[str] = []
+
+        async def tracking_executor(fn, *args, **kwargs):
+            name = getattr(fn, "__name__", None) or getattr(fn, "func", fn).__name__
+            executor_fns.append(name)
+            # Run synchronously in test (executor would normally offload to thread)
+            if kwargs:
+                return fn(**kwargs)
+            return fn(*args)
+
+        session = _mock_session(
+            map_tile_bytes=_make_tile_png((30, 30, 30, 255)),
+            radar_tile_bytes=_make_tile_png((0, 0, 0, 0)),
+        )
+
+        await render_animated_composite(
+            lat=-33.7,
+            lon=151.2,
+            radius_km=64,
+            frame_paths=["/v2/radar/f1"],
+            frame_duration_ms=500,
+            session=session,
+            run_in_executor=tracking_executor,
+        )
+
+        assert "composite_frames" in executor_fns, (
+            f"composite_frames was not dispatched via run_in_executor. "
+            f"Executor received: {executor_fns}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 5: Map tile fetches must use the tile semaphore
+# ---------------------------------------------------------------------------
+
+class TestMapTileSemaphore:
+    """Map tile fetches must acquire the tile semaphore, not bypass it.
+
+    Previously: _fetch_map_crop called asyncio.gather without any concurrency
+    control, allowing unlimited simultaneous connections to map tile providers.
+
+    Fix: map tile fetches go through _get_tile_semaphore() so they count
+    against the same shared limit as radar tile fetches.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clear_tile_caches(self):
+        _map_tile_cache.clear()
+        _radar_tile_cache.clear()
+        yield
+        _map_tile_cache.clear()
+        _radar_tile_cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_map_tiles_acquire_tile_semaphore(self):
+        """fetch_map_crop must acquire the tile semaphore for each cache-miss tile.
+
+        With semaphore(1), concurrent map tile fetches must be serialized,
+        proving they go through the semaphore rather than bypassing it.
+        """
+        overlap_detected = False
+        fetching_count = 0
+
+        async def serialized_fetch(*args, **kwargs):
+            nonlocal fetching_count, overlap_detected
+            fetching_count += 1
+            if fetching_count > 1:
+                overlap_detected = True
+            await asyncio.sleep(0)
+            fetching_count -= 1
+            resp = MagicMock()
+            resp.status = 200
+            resp.headers = {}
+            resp.raise_for_status = MagicMock()
+            resp.read = AsyncMock(return_value=_make_tile_png((30, 30, 30, 255)))
+            return resp
+
+        session = MagicMock()
+        session.get = serialized_fetch
+
+        test_semaphore = asyncio.Semaphore(1)
+        with patch(
+            "custom_components.rain_incoming.radar.composite._get_tile_semaphore",
+            return_value=test_semaphore,
+        ):
+            await fetch_map_crop(
+                session=session,
+                lat=-33.7,
+                lon=151.2,
+                radius_km=128,
+                output_size=256,
+            )
+
+        assert not overlap_detected, (
+            "Map tile fetches ran concurrently — they are not going through "
+            "the tile semaphore. Map tiles must use _get_tile_semaphore()."
+        )
 
 

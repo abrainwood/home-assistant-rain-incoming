@@ -25,7 +25,21 @@ from .radar.composite import render_animated_composite
 # Per-render timeout: set below HA image_proxy's ~60s default so a slow render
 # falls back gracefully to the placeholder instead of letting image_proxy time out
 # and return a broken-image icon.
-_RENDER_TIMEOUT_SECONDS = 45.0
+_RENDER_TIMEOUT_SECONDS = 55.0
+
+# Global lock: only one render runs at a time across all radius entities.
+# Multiple radii (64/128/256km) all fire when the coordinator updates. Without
+# this lock they compete simultaneously for tile connections, multiplying peak
+# load by the number of radii and causing HA-wide lockups when tiles are slow.
+_render_lock: asyncio.Lock | None = None
+
+
+def _get_render_lock() -> asyncio.Lock:
+    """Lazily create the render lock (must be called inside a running event loop)."""
+    global _render_lock
+    if _render_lock is None:
+        _render_lock = asyncio.Lock()
+    return _render_lock
 
 
 async def async_setup_entry(
@@ -155,23 +169,24 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         )
 
         try:
-            result = await asyncio.wait_for(
-                render_animated_composite(
-                    lat=lat,
-                    lon=lon,
-                    radius_km=self._radius_km,
-                    frame_paths=frame_paths,
-                    frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
-                    frame_timestamps=local_timestamps,
-                    tz_name=self.hass.config.time_zone,
-                    confidence_maps=conf_maps,
-                    location_name=location_name,
-                    session=session,
-                    run_in_executor=self.hass.async_add_executor_job,
-                    map_style=map_style,
-                ),
-                timeout=_RENDER_TIMEOUT_SECONDS,
-            )
+            async with _get_render_lock():
+                result = await asyncio.wait_for(
+                    render_animated_composite(
+                        lat=lat,
+                        lon=lon,
+                        radius_km=self._radius_km,
+                        frame_paths=frame_paths,
+                        frame_duration_ms=RADAR_GIF_FRAME_DURATION_MS,
+                        frame_timestamps=local_timestamps,
+                        tz_name=self.hass.config.time_zone,
+                        confidence_maps=conf_maps,
+                        location_name=location_name,
+                        session=session,
+                        run_in_executor=self.hass.async_add_executor_job,
+                        map_style=map_style,
+                    ),
+                    timeout=_RENDER_TIMEOUT_SECONDS,
+                )
             self._cached_image = result
             self._cached_frame_path = frame_path
             _LOGGER.debug(
