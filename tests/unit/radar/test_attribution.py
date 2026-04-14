@@ -42,38 +42,69 @@ def _count_nonblack_pixels(region: np.ndarray) -> int:
 # ---------------------------------------------------------------------------
 
 def test_draw_attribution_renders_style_text():
-    """_draw_attribution should draw text in the bottom region of the image.
+    """_draw_attribution must draw the style's attribution string.
 
-    A blank black image should have non-black pixels in the bottom strip after
-    calling _draw_attribution - proving text was rendered there.
+    Mocks ImageDraw.text to capture the actual string drawn and verifies
+    it contains the style-specific attribution (e.g. 'CARTO' for Voyager).
     """
+    from unittest.mock import patch
+    from PIL import ImageDraw
+
+    from custom_components.rain_incoming.const import RAINVIEWER_ATTRIBUTION
+
     img = _blank_image()
     style_def = get_style(MapStyle.VOYAGER)
-    _draw_attribution(img, style_def)
 
-    region = _bottom_region(img)
-    nonblack = _count_nonblack_pixels(region)
-    assert nonblack > 0, (
-        "Expected non-black pixels in bottom region after _draw_attribution, "
-        "but the region is still all-black. Attribution was not drawn."
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
+        _draw_attribution(img, style_def)
+
+    drawn_texts = [
+        c.args[1] for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+    assert any(style_def.attribution in t for t in drawn_texts), (
+        f"Expected style attribution '{style_def.attribution}' in drawn text, "
+        f"but got: {drawn_texts}"
+    )
+    assert any(RAINVIEWER_ATTRIBUTION in t for t in drawn_texts), (
+        f"Expected '{RAINVIEWER_ATTRIBUTION}' in drawn text, but got: {drawn_texts}"
     )
 
 
-def test_draw_attribution_includes_rainviewer():
-    """The drawn attribution must include 'RainViewer' - verified by rendering non-empty text."""
-    # We can't easily OCR the image in tests, but we verify _draw_attribution draws
-    # something for every style. The 'RainViewer' content is verified at the string level
-    # via the implementation contract: the text must be f"{style_def.attribution} | RainViewer".
-    for style in MapStyle:
-        img = _blank_image()
-        style_def = get_style(style)
+@pytest.mark.parametrize("style", list(MapStyle), ids=lambda s: s.value)
+def test_draw_attribution_includes_provider_for_each_style(style):
+    """Every map style must draw its provider attribution and RainViewer.
+
+    Replaces the old pixel-presence check with actual string validation
+    for each style enum value.
+    """
+    from unittest.mock import patch
+    from PIL import ImageDraw
+
+    from custom_components.rain_incoming.const import RAINVIEWER_ATTRIBUTION
+
+    img = _blank_image()
+    style_def = get_style(style)
+
+    with patch.object(ImageDraw.ImageDraw, "text") as mock_text:
         _draw_attribution(img, style_def)
-        region = _bottom_region(img)
-        nonblack = _count_nonblack_pixels(region)
-        assert nonblack > 0, (
-            f"Expected attribution text for style={style} in bottom region, "
-            f"but region is all-black. Text may have been placed elsewhere or not drawn."
-        )
+
+    drawn_texts = [
+        c.args[1] for c in mock_text.call_args_list
+        if len(c.args) >= 2 and isinstance(c.args[1], str)
+    ]
+    full_text = " ".join(drawn_texts)
+
+    assert RAINVIEWER_ATTRIBUTION in full_text, (
+        f"Style {style.value}: '{RAINVIEWER_ATTRIBUTION}' not found in drawn text: {drawn_texts}"
+    )
+    assert style_def.attribution in full_text, (
+        f"Style {style.value}: provider attribution '{style_def.attribution}' "
+        f"not found in drawn text: {drawn_texts}"
+    )
+    assert "|" in full_text, (
+        f"Style {style.value}: pipe separator '|' missing from attribution: {drawn_texts}"
+    )
 
 
 # ---------------------------------------------------------------------------
