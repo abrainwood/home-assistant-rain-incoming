@@ -197,13 +197,14 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         data = self._entry.data
         lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
         lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
+        session = async_get_clientsession(self.hass)
 
         try:
             if self.data is None:
                 # First fetch - fail fast, let HA's ConfigEntryNotReady handle retries
-                frames = await self._provider.get_frames(lat, lon, count=FRAMES_TO_FETCH)
+                frames = await self._provider.get_frames(lat, lon, count=FRAMES_TO_FETCH, session=session)
             else:
-                frames = await self._fetch_with_backoff(lat, lon)
+                frames = await self._fetch_with_backoff(lat, lon, session=session)
         except Exception as err:
             raise UpdateFailed(f"RainViewer fetch failed: {err}") from err
 
@@ -220,7 +221,6 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         # Fetch tile grids BEFORE running detection - get_intensity_grid returns
         # zeros until the tiles have been fetched and stitched.
-        session = async_get_clientsession(self.hass)
 
         # Incremental fetch: reuse cached frames for paths we've already fetched,
         # only hit the network for genuinely new frames.
@@ -365,11 +365,11 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
         return result
 
-    async def _fetch_with_backoff(self, lat: float, lon: float):
+    async def _fetch_with_backoff(self, lat: float, lon: float, session=None):
         backoff = BACKOFF_BASE_SECONDS
         while True:
             try:
-                frames = await self._provider.get_frames(lat, lon, count=FRAMES_TO_FETCH)
+                frames = await self._provider.get_frames(lat, lon, count=FRAMES_TO_FETCH, session=session)
                 self._consecutive_failures = 0
                 return frames
             except Exception as err:

@@ -42,10 +42,16 @@ class RadarProvider(ABC):
     """Source of radar frames. All providers must be swappable behind this interface."""
 
     @abstractmethod
-    async def get_frames(self, lat: float, lon: float, count: int) -> list[RadarFrame]:
+    async def get_frames(
+        self, lat: float, lon: float, count: int, session=None,
+    ) -> list[RadarFrame]:
         """
         Fetch the most recent `count` frames centred on (lat, lon),
         ordered oldest-first. May return fewer than `count` if unavailable.
+
+        session: optional HTTP session. When provided, the provider should
+        use it instead of creating its own. In HA context this is the shared
+        session from async_get_clientsession.
         """
 
     @abstractmethod
