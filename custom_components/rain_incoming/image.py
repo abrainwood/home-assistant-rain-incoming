@@ -244,11 +244,16 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         """Return the pre-rendered GIF bytes from cache.
 
         The cache is populated by _render_to_cache() which runs as a background
-        task after every coordinator update (greedy rendering). If a render is
-        in-flight when this is called, we await it so the caller gets real data
-        instead of a placeholder.
+        task after every coordinator update (greedy rendering).
+
+        We only await the render task when the cache is empty (cold start). Once
+        the cache is warm, return immediately so we never block on a task that
+        may itself be waiting for the global render lock — with three radius
+        entities serialized behind one lock, awaiting unconditionally could add
+        up to two full render cycles (110s+) to a frontend request, easily
+        exceeding HA's ~60s image_proxy timeout.
         """
-        if self._render_task is not None and not self._render_task.done():
+        if self._cached_image is None and self._render_task is not None and not self._render_task.done():
             try:
                 await self._render_task
             except Exception:
