@@ -16,6 +16,7 @@ env/
 .coverage
 htmlcov/
 .tox/
+.mutmut-cache
 
 # Type checking
 .mypy_cache/
