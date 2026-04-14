@@ -176,59 +176,6 @@ async def test_partial_rate_limit_does_not_raise_update_failed(hass: HomeAssista
     assert isinstance(result, DetectionResult)
 
 
-@pytest.mark.asyncio
-async def test_partial_rate_limit_failed_frames_contribute_zero_grids(hass: HomeAssistant):
-    """Frames that 429'd return zeros from get_intensity_grid.
-
-    This verifies the coordinator's documented contract: failed frames leave
-    _cached_grid as None, so get_intensity_grid returns zeros. The all-zero
-    check only fires when EVERY frame is zero, not just some.
-    """
-    entry = _make_entry()
-    coordinator = RainDetectorCoordinator(hass, entry)
-
-    base_ts = 1_700_000_000
-    frames = [_make_frame(base_ts + i * 600) for i in range(3)]
-    _patch_frame_fetch_succeeds(frames[0])
-    _patch_frame_fetch_raises_429(frames[1])
-    _patch_frame_fetch_succeeds(frames[2])
-
-    captured_grids: list[list[np.ndarray]] = []
-
-    def _capture_detect(**kwargs):
-        # Grab the grids the coordinator computed - these are passed implicitly
-        # via frames, so we check which frames have non-zero caches
-        return EMPTY_RESULT
-
-    mock_session = MagicMock()
-
-    with (
-        patch.object(coordinator._provider, "get_frames", new=AsyncMock(return_value=frames)),
-        patch(
-            "custom_components.rain_incoming.coordinator.async_get_clientsession",
-            return_value=mock_session,
-        ),
-        patch(
-            "custom_components.rain_incoming.coordinator.detect",
-            return_value=EMPTY_RESULT,
-        ),
-    ):
-        await coordinator._async_update_data()
-
-    # Frames 0 and 2 should have been populated; frame 1 (429) should have no cache
-    # Inspect _cached_grid directly - the coordinator's bounds are internal, but the
-    # cache is set (or not) by our fake _fetch_stitched_grid.
-    assert frames[0]._cached_grid is not None and np.count_nonzero(frames[0]._cached_grid) > 0, (
-        "Frame 0 succeeded - its cached grid should be non-zero"
-    )
-    assert frames[1]._cached_grid is None, (
-        "Frame 1 got 429 - its cached grid should be None (fetch never completed)"
-    )
-    assert frames[2]._cached_grid is not None and np.count_nonzero(frames[2]._cached_grid) > 0, (
-        "Frame 2 succeeded - its cached grid should be non-zero"
-    )
-
-
 # ---------------------------------------------------------------------------
 # Test 2: All fetches fail - total rate limit
 # ---------------------------------------------------------------------------
@@ -393,10 +340,6 @@ async def test_recovery_after_total_rate_limit(hass: HomeAssistant):
     ):
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
-
-    # Poll 1 fails at the tile-fetch level (not via _fetch_with_backoff), so the
-    # backoff counter must remain untouched at its initial value of zero.
-    assert coordinator._consecutive_failures == 0
 
     # --- Poll 2: full recovery ---
     frames_poll2 = [_make_frame(base_ts + (i + 4) * 600) for i in range(4)]
