@@ -219,9 +219,6 @@ def _evaluate_overhead_cell(
     track: list[_TrackEntry],
     frames: list[RadarFrame],
     config: DetectorConfig,
-    loc_row: int,
-    loc_col: int,
-    proximity_px: float,
     km_per_row: float,
     km_per_col: float,
     last_grid: np.ndarray,
@@ -585,7 +582,7 @@ def detect(
 
         if dist_to_loc <= proximity_px:
             result = _evaluate_overhead_cell(
-                track, frames, config, loc_row, loc_col, proximity_px,
+                track, frames, config,
                 km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
             )
         else:
