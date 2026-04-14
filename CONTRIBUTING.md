@@ -23,14 +23,13 @@ git clone https://github.com/abrainwood/home-assistant-rain-incoming.git
 cd home-assistant-rain-incoming
 
 # Create virtualenv and install dev dependencies
-# Requires Python 3.12+. macOS system Python is too old - use the pyenv version directly.
 $(pyenv which python) -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -e ".[dev]"
 
 # Set up git hooks (blocks push if tests fail)
-git config core.hooksPath .githooks
+make hooks
 
 # Run tests
 make test          # unit + integration (~75s)
