@@ -6,6 +6,10 @@
 
 *Rain rolling in off the coast - Groganville QLD, 256km view with ESRI satellite imagery*
 
+![Sensor cards showing arrival time, intensity, status and last rain](docs/sensors_example.png)
+
+*Sensor cards in the HA dashboard - arrival time, intensity, rain status, and last rain*
+
 ---
 
 ## 🌧️ What you get
