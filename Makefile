@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-contract test-e2e dev dev-mock dev-stop dev-logs dev-restart
+.PHONY: test test-unit test-integration test-contract test-e2e hooks dev dev-mock dev-stop dev-logs dev-restart
 
 # --- Tests ---
 
@@ -16,6 +16,12 @@ test-contract:
 
 test-e2e:
 	.venv/bin/pytest tests/e2e/ -v --tb=short -x
+
+# --- Git hooks ---
+
+hooks:
+	git config core.hooksPath .githooks
+	@echo "Git hooks installed (pre-push runs make test)"
 
 # --- Dev environment ---
 
