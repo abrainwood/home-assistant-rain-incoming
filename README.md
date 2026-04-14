@@ -2,9 +2,9 @@
 
 **Know before it hits.** Rain Incoming watches weather radar and tells you when rain is heading your way - before it arrives. It uses nowcasting: short-term prediction (0-60 minutes out) driven by live radar data, not forecast models. Get animated radar maps and sensors you can use to trigger automations.
 
-![Radar showing heavy rain approaching Vancouver](docs/radar_vancouver_128km.gif)
+![Radar showing rain approaching from the coast near Groganville, QLD](docs/radar_groganville_256km.gif)
 
-*Heavy rain approaching Vancouver - 128km view*
+*Rain rolling in off the coast - Groganville QLD, 256km view with ESRI satellite imagery*
 
 ---
 
