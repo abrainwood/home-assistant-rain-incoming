@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from custom_components.rain_incoming.http_retry import fetch_with_retry
+from custom_components.rain_incoming.http_retry import RateLimitBudget, fetch_with_retry
 
 
 def _make_response(status: int, headers: dict | None = None) -> MagicMock:
@@ -184,3 +184,133 @@ class TestFetchWithRetry:
         results = await asyncio.gather(*tasks)
         assert len(results) == 5
         assert max_concurrent <= 2
+
+
+class TestRateLimitBudget:
+    """Tests for RateLimitBudget."""
+
+    def test_rate_limit_budget_no_delay_under_80_percent(self) -> None:
+        budget = RateLimitBudget()
+        budget.update_from_headers({
+            "x-ratelimit-limit": "500",
+            "x-ratelimit-used": "350",
+            "x-ratelimit-window": "60",
+            "x-ratelimit-burst-limit": "300",
+            "x-ratelimit-burst-used": "200",
+        })
+        # 350/500 = 70%, under 80% threshold
+        assert budget.suggested_delay() == 0.0
+
+    def test_rate_limit_budget_delay_above_80_percent(self) -> None:
+        budget = RateLimitBudget()
+        budget.update_from_headers({
+            "x-ratelimit-limit": "500",
+            "x-ratelimit-used": "450",
+            "x-ratelimit-window": "60",
+            "x-ratelimit-burst-limit": "300",
+            "x-ratelimit-burst-used": "250",
+        })
+        # 450/500 = 90%, remaining=50, delay = 60/50 = 1.2s
+        delay = budget.suggested_delay()
+        assert delay > 0.0
+        assert delay == pytest.approx(60.0 / 50, rel=1e-6)
+
+    def test_rate_limit_budget_full_window_delay_at_limit(self) -> None:
+        budget = RateLimitBudget()
+        budget.update_from_headers({
+            "x-ratelimit-limit": "500",
+            "x-ratelimit-used": "500",
+            "x-ratelimit-window": "60",
+            "x-ratelimit-burst-limit": "300",
+            "x-ratelimit-burst-used": "300",
+        })
+        # remaining=0, delay = window_seconds
+        assert budget.suggested_delay() == 60.0
+
+    def test_rate_limit_budget_no_delay_without_data(self) -> None:
+        budget = RateLimitBudget()
+        # No headers read yet - limit=0, should return 0.0
+        assert budget.suggested_delay() == 0.0
+
+    def test_rate_limit_budget_update_from_headers_parses_correctly(self) -> None:
+        budget = RateLimitBudget()
+        budget.update_from_headers({
+            "x-ratelimit-limit": "500",
+            "x-ratelimit-used": "123",
+            "x-ratelimit-window": "60",
+            "x-ratelimit-burst-limit": "300",
+            "x-ratelimit-burst-used": "45",
+        })
+        assert budget.utilization == pytest.approx(123 / 500, rel=1e-6)
+        assert budget.remaining == 500 - 123
+
+    def test_rate_limit_budget_handles_missing_headers_gracefully(self) -> None:
+        budget = RateLimitBudget()
+        # Should not raise, and should return 0.0 with no data
+        budget.update_from_headers({})
+        assert budget.suggested_delay() == 0.0
+
+    def test_rate_limit_budget_handles_malformed_headers(self) -> None:
+        budget = RateLimitBudget()
+        # Non-numeric value should not raise, should be no-op
+        budget.update_from_headers({"x-ratelimit-limit": "notanumber"})
+        assert budget.suggested_delay() == 0.0
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_retry_updates_budget_from_response(self) -> None:
+        session = AsyncMock(spec=aiohttp.ClientSession)
+        ok_resp = _make_response(200, headers={
+            "x-ratelimit-limit": "500",
+            "x-ratelimit-used": "100",
+            "x-ratelimit-window": "60",
+            "x-ratelimit-burst-limit": "300",
+            "x-ratelimit-burst-used": "80",
+        })
+        session.get = AsyncMock(return_value=ok_resp)
+
+        budget = RateLimitBudget()
+        assert budget.utilization == 0.0
+
+        await fetch_with_retry(session, "http://example.com/test", budget=budget)
+
+        assert budget.utilization > 0.0
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_retry_adds_delay_when_suggested(self) -> None:
+        session = AsyncMock(spec=aiohttp.ClientSession)
+        ok_resp = _make_response(200)
+        session.get = AsyncMock(return_value=ok_resp)
+
+        budget = RateLimitBudget()
+        # Pre-load budget to >80% utilization so it suggests a delay
+        budget.update_from_headers({
+            "x-ratelimit-limit": "500",
+            "x-ratelimit-used": "460",
+            "x-ratelimit-window": "60",
+            "x-ratelimit-burst-limit": "300",
+            "x-ratelimit-burst-used": "280",
+        })
+        assert budget.suggested_delay() > 0.0
+
+        sleep_delays = []
+
+        async def mock_sleep(delay):
+            sleep_delays.append(delay)
+
+        with patch("custom_components.rain_incoming.http_retry.asyncio.sleep", side_effect=mock_sleep):
+            await fetch_with_retry(session, "http://example.com/test", budget=budget)
+
+        # Should have slept at least once before the request due to budget
+        assert len(sleep_delays) >= 1
+        assert sleep_delays[0] > 0.0
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_retry_without_budget_unchanged(self) -> None:
+        session = AsyncMock(spec=aiohttp.ClientSession)
+        ok_resp = _make_response(200)
+        session.get = AsyncMock(return_value=ok_resp)
+
+        # Without budget, should work exactly as before - no extra behavior
+        result = await fetch_with_retry(session, "http://example.com/test")
+        assert result is ok_resp
+        assert session.get.call_count == 1

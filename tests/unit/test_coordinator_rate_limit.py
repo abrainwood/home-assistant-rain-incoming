@@ -67,7 +67,7 @@ def _patch_frame_fetch_succeeds(frame: RainViewerFrame, grid: np.ndarray | None 
     so get_intensity_grid will return the cached grid (not zeros) when called
     with those same bounds.
     """
-    async def _fake_fetch(bounds, width, height, session):
+    async def _fake_fetch(bounds, width, height, session, budget=None):
         # Use the actual bounds/size the coordinator will later call get_intensity_grid
         # with, so the cache hit succeeds.
         g = grid if grid is not None else np.full((height, width), 0.5, dtype=np.float32)
@@ -80,7 +80,7 @@ def _patch_frame_fetch_succeeds(frame: RainViewerFrame, grid: np.ndarray | None 
 
 def _patch_frame_fetch_raises_429(frame: RainViewerFrame):
     """Patch a frame's _fetch_stitched_grid to raise a 429 error."""
-    async def _fake_fetch(bounds, width, height, session):
+    async def _fake_fetch(bounds, width, height, session, budget=None):
         raise _make_429_error()
 
     frame._fetch_stitched_grid = _fake_fetch
