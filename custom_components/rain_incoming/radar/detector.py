@@ -180,6 +180,238 @@ def _check_rain_at_location(
     return None
 
 
+# Minimum cell confidence to report rain_incoming
+_MIN_CELL_CONFIDENCE = 0.35
+
+
+def _cell_mean_confidence(
+    label: int,
+    last_labeled: np.ndarray,
+    last_conf_map: np.ndarray | None,
+) -> float:
+    """Compute mean QC confidence for pixels belonging to a cell."""
+    if last_conf_map is None:
+        return 1.0
+    cell_mask = last_labeled == label
+    cell_conf = last_conf_map[cell_mask]
+    if cell_conf.size == 0:
+        return 1.0
+    return float(cell_conf.mean())
+
+
+def _apply_qc_confidence(
+    grids: list[np.ndarray],
+    confidence_maps: list[np.ndarray] | None,
+) -> list[np.ndarray]:
+    """Apply QC confidence as a multiplier before thresholding."""
+    if confidence_maps is None:
+        return grids
+    effective_grids = []
+    for i, g in enumerate(grids):
+        if i < len(confidence_maps) and confidence_maps[i] is not None:
+            effective_grids.append(g * confidence_maps[i])
+        else:
+            effective_grids.append(g)
+    return effective_grids
+
+
+def _evaluate_overhead_cell(
+    track: list[_TrackEntry],
+    frames: list[RadarFrame],
+    config: DetectorConfig,
+    loc_row: int,
+    loc_col: int,
+    proximity_px: float,
+    km_per_row: float,
+    km_per_col: float,
+    last_grid: np.ndarray,
+    last_labeled: np.ndarray,
+    last_conf_map: np.ndarray | None,
+) -> tuple[TrackedCell, datetime | None, float] | None:
+    """Evaluate a tracked cell that is already within proximity of the location.
+
+    Returns (TrackedCell, arrival_dt_or_None, max_intensity_contribution)
+    or None if the cell should be skipped (e.g. speed cap exceeded).
+    """
+    _, last_label, final_centroid = track[-1]
+    cur_row, cur_col = final_centroid
+    cell_conf = _cell_mean_confidence(last_label, last_labeled, last_conf_map)
+    bounds = config.analysis_bounds
+    W, H = config.grid_width, config.grid_height
+
+    speed_kmh_oh, bearing_oh = _track_velocity_kmh_bearing(
+        track, frames, km_per_row, km_per_col,
+    )
+
+    if speed_kmh_oh > config.max_storm_speed_kmh:
+        return None
+
+    arrival_dt: datetime | None = None
+    intensity_contribution = 0.0
+
+    if cell_conf >= _MIN_CELL_CONFIDENCE:
+        arrival_dt = frames[-1].timestamp
+        cell_pixels = last_grid[last_labeled == last_label]
+        if cell_pixels.size > 0:
+            intensity_contribution = float(cell_pixels.max())
+
+    cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
+    tracked = TrackedCell(
+        lat=cell_lat, lon=cell_lon,
+        velocity_kmh=speed_kmh_oh, bearing=bearing_oh,
+        confidence=cell_conf,
+    )
+    return tracked, arrival_dt, intensity_contribution
+
+
+def _evaluate_approaching_cell(
+    track: list[_TrackEntry],
+    frames: list[RadarFrame],
+    config: DetectorConfig,
+    loc_row: int,
+    loc_col: int,
+    proximity_px: float,
+    km_per_row: float,
+    km_per_col: float,
+    last_grid: np.ndarray,
+    last_labeled: np.ndarray,
+    last_conf_map: np.ndarray | None,
+    last_frame_time: datetime,
+) -> tuple[TrackedCell, datetime | None, float] | None:
+    """Evaluate a tracked cell that is not yet overhead - approaching.
+
+    Computes velocity, checks coherence, does forward projection and
+    closing-distance fallback. Returns (TrackedCell, arrival_dt_or_None,
+    max_intensity_contribution) or None if the cell should be skipped.
+    """
+    _, last_label, final_centroid = track[-1]
+    cur_row, cur_col = final_centroid
+    cell_conf = _cell_mean_confidence(last_label, last_labeled, last_conf_map)
+    bounds = config.analysis_bounds
+    W, H = config.grid_width, config.grid_height
+
+    velocities: list[tuple[float, float]] = []
+    for i in range(len(track) - 1):
+        fi, _, ci = track[i]
+        fj, _, cj = track[i + 1]
+        t_delta = (frames[fj].timestamp - frames[fi].timestamp).total_seconds()
+        if t_delta > 0:
+            velocities.append(estimate_velocity(ci, cj, t_delta))
+
+    if not velocities:
+        return None
+
+    if not is_directionally_coherent(velocities, config.max_angular_variance):
+        return None
+
+    vy = sum(v[0] for v in velocities) / len(velocities)
+    vx = sum(v[1] for v in velocities) / len(velocities)
+
+    vy_km_s = vy * km_per_row
+    vx_km_s = vx * km_per_col
+    speed_kmh_val = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
+    if speed_kmh_val > config.max_storm_speed_kmh:
+        return None
+
+    # Project cell forward in 60-second steps up to the lookahead limit
+    step_s = 60.0
+    t = 0.0
+    arrival_seconds: float | None = None
+
+    while t <= config.lookahead_seconds:
+        proj_row = cur_row + vy * t
+        proj_col = cur_col + vx * t
+        d = math.sqrt((proj_row - loc_row) ** 2 + (proj_col - loc_col) ** 2)
+        if d <= proximity_px:
+            arrival_seconds = t
+            break
+        t += step_s
+
+    # Fallback: if velocity projection didn't find arrival, check whether
+    # the cell has been consistently closing distance to the location across
+    # its track history.
+    if arrival_seconds is None:
+        arrival_seconds = _closing_distance_fallback(
+            track, frames, config, loc_row, loc_col, km_per_row, km_per_col,
+        )
+
+    arrival_dt: datetime | None = None
+    intensity_contribution = 0.0
+    if arrival_seconds is not None and cell_conf >= _MIN_CELL_CONFIDENCE:
+        arrival_dt = last_frame_time + timedelta(seconds=arrival_seconds)
+        cell_pixels = last_grid[last_labeled == last_label]
+        if cell_pixels.size > 0:
+            intensity_contribution = float(cell_pixels.max())
+
+    cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
+    bearing_val = math.degrees(math.atan2(vx_km_s, -vy_km_s)) % 360
+    tracked = TrackedCell(
+        lat=cell_lat, lon=cell_lon,
+        velocity_kmh=speed_kmh_val, bearing=bearing_val,
+        confidence=cell_conf,
+    )
+    return tracked, arrival_dt, intensity_contribution
+
+
+def _closing_distance_fallback(
+    track: list[_TrackEntry],
+    frames: list[RadarFrame],
+    config: DetectorConfig,
+    loc_row: int,
+    loc_col: int,
+    km_per_row: float,
+    km_per_col: float,
+) -> float | None:
+    """Check if a cell is closing distance and estimate arrival time.
+
+    Storm cells can approach obliquely (the centroid velocity vector doesn't
+    point at the location) while the cell edge still advances toward it.
+
+    Returns arrival_seconds or None.
+    """
+    per_step_dists = [
+        math.sqrt(
+            (entry[2][0] - loc_row) ** 2 + (entry[2][1] - loc_col) ** 2
+        )
+        * ((km_per_row + km_per_col) / 2)
+        for entry in track
+    ]
+
+    # Verify cell is still closing in recent frames (not reversing).
+    still_closing = (
+        len(per_step_dists) < 3
+        or per_step_dists[-1] < per_step_dists[-2]
+    )
+
+    if not still_closing:
+        return None
+
+    first_dist_km = per_step_dists[0]
+    final_dist_km = per_step_dists[-1]
+    track_duration_s = (
+        frames[track[-1][0]].timestamp - frames[track[0][0]].timestamp
+    ).total_seconds()
+
+    if track_duration_s <= 0 or first_dist_km <= final_dist_km:
+        return None
+
+    closing_km = first_dist_km - final_dist_km
+    closing_rate_kmh = (closing_km / track_duration_s) * 3600
+
+    if closing_km < 20.0 or closing_rate_kmh > config.max_storm_speed_kmh:
+        return None
+
+    remaining_km = final_dist_km - config.proximity_radius_km
+    if remaining_km <= 0:
+        return 0.0
+
+    eta_s = (remaining_km / closing_rate_kmh) * 3600
+    if eta_s <= config.lookahead_seconds:
+        return eta_s
+
+    return None
+
+
 def _build_cell_tracks(
     per_frame_centroids: list[dict[int, tuple[float, float]]],
     max_match_distance: float,
@@ -269,15 +501,7 @@ def detect(
     grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
 
     # Apply QC confidence as a multiplier before thresholding
-    if confidence_maps is not None:
-        effective_grids = []
-        for i, g in enumerate(grids):
-            if i < len(confidence_maps) and confidence_maps[i] is not None:
-                effective_grids.append(g * confidence_maps[i])
-            else:
-                effective_grids.append(g)
-    else:
-        effective_grids = grids
+    effective_grids = _apply_qc_confidence(grids, confidence_maps)
 
     # 2. Threshold + spatial filter each frame independently
     masks = [threshold_intensity(g, config.intensity_threshold) for g in effective_grids]
@@ -353,161 +577,33 @@ def detect(
         else None
     )
 
-    def _cell_mean_confidence(label: int) -> float:
-        """Compute mean QC confidence for pixels belonging to a cell."""
-        if last_conf_map is None:
-            return 1.0
-        cell_mask = last_labeled == label
-        cell_conf = last_conf_map[cell_mask]
-        if cell_conf.size == 0:
-            return 1.0
-        return float(cell_conf.mean())
-
-    # Minimum cell confidence to report rain_incoming
-    _MIN_CELL_CONFIDENCE = 0.35
-
     for track in valid_tracks:
         # Check current position first - overhead rain triggers immediately
-        _, last_label, final_centroid = track[-1]
+        _, _, final_centroid = track[-1]
         cur_row, cur_col = final_centroid
         dist_to_loc = math.sqrt((cur_row - loc_row) ** 2 + (cur_col - loc_col) ** 2)
-        cell_conf = _cell_mean_confidence(last_label)
 
         if dist_to_loc <= proximity_px:
-            # Compute velocity for this overhead cell
-            speed_kmh_oh, bearing_oh = _track_velocity_kmh_bearing(
-                track, frames, km_per_row, km_per_col,
+            result = _evaluate_overhead_cell(
+                track, frames, config, loc_row, loc_col, proximity_px,
+                km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
+            )
+        else:
+            result = _evaluate_approaching_cell(
+                track, frames, config, loc_row, loc_col, proximity_px,
+                km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
+                last_frame_time,
             )
 
-            # Skip cells exceeding the speed cap - likely tracking artefacts
-            if speed_kmh_oh > config.max_storm_speed_kmh:
-                continue
-
-            # Rain is already at the location - report as arriving now
-            if cell_conf >= _MIN_CELL_CONFIDENCE:
-                arrival_dt = last_frame_time
-                if earliest_arrival is None or arrival_dt < earliest_arrival:
-                    earliest_arrival = arrival_dt
-                cell_pixels = last_grid[last_labeled == last_label]
-                if cell_pixels.size > 0:
-                    max_intensity = max(max_intensity, float(cell_pixels.max()))
-
-            # Build TrackedCell
-            cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
-            tracked_cells.append(TrackedCell(
-                lat=cell_lat, lon=cell_lon,
-                velocity_kmh=speed_kmh_oh, bearing=bearing_oh,
-                confidence=cell_conf,
-            ))
+        if result is None:
             continue
 
-        # For cells not yet overhead, compute velocity and require directional coherence
-        velocities: list[tuple[float, float]] = []
-        for i in range(len(track) - 1):
-            fi, _, ci = track[i]
-            fj, _, cj = track[i + 1]
-            t_delta = (frames[fj].timestamp - frames[fi].timestamp).total_seconds()
-            if t_delta > 0:
-                velocities.append(estimate_velocity(ci, cj, t_delta))
-
-        if not velocities:
-            continue
-
-        if not is_directionally_coherent(velocities, config.max_angular_variance):
-            continue
-
-        vy = sum(v[0] for v in velocities) / len(velocities)
-        vx = sum(v[1] for v in velocities) / len(velocities)
-
-        # Speed cap - skip cells that are unrealistically fast
-        vy_km_s = vy * km_per_row
-        vx_km_s = vx * km_per_col
-        speed_kmh_val = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
-        if speed_kmh_val > config.max_storm_speed_kmh:
-            continue
-
-        # Project cell forward in 60-second steps up to the lookahead limit
-        step_s = 60.0
-        t = 0.0
-        arrival_seconds: float | None = None
-
-        while t <= config.lookahead_seconds:
-            proj_row = cur_row + vy * t
-            proj_col = cur_col + vx * t
-            d = math.sqrt((proj_row - loc_row) ** 2 + (proj_col - loc_col) ** 2)
-            if d <= proximity_px:
-                arrival_seconds = t
-                break
-            t += step_s
-
-        # Fallback: if velocity projection didn't find arrival, check whether
-        # the cell has been consistently closing distance to the location across
-        # its track history. Storm cells can approach obliquely (the centroid
-        # velocity vector doesn't point at the location) while the cell edge
-        # still advances toward it.
-        if arrival_seconds is None:
-            per_step_dists = [
-                math.sqrt(
-                    (entry[2][0] - loc_row) ** 2 + (entry[2][1] - loc_col) ** 2
-                )
-                * ((km_per_row + km_per_col) / 2)
-                for entry in track
-            ]
-
-            # Verify cell is still closing in recent frames (not reversing).
-            # A cell that approached then turned away would pass the first-vs-last
-            # distance check but should not trigger the fallback.
-            still_closing = (
-                len(per_step_dists) < 3
-                or per_step_dists[-1] < per_step_dists[-2]
-            )
-
-            if still_closing:
-                first_dist_km = per_step_dists[0]
-                final_dist_km = per_step_dists[-1]
-                track_duration_s = (
-                    frames[track[-1][0]].timestamp - frames[track[0][0]].timestamp
-                ).total_seconds()
-
-                if track_duration_s > 0 and first_dist_km > final_dist_km:
-                    closing_km = first_dist_km - final_dist_km
-                    closing_rate_kmh = (closing_km / track_duration_s) * 3600
-                    # Only trust the closing-distance signal when:
-                    # - cell has closed >= 20 km: filters out minor GPS-jitter
-                    #   or lateral drift. At typical storm speeds (30-80 km/h)
-                    #   this requires ~15-40 min of consistent approach, giving
-                    #   high confidence the cell is genuinely closing.
-                    # - closing rate is physically plausible (under the speed cap)
-                    # - estimated arrival is within the lookahead
-                    if (
-                        closing_km >= 20.0
-                        and closing_rate_kmh <= config.max_storm_speed_kmh
-                    ):
-                        remaining_km = final_dist_km - config.proximity_radius_km
-                        if remaining_km <= 0:
-                            arrival_seconds = 0.0
-                        else:
-                            eta_s = (remaining_km / closing_rate_kmh) * 3600
-                            if eta_s <= config.lookahead_seconds:
-                                arrival_seconds = eta_s
-
-        if arrival_seconds is not None and cell_conf >= _MIN_CELL_CONFIDENCE:
-            arrival_dt = last_frame_time + timedelta(seconds=arrival_seconds)
+        cell, arrival_dt, intensity_contribution = result
+        tracked_cells.append(cell)
+        if arrival_dt is not None:
             if earliest_arrival is None or arrival_dt < earliest_arrival:
                 earliest_arrival = arrival_dt
-            cell_pixels = last_grid[last_labeled == last_label]
-            if cell_pixels.size > 0:
-                max_intensity = max(max_intensity, float(cell_pixels.max()))
-
-        # All coherent tracks become tracked cells (even if they won't arrive
-        # within the lookahead - they're still real rain the user should see)
-        cell_lat, cell_lon = _pixel_to_location(cur_row, cur_col, bounds, W, H)
-        bearing_val = math.degrees(math.atan2(vx_km_s, -vy_km_s)) % 360
-        tracked_cells.append(TrackedCell(
-            lat=cell_lat, lon=cell_lon,
-            velocity_kmh=speed_kmh_val, bearing=bearing_val,
-            confidence=cell_conf,
-        ))
+            max_intensity = max(max_intensity, intensity_contribution)
 
     # Combine cell-tracking results with the direct rain-at-location check
     if rain_at_location is not None:
