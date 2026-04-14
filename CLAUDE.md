@@ -91,6 +91,52 @@ Write a failing test, write minimum code to pass, refactor. That's it. If you're
 - **Golden data must exercise the full pipeline.** Run real captures through ALL transforms, filters, QC stages, and rendering steps - not just the detection algorithm in isolation.
 - **Don't change tests while refactoring.** If a test needs to change, stop and explain why before proceeding.
 
+## Mutation testing (mutmut)
+
+We use [mutmut](https://mutmut.readthedocs.io/) (v2.x) to verify test quality. It's a review tool, not a CI tool - run it when reviewing a module's test suite or after completing a batch of new tests.
+
+**When to run:**
+- During test reviews (like #77)
+- After completing a test suite for a new module
+- When you suspect tests are tautological (pass regardless of code changes)
+
+**Not for:** the TDD red-green-refactor cycle (too slow), or CI (too slow, flaky with in-place mutation).
+
+**How to run against a specific module:**
+
+```bash
+# Configure target in pyproject.toml [tool.mutmut], then:
+mutmut run
+
+# View survivors:
+mutmut results
+
+# Inspect a specific survivor:
+mutmut show <id>
+```
+
+The `[tool.mutmut]` section in `pyproject.toml` controls which file to mutate and which tests to run. Change `paths_to_mutate` and `runner` to target different modules. Example for motion.py:
+
+```toml
+[tool.mutmut]
+paths_to_mutate = "custom_components/rain_incoming/radar/motion.py"
+runner = "python -m pytest tests/unit/radar/test_motion.py -x -q --no-header --tb=line"
+tests_dir = "tests/unit/radar/"
+```
+
+**Goal: 100% kill rate.** Every surviving mutant is a test gap. When you find survivors, write tests that kill them before moving on. A clean mutation score means the bar is set and future survivors are immediately visible.
+
+**Equivalent mutants:** Some mutations don't change behavior (e.g. an `or` -> `and` on a guard clause where the loop body already handles the empty case). These can't be killed. Verify by applying the mutant (`mutmut apply <id>`) and confirming the behavior is genuinely identical, not just untested. Note equivalent mutants in test comments so future reviewers don't waste time.
+
+**Interpreting survivors:**
+- `** 2` -> `* 2` surviving in math = tests don't exercise enough numeric variety
+- `<=` -> `<` surviving = no boundary test at exact threshold
+- `continue` -> `break` surviving = loop body not tested with enough iterations
+- `or` -> `and` surviving = guard clause tested with insufficient input combinations (or equivalent mutant)
+- `return False` -> `return True` surviving = edge case input never tested
+
+**Important:** mutmut v2.x mutates files in-place. Don't pipe its verbose output into conversation windows - redirect to a file (`mutmut run > /tmp/mutmut.log 2>&1`) and inspect results with `mutmut results` and `mutmut show <id>`.
+
 ## Browser tests (Playwright)
 
 Browser tests are not unit tests. Don't write them like unit tests - guessing selectors, running, fixing, repeating. That's how flaky tests are born.
