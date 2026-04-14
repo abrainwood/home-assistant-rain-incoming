@@ -79,6 +79,35 @@ class RateLimitBudget:
         return self._window_seconds / remaining
 
 
+def _get_retry_delay(
+    resp: aiohttp.ClientResponse,
+    attempt: int,
+    base_delay: float,
+) -> float:
+    """Compute the retry delay for a retryable response.
+
+    For 429 responses, respects the Retry-After header if present and numeric.
+    For all other statuses, uses exponential backoff.
+    """
+    delay = base_delay * (2 ** attempt)
+    if resp.status == 429:
+        retry_after = resp.headers.get("Retry-After")
+        if retry_after:
+            try:
+                delay = float(retry_after)
+            except ValueError:
+                _LOGGER.debug(
+                    "Non-numeric Retry-After header '%s', using exponential backoff",
+                    retry_after,
+                )
+    return delay
+
+
+def _is_retryable_status(status: int) -> bool:
+    """Return True for HTTP statuses that should trigger a retry."""
+    return status == 429 or status >= 500
+
+
 async def fetch_with_retry(
     session: aiohttp.ClientSession,
     url: str,
@@ -124,42 +153,17 @@ async def fetch_with_retry(
         if budget is not None:
             budget.update_from_headers(resp.headers)
 
-        if resp.status == 429:
+        if _is_retryable_status(resp.status):
             if attempt < max_retries:
-                retry_after = resp.headers.get("Retry-After")
-                delay = base_delay * (2 ** attempt)
-                if retry_after:
-                    try:
-                        delay = float(retry_after)
-                    except ValueError:
-                        _LOGGER.debug(
-                            "Non-numeric Retry-After header '%s', using exponential backoff",
-                            retry_after,
-                        )
+                delay = _get_retry_delay(resp, attempt, base_delay)
                 _LOGGER.warning(
-                    "Rate limited (429) on %s, retrying in %.1fs (attempt %d/%d)",
-                    url, delay, attempt + 1, max_retries,
-                )
-                resp.release()
-                await asyncio.sleep(delay)
-                continue
-            # All retries exhausted on 429
-            _LOGGER.warning(
-                "All %d retries exhausted (429) for %s", max_retries, url,
-            )
-            resp.raise_for_status()
-
-        if resp.status >= 500:
-            if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
-                _LOGGER.warning(
-                    "Server error (%d) on %s, retrying in %.1fs (attempt %d/%d)",
+                    "%s (%d) on %s, retrying in %.1fs (attempt %d/%d)",
+                    "Rate limited" if resp.status == 429 else "Server error",
                     resp.status, url, delay, attempt + 1, max_retries,
                 )
                 resp.release()
                 await asyncio.sleep(delay)
                 continue
-            # All retries exhausted on 5xx
             _LOGGER.warning(
                 "All %d retries exhausted (%d) for %s",
                 max_retries, resp.status, url,
