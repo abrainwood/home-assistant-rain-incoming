@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from datetime import datetime, timezone
@@ -274,16 +275,14 @@ class RainViewerProvider(RadarProvider):
         session,
         **kwargs,
     ) -> None:
-        """Pre-fetch stitched grids for all frames.
+        """Pre-fetch stitched grids for all frames concurrently.
 
-        Fetches each frame's tiles individually (C2 will add concurrency).
         Failures are logged as warnings and the frame is skipped - the
         coordinator checks _cached_grid to detect partial failures.
         """
         budget = kwargs.get("budget")
-        for frame in frames:
-            if not isinstance(frame, RainViewerFrame):
-                continue
+
+        async def _fetch_one(frame: RainViewerFrame) -> None:
             try:
                 await frame._fetch_stitched_grid(bounds, width, height, session, budget=budget)
             except aiohttp.ClientResponseError as e:
@@ -296,6 +295,10 @@ class RainViewerProvider(RadarProvider):
                     "Radar grid fetch failed: %s: %s for frame %s",
                     type(e).__name__, e, frame.timestamp,
                 )
+
+        rv_frames = [f for f in frames if isinstance(f, RainViewerFrame)]
+        if rv_frames:
+            await asyncio.gather(*[_fetch_one(f) for f in rv_frames])
 
     async def _fetch_manifest(self) -> dict:
         async with aiohttp.ClientSession() as session:
