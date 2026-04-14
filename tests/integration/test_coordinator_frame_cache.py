@@ -68,7 +68,7 @@ def _patch_frame_fetch_succeeds(frame: RainViewerFrame, fetch_log: list[str] | N
     The fake stores bounds + size exactly as the coordinator will pass them, so
     get_intensity_grid() cache-hits when the coordinator calls it later.
     """
-    async def _fake_fetch(bounds, width, height, session):
+    async def _fake_fetch(bounds, width, height, session, budget=None):
         if fetch_log is not None:
             fetch_log.append(frame.path)
         frame._cached_grid = np.full((height, width), 0.5, dtype=np.float32)
@@ -85,7 +85,7 @@ def _patch_frame_fetch_fails(frame: RainViewerFrame, fetch_log: list[str] | None
     _cached_grid stays None. The coordinator's _fetch_frame() swallows the
     exception and logs a warning.
     """
-    async def _fake_fetch(bounds, width, height, session):
+    async def _fake_fetch(bounds, width, height, session, budget=None):
         if fetch_log is not None:
             fetch_log.append(frame.path)
         raise RuntimeError("simulated fetch failure")
