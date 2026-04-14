@@ -163,9 +163,11 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         location_name = data.get(CONF_LOCATION_NAME) or None
         map_style = self.coordinator.map_style
 
+        log_location = location_name or "default location"
+
         _LOGGER.debug(
             "Radar %dkm: background render starting, %d frames for %s (style=%s)",
-            self._radius_km, len(frame_paths), location_name or "default location", map_style,
+            self._radius_km, len(frame_paths), log_location, map_style,
         )
 
         try:
@@ -196,12 +198,12 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         except asyncio.TimeoutError:
             _LOGGER.warning(
                 "Radar %dkm: render timed out after %.0fs for %s; keeping previous cache or placeholder",
-                self._radius_km, _RENDER_TIMEOUT_SECONDS, location_name or "default location",
+                self._radius_km, _RENDER_TIMEOUT_SECONDS, log_location,
             )
         except Exception:
             _LOGGER.exception(
                 "Radar %dkm: render failed for %s",
-                self._radius_km, location_name or "default location",
+                self._radius_km, log_location,
             )
 
     async def async_added_to_hass(self) -> None:
