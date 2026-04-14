@@ -126,7 +126,7 @@ tests_dir = "tests/unit/radar/"
 
 **Goal: 100% kill rate.** Every surviving mutant is a test gap. When you find survivors, write tests that kill them before moving on. A clean mutation score means the bar is set and future survivors are immediately visible.
 
-**Equivalent mutants:** Some mutations don't change behavior (e.g. an `or` -> `and` on a guard clause where the loop body already handles the empty case). These can't be killed. Verify by applying the mutant (`mutmut apply <id>`) and confirming the behavior is genuinely identical, not just untested. Note equivalent mutants in test comments so future reviewers don't waste time.
+**Equivalent mutants:** Some mutations don't change behavior (e.g. an `or` -> `and` on a guard clause where the loop body already handles the empty case). These can't be killed. Verify by applying the mutant (`mutmut apply <id>`) and confirming the behavior is genuinely identical, not just untested. Mark them in production code with `# pragma: no mutate (reason)` so they're skipped in future runs, and note them in test comments so future reviewers don't waste time.
 
 **Interpreting survivors:**
 - `** 2` -> `* 2` surviving in math = tests don't exercise enough numeric variety
