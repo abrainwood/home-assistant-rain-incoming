@@ -20,6 +20,7 @@ dev = [
     "aiohttp>=3.9",
     "aioresponses>=0.7",
     "playwright>=1.40",
+    "mutmut>=2.5,<3",
 ]
 
 [tool.setuptools.packages.find]
@@ -35,3 +36,8 @@ pythonpath = ["."]
 [tool.coverage.run]
 source = ["custom_components/rain_incoming"]
 omit = ["tests/*"]
+
+[tool.mutmut]
+paths_to_mutate = "custom_components/rain_incoming/radar/motion.py"
+runner = "python -m pytest tests/unit/radar/test_motion.py -x -q --no-header --tb=line"
+tests_dir = "tests/unit/radar/"

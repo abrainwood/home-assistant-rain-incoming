@@ -31,7 +31,7 @@ def match_cells_across_frames(
     Returns a list of (t0_label, t1_label) pairs.
     Each t1 cell is matched at most once (to the closest t0 cell within max_distance).
     """
-    if not centroids_t0 or not centroids_t1:
+    if not centroids_t0 or not centroids_t1:  # pragma: no mutate (equivalent - loop handles empty)
         return []
 
     # Build all candidate pairs with distances
