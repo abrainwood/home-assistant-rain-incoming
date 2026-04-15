@@ -234,6 +234,7 @@ A multi-stage **QC pipeline** filters radar artifacts before detection: texture 
 - Behaviour in regions with sparse radar coverage (e.g. New Zealand, rural Australia)
 
 **Methods we're evaluating for future versions:**
+- **Hyperlocal forecast augmentation** - use hourly weather forecasts (Open-Meteo, Pirate Weather) as a complementary signal. Forecasts can warn of rain development before radar sees it (convective initiation, orographic rainfall), and extend the prediction horizon beyond radar's ~30 minute limit.
 - **Dense optical flow** (Lucas-Kanade / Farneback) - velocity at every pixel instead of cell centroids, better for diffuse rain bands and frontal systems
 - **Growth/decay modelling** - cells don't just move, they intensify and weaken. Currently we project static intensity forward.
 - **Probabilistic output** - "70% chance of rain in 25-35 minutes" instead of binary on/off
