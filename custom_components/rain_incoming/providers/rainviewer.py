@@ -337,7 +337,8 @@ async def check_coverage(
             return False
 
         indices = {0, len(past) // 2, len(past) - 1}
-        for idx in indices:
+
+        async def _probe(idx: int) -> bool:
             frame = past[idx]
             url = (
                 f"{TILE_BASE_URL}{frame['path']}"
@@ -346,13 +347,12 @@ async def check_coverage(
             )
             tile_resp = await fetch_with_retry(session, url)
             tile_bytes = await tile_resp.read()
-
             img = Image.open(BytesIO(tile_bytes)).convert("RGBA")
             alpha = np.array(img)[:, :, 3]
-            if alpha.max() > 10:
-                return True
+            return bool(alpha.max() > 10)
 
-        return False
+        results = await asyncio.gather(*[_probe(i) for i in indices])
+        return any(results)
     finally:
         if owns_session:
             await session.close()

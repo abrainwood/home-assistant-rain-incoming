@@ -10,8 +10,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_LOCATION_NAME, DOMAIN
+from .const import DOMAIN
 from .coordinator import RainDetectorCoordinator
+from .entity_helpers import device_info_from_entry
 from .radar.detector import Confidence
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,15 +39,6 @@ _INTENSITY_ICONS = {
 }
 
 
-def _device_info(entry: ConfigEntry) -> DeviceInfo:
-    location_name = entry.data.get(CONF_LOCATION_NAME) or ""
-    device_name = "Rain Incoming"
-    if location_name:
-        device_name = f"Rain Incoming - {location_name}"
-    return DeviceInfo(
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=device_name,
-    )
 
 
 async def async_setup_entry(
@@ -76,7 +68,7 @@ class RainArrivalTimeSensor(CoordinatorEntity[RainDetectorCoordinator], SensorEn
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _device_info(self._entry)
+        return device_info_from_entry(self._entry)
 
     @property
     def icon(self) -> str:
@@ -122,7 +114,7 @@ class RainIntensitySensor(CoordinatorEntity[RainDetectorCoordinator], SensorEnti
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _device_info(self._entry)
+        return device_info_from_entry(self._entry)
 
     @property
     def icon(self) -> str:
@@ -171,7 +163,7 @@ class LastRainNearbySensor(
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _device_info(self._entry)
+        return device_info_from_entry(self._entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

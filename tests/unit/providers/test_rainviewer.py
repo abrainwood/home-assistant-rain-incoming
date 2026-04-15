@@ -298,10 +298,22 @@ class TestCheckCoverage:
         tile_resp = AsyncMock()
         tile_resp.read = AsyncMock(return_value=_make_tile_png(has_precip=True))
 
+        # check_coverage fetches manifest first (sequential), then probes
+        # tiles concurrently. Use a function side_effect that returns the
+        # manifest for the first call and tile responses for the rest.
+        call_count = 0
+
+        async def _fake_fetch(session, url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return manifest_resp
+            return tile_resp
+
         mock_session = MagicMock()
         with patch(
             "custom_components.rain_incoming.providers.rainviewer.fetch_with_retry",
-            side_effect=[manifest_resp, tile_resp],
+            side_effect=_fake_fetch,
         ):
             result = await check_coverage(-33.701, 151.209, session=mock_session)
         assert result is True
@@ -314,10 +326,19 @@ class TestCheckCoverage:
         tile_resp = AsyncMock()
         tile_resp.read = AsyncMock(return_value=_make_tile_png(has_precip=False))
 
+        call_count = 0
+
+        async def _fake_fetch(session, url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return manifest_resp
+            return tile_resp
+
         mock_session = MagicMock()
         with patch(
             "custom_components.rain_incoming.providers.rainviewer.fetch_with_retry",
-            side_effect=[manifest_resp, tile_resp, tile_resp, tile_resp],
+            side_effect=_fake_fetch,
         ):
             result = await check_coverage(0.0, 0.0, session=mock_session)
         assert result is False
