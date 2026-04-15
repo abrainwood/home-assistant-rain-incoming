@@ -65,7 +65,9 @@ async def _fetch_png(session: aiohttp.ClientSession, url: str) -> Image.Image | 
     Network/timeout errors are also logged at WARNING and return None.
     """
     try:
-        resp = await fetch_with_retry(session, url)
+        resp = await fetch_with_retry(
+            session, url, headers={"User-Agent": _USER_AGENT},
+        )
         data = await resp.read()
         return Image.open(BytesIO(data)).convert("RGBA")
     except aiohttp.ClientResponseError as exc:

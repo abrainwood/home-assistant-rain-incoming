@@ -20,6 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_LOCATION_NAME, DOMAIN, RADAR_GIF_FRAME_DURATION_MS, RADAR_RADII_KM
 from .coordinator import RainDetectorCoordinator
+from .entity_helpers import device_info_from_entry
 from .radar.composite import render_animated_composite
 
 # Per-render timeout: set below HA image_proxy's ~60s default so a slow render
@@ -74,14 +75,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        location_name = self._entry.data.get(CONF_LOCATION_NAME) or ""
-        device_name = "Rain Incoming"
-        if location_name:
-            device_name = f"Rain Incoming - {location_name}"
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name=device_name,
-        )
+        return device_info_from_entry(self._entry)
 
     @property
     def image_last_updated(self) -> datetime | None:
