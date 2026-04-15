@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -56,12 +56,8 @@ class DetectionResult:
     confidence: Confidence
     frame_count: int
     max_approaching_intensity: float = 0.0
-    tracked_cells: list[TrackedCell] = None  # type: ignore[assignment]
+    tracked_cells: list[TrackedCell] = field(default_factory=list)
     last_labeled: np.ndarray | None = None  # labeled array of last frame's cells
-
-    def __post_init__(self) -> None:
-        if self.tracked_cells is None:
-            self.tracked_cells = []
 
 
 def _location_to_pixel(

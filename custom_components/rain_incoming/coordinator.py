@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import os
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
+import numpy as np
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
@@ -76,7 +79,6 @@ CLUTTER_MATURITY_CYCLES = 72  # fully mature after ~12 hours
 
 def _build_analysis_tiles(lat: float, lon: float, zoom: int) -> list[tuple[int, int]]:
     """Return the 4 tile coordinates of the 2x2 block that best centres the location."""
-    import math
     from .radar.geo import lat_lon_to_tile
 
     cx, cy = lat_lon_to_tile(lat, lon, zoom)
@@ -139,7 +141,6 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.last_rain_nearby_time: datetime | None = None
 
         # Clutter map - loaded lazily in _async_update_data to avoid blocking I/O
-        import os
         self._clutter_path = os.path.join(
             hass.config.path(".storage"), CLUTTER_MAP_FILENAME
         )
@@ -161,6 +162,11 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             CONF_MAP_STYLE,
             self._entry.data.get(CONF_MAP_STYLE, "voyager"),
         )
+
+    @property
+    def consecutive_failures(self) -> int:
+        """Number of consecutive fetch failures (for diagnostics)."""
+        return self._consecutive_failures
 
     async def async_save_clutter_map(self) -> None:
         """Persist the clutter map to disk. Called on HA shutdown."""
@@ -267,7 +273,6 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         # unavailable instead of a false "no rain". We check _cached_grid
         # (set by _fetch_stitched_grid on success) rather than grid content,
         # because all-zero grids are valid - they mean "no precipitation".
-        import numpy as np
         if frames and all(getattr(f, "_cached_grid", None) is None for f in frames):
             raise UpdateFailed(
                 "All radar tile fetches failed - no frames have data"

@@ -85,7 +85,7 @@ def is_directionally_coherent(
         return False
 
     # Reject all-zero velocities - stationary echoes have no meaningful direction
-    non_zero = [(vy, vx) for vy, vx in velocities if vy != 0.0 or vx != 0.0]
+    non_zero = [(vy, vx) for vy, vx in velocities if abs(vy) > 1e-9 or abs(vx) > 1e-9]
     if not non_zero:
         return False
 
