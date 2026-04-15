@@ -41,10 +41,7 @@ class TestCanberraGoldenV2:
         configure_location(CANBERRA_LAT, CANBERRA_LON, "Canberra_v2")
 
         sensor_id = "binary_sensor.rain_incoming_canberra_v2_status"
-        state = ha_client.poll_entity_state(
-            sensor_id, timeout=30,
-            condition=lambda s: s.get("state") not in (None, "unavailable"),
-        )
+        state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
         # Save rain image for inspection
         image_id = "image.rain_incoming_canberra_v2_radar_128km"
@@ -214,10 +211,7 @@ class TestDarwinGoldenV2:
         configure_location(DARWIN_LAT, DARWIN_LON, "Darwin_v2")
 
         sensor_id = "binary_sensor.rain_incoming_darwin_v2_status"
-        state = ha_client.poll_entity_state(
-            sensor_id, timeout=30,
-            condition=lambda s: s.get("state") not in (None, "unavailable"),
-        )
+        state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
         image_id = "image.rain_incoming_darwin_v2_radar_128km"
         rain_gif = ha_client.get_image(image_id)
@@ -275,10 +269,12 @@ class TestMelbourneGoldenV2:
         configure_location(MELBOURNE_LAT, MELBOURNE_LON, "Melbourne_v2")
 
         sensor_id = "binary_sensor.rain_incoming_melbourne_v2_status"
-        state = ha_client.poll_entity_state(
-            sensor_id, timeout=30,
-            condition=lambda s: s.get("state") not in (None, "unavailable"),
-        )
+        # Wait for a complete coordinator cycle with the dry scenario.
+        # configure_location's internal poll accepts any non-unavailable state,
+        # which may capture a transient "on" from the coordinator's initial
+        # refresh before the dry scenario data is fully processed. Explicitly
+        # waiting for a fresh cycle ensures we test the final detection result.
+        state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
         image_id = "image.rain_incoming_melbourne_v2_radar_128km"
         dry_gif = ha_client.get_image(image_id)
