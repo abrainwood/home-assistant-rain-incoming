@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from collections import OrderedDict
 from datetime import datetime
 from io import BytesIO
 
@@ -38,15 +39,16 @@ _CROSSHAIR_RADIUS = 8
 _CROSSHAIR_LINE_LENGTH = 16
 _CROSSHAIR_LINE_GAP = 12
 
-# Module-level cache for static map tiles: (style, zoom, x, y) -> RGBA Image
+# Module-level LRU cache for static map tiles: (style, zoom, x, y) -> RGBA Image
 # Bounded to prevent unbounded memory growth (each tile ~256KB).
-_map_tile_cache: dict[tuple, Image.Image] = {}
+# OrderedDict with move_to_end on access provides true LRU eviction.
+_map_tile_cache: OrderedDict[tuple, Image.Image] = OrderedDict()
 _MAP_CACHE_MAX = 200
 
-# Module-level cache for radar tiles: (frame_path, zoom, x, y, scheme) -> RGBA Image
+# Module-level LRU cache for radar tiles: (frame_path, zoom, x, y, scheme) -> RGBA Image
 # The cache key includes frame_path, so stale data can never be served.
-# We cap size at 500 entries and evict the oldest half when exceeded.
-_radar_tile_cache: dict[tuple[str, int, int, int, int], Image.Image] = {}
+# OrderedDict with move_to_end on access provides true LRU eviction.
+_radar_tile_cache: OrderedDict[tuple[str, int, int, int, int], Image.Image] = OrderedDict()
 _RADAR_CACHE_MAX = 500
 
 
@@ -70,19 +72,15 @@ def _get_tile_semaphore() -> asyncio.Semaphore:
 
 
 def _evict_radar_cache_if_full() -> None:
-    """Evict oldest half of radar tile cache when it exceeds the size limit."""
-    if len(_radar_tile_cache) > _RADAR_CACHE_MAX:
-        keys = list(_radar_tile_cache.keys())
-        for k in keys[: len(keys) // 2]:
-            del _radar_tile_cache[k]
+    """Evict least-recently-used radar tiles when the cache exceeds the size limit."""
+    while len(_radar_tile_cache) > _RADAR_CACHE_MAX:
+        _radar_tile_cache.popitem(last=False)  # pop from LRU end (front)
 
 
 def _evict_map_cache_if_full() -> None:
-    """Evict oldest half of map tile cache when it exceeds the size limit."""
-    if len(_map_tile_cache) > _MAP_CACHE_MAX:
-        keys = list(_map_tile_cache.keys())
-        for k in keys[: len(keys) // 2]:
-            del _map_tile_cache[k]
+    """Evict least-recently-used map tiles when the cache exceeds the size limit."""
+    while len(_map_tile_cache) > _MAP_CACHE_MAX:
+        _map_tile_cache.popitem(last=False)  # pop from LRU end (front)
 
 
 def km_per_pixel(lat: float, zoom: int) -> float:
@@ -246,6 +244,7 @@ async def _fetch_map_tile(
     cache_key = (style_def.style, zoom, tx, ty)
     cached = _map_tile_cache.get(cache_key)  # type: ignore[arg-type]
     if cached is not None:
+        _map_tile_cache.move_to_end(cache_key)  # type: ignore[arg-type]  # LRU touch
         return cached
 
     # Gate cache-miss fetches through the shared semaphore so map tiles count
@@ -666,6 +665,7 @@ async def _fetch_radar_overlay(
         cache_key = (frame_path, radar_zoom, tx, ty, _RENDER_COLOUR_SCHEME)
         cached = _radar_tile_cache.get(cache_key)
         if cached is not None:
+            _radar_tile_cache.move_to_end(cache_key)  # LRU touch
             return tx, ty, cached
 
         url = (
