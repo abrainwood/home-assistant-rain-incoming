@@ -11,6 +11,7 @@ from PIL import Image
 from custom_components.rain_incoming.radar.composite import (
     _map_tile_cache,
     _radar_tile_cache,
+    _tile_semaphore,
     _MAP_CACHE_MAX,
     clear_tile_caches,
 )
@@ -96,3 +97,35 @@ class TestUnloadClearsCaches:
 
         assert len(_map_tile_cache) == 0, "Map cache must be cleared after last entry unload"
         assert len(_radar_tile_cache) == 0, "Radar cache must be cleared after last entry unload"
+
+
+class TestAsyncPrimitivesResetOnClear:
+    """clear_tile_caches must reset the tile semaphore and render lock
+    so they're recreated fresh after integration reload (#122)."""
+
+    def test_tile_semaphore_reset_on_clear(self):
+        import custom_components.rain_incoming.radar.composite as comp
+
+        # Force creation
+        comp._get_tile_semaphore()
+        assert comp._tile_semaphore is not None
+
+        clear_tile_caches()
+
+        assert comp._tile_semaphore is None, (
+            "Tile semaphore must be reset to None after clear_tile_caches"
+        )
+
+    def test_render_lock_reset_on_clear(self):
+        import custom_components.rain_incoming.image as img_mod
+
+        # Force creation
+        img_mod._get_render_lock()
+        assert img_mod._render_lock is not None
+
+        from custom_components.rain_incoming.image import reset_render_lock
+        reset_render_lock()
+
+        assert img_mod._render_lock is None, (
+            "Render lock must be reset to None after reset_render_lock"
+        )
