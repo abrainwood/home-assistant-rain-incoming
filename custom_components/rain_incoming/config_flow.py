@@ -262,6 +262,8 @@ class RainIncomingOptionsFlow(OptionsFlow):
                     merged_data[CONF_LOCATION_NAME] = user_input[CONF_LOCATION_NAME]
                 if CONF_LOOKAHEAD_MINUTES in user_input:
                     merged_data[CONF_LOOKAHEAD_MINUTES] = user_input[CONF_LOOKAHEAD_MINUTES]
+                if CONF_MAP_STYLE in user_input:
+                    merged_data[CONF_MAP_STYLE] = user_input[CONF_MAP_STYLE]
 
                 self.hass.config_entries.async_update_entry(
                     self._config_entry,
@@ -270,12 +272,14 @@ class RainIncomingOptionsFlow(OptionsFlow):
                 )
                 # Trigger reload so the coordinator picks up the new style immediately.
                 self.hass.config_entries.async_schedule_reload(self._config_entry.entry_id)
-                return self.async_create_entry(data=user_input)
+                # Return empty options - all values are stored in entry.data.
+                # Avoids dual storage where the same values live in both
+                # data and options, creating a divergence risk.
+                return self.async_create_entry(data={})
 
-        # Pre-populate from current options (preferred) then data (fallback).
+        # Pre-populate from entry.data (canonical source of truth).
         # When re-rendering after a validation error, use what the user typed so
         # they don't have to retype values they already entered correctly.
-        current_options = self._config_entry.options
         current_data = self._config_entry.data
         if user_input is not None:
             # Re-render after validation failure: restore what the user typed.
@@ -285,20 +289,12 @@ class RainIncomingOptionsFlow(OptionsFlow):
             default_location_name = user_input.get(CONF_LOCATION_NAME, "")
             default_map_style = user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE)
         else:
-            # First render: use persisted values.
+            # First render: use persisted values from entry.data.
             default_lat = current_data.get(CONF_LATITUDE, 0.0)
             default_lon = current_data.get(CONF_LONGITUDE, 0.0)
-            default_lookahead = current_options.get(
-                CONF_LOOKAHEAD_MINUTES,
-                current_data.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
-            )
-            default_location_name = current_options.get(
-                CONF_LOCATION_NAME,
-                current_data.get(CONF_LOCATION_NAME, ""),
-            )
-            default_map_style = current_options.get(
-                CONF_MAP_STYLE,
-                current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
+            default_lookahead = current_data.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES)
+            default_location_name = current_data.get(CONF_LOCATION_NAME, "")
+            default_map_style = current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE,
             )
         schema = _build_options_schema(
             default_lat=default_lat,

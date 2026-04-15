@@ -158,11 +158,8 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
 
     @property
     def map_style(self) -> str:
-        """Return the active map style, reading options first then data then default."""
-        return self._entry.options.get(
-            CONF_MAP_STYLE,
-            self._entry.data.get(CONF_MAP_STYLE, "voyager"),
-        )
+        """Return the active map style from entry.data."""
+        return self._entry.data.get(CONF_MAP_STYLE, "voyager")
 
     @property
     def consecutive_failures(self) -> int:

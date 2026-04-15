@@ -252,7 +252,9 @@ async def test_options_flow_changes_map_style(hass: HomeAssistant):
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_MAP_STYLE] == "esri_imagery"
+    # Options flow stores all values in entry.data (not entry.options) to
+    # avoid dual storage. The coordinator reads from data only.
+    assert entry.data[CONF_MAP_STYLE] == "esri_imagery"
 
 
 @pytest.mark.asyncio
@@ -357,7 +359,8 @@ async def test_migration_does_not_re_migrate_v2_entry(hass: HomeAssistant):
 
 
 @pytest.mark.asyncio
-async def test_coordinator_uses_options_map_style_over_data(hass: HomeAssistant):
+async def test_coordinator_reads_map_style_from_data(hass: HomeAssistant):
+    """map_style reads from entry.data (canonical source). Options are ignored."""
     from custom_components.rain_incoming.coordinator import RainDetectorCoordinator
 
     entry = MockConfigEntry(
@@ -366,9 +369,9 @@ async def test_coordinator_uses_options_map_style_over_data(hass: HomeAssistant)
             "latitude": -33.701,
             "longitude": 151.209,
             "lookahead_minutes": 60,
-            CONF_MAP_STYLE: "voyager",
+            CONF_MAP_STYLE: "esri_imagery",
         },
-        options={CONF_MAP_STYLE: "esri_imagery"},
+        options={},
         version=2,
     )
     entry.add_to_hass(hass)
