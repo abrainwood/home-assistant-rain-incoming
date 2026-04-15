@@ -4,6 +4,7 @@ import asyncio
 import logging
 import math
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 
@@ -417,19 +418,29 @@ def _draw_text_with_outline_anchored(
     draw.text((x, y), text, fill=fill, font=font, anchor=anchor)
 
 
+@dataclass(frozen=True)
+class FrameRenderContext:
+    """Shared rendering context for compositing frames.
+
+    Groups the parameters that are constant across all frames in an animation,
+    reducing _composite_single_frame from 14 params to 5.
+    """
+    lat: float
+    lon: float
+    map_zoom: int
+    radius_km: int
+    output_size: int
+    tz_name: str | None = None
+    location_name: str | None = None
+    style_def: MapStyleDefinition | None = None
+
+
 def _composite_single_frame(
     map_crop: Image.Image,
     radar_resized: Image.Image,
-    lat: float,
-    lon: float,
-    map_zoom: int,
-    radius_km: int,
-    output_size: int,
+    ctx: FrameRenderContext,
     timestamp: datetime | None = None,
-    tz_name: str | None = None,
     confidence_map: np.ndarray | None = None,
-    location_name: str | None = None,
-    style_def: MapStyleDefinition | None = None,
     frame_index: int | None = None,
     frame_count: int | None = None,
 ) -> Image.Image:
@@ -472,18 +483,17 @@ def _composite_single_frame(
 
     composite = Image.alpha_composite(map_crop.convert("RGBA"), radar_resized)
 
-    kpp = km_per_pixel(lat, map_zoom)
-    radius_px = int(radius_km / kpp) if kpp > 0 else output_size // 2
+    kpp = km_per_pixel(ctx.lat, ctx.map_zoom)
+    radius_px = int(ctx.radius_km / kpp) if kpp > 0 else ctx.output_size // 2
 
-    cx, cy = output_size // 2, output_size // 2
-    if style_def is None:
-        style_def = get_style(MapStyle.VOYAGER)
+    cx, cy = ctx.output_size // 2, ctx.output_size // 2
+    style_def = ctx.style_def or get_style(MapStyle.VOYAGER)
 
-    draw_range_rings(composite, cx, cy, radius_px, radius_km, is_dark=style_def.is_dark)
+    draw_range_rings(composite, cx, cy, radius_px, ctx.radius_km, is_dark=style_def.is_dark)
     draw_crosshair(composite, cx, cy)
 
     _draw_frame_label(
-        composite, timestamp, tz_name, radius_km, location_name,
+        composite, timestamp, ctx.tz_name, ctx.radius_km, ctx.location_name,
         frame_index=frame_index, frame_count=frame_count,
         is_dark=style_def.is_dark,
     )
@@ -504,10 +514,11 @@ def _render_sync(
     style_def: MapStyleDefinition | None = None,
 ) -> bytes:
     """CPU-bound rendering: composite, draw overlays, export PNG."""
-    composite = _composite_single_frame(
-        map_crop, radar_resized, lat, lon, map_zoom, radius_km, output_size,
-        style_def=style_def,
+    ctx = FrameRenderContext(
+        lat=lat, lon=lon, map_zoom=map_zoom, radius_km=radius_km,
+        output_size=output_size, style_def=style_def,
     )
+    composite = _composite_single_frame(map_crop, radar_resized, ctx)
     buf = BytesIO()
     composite.save(buf, format="PNG")
     return buf.getvalue()
@@ -818,6 +829,11 @@ def composite_frames(
     """Composite radar overlays over a background image. Returns a list of frames."""
     style_def = get_style(map_style)
     vp = _ViewportParams(lat, lon, radius_km, output_size)
+    ctx = FrameRenderContext(
+        lat=lat, lon=lon, map_zoom=vp.map_zoom, radius_km=radius_km,
+        output_size=output_size, tz_name=tz_name,
+        location_name=location_name, style_def=style_def,
+    )
     timestamps = frame_timestamps or [None] * len(radar_overlays)
     total_frames = len(radar_overlays)
     frames: list[Image.Image] = []
@@ -825,13 +841,9 @@ def composite_frames(
         ts = timestamps[i] if i < len(timestamps) else None
         conf_map = confidence_maps[i] if confidence_maps and i < len(confidence_maps) else None
         frame_img = _composite_single_frame(
-            background, radar_resized, lat, lon, vp.map_zoom, radius_km, output_size,
-            timestamp=ts, tz_name=tz_name,
-            confidence_map=conf_map,
-            location_name=location_name,
-            style_def=style_def,
-            frame_index=i + 1,
-            frame_count=total_frames,
+            background, radar_resized, ctx,
+            timestamp=ts, confidence_map=conf_map,
+            frame_index=i + 1, frame_count=total_frames,
         )
         frames.append(frame_img)
     return frames

@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 from custom_components.rain_incoming.radar.composite import (
+    FrameRenderContext,
     _map_tile_cache,
     _radar_tile_cache,
     calculate_map_zoom,
@@ -467,14 +468,13 @@ class TestBinaryThresholdRendering:
         confidence_map = np.full((output_size, output_size), 0.5, dtype=np.float32)
 
         map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        ctx = FrameRenderContext(
+            lat=-33.7, lon=151.2, map_zoom=8, radius_km=128, output_size=output_size,
+        )
         result = _composite_single_frame(
             map_crop=map_crop,
             radar_resized=radar_img,
-            lat=-33.7,
-            lon=151.2,
-            map_zoom=8,
-            radius_km=128,
-            output_size=output_size,
+            ctx=ctx,
             confidence_map=confidence_map,
         )
         result_arr = np.array(result)
@@ -502,14 +502,13 @@ class TestBinaryThresholdRendering:
         confidence_map = np.full((output_size, output_size), 0.5, dtype=np.float32)
 
         map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        ctx = FrameRenderContext(
+            lat=-33.7, lon=151.2, map_zoom=8, radius_km=128, output_size=output_size,
+        )
         result = _composite_single_frame(
             map_crop=map_crop,
             radar_resized=radar_img,
-            lat=-33.7,
-            lon=151.2,
-            map_zoom=8,
-            radius_km=128,
-            output_size=output_size,
+            ctx=ctx,
             confidence_map=confidence_map,
         )
         result_arr = np.array(result)
@@ -529,14 +528,13 @@ class TestBinaryThresholdRendering:
         radar_img = Image.fromarray(radar_arr)
 
         map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        ctx = FrameRenderContext(
+            lat=-33.7, lon=151.2, map_zoom=8, radius_km=128, output_size=output_size,
+        )
         result = _composite_single_frame(
             map_crop=map_crop,
             radar_resized=radar_img,
-            lat=-33.7,
-            lon=151.2,
-            map_zoom=8,
-            radius_km=128,
-            output_size=output_size,
+            ctx=ctx,
             confidence_map=None,
         )
         result_arr = np.array(result)
@@ -565,14 +563,13 @@ class TestBinaryThresholdRendering:
         confidence_map = np.full((output_size, output_size), 0.6, dtype=np.float32)
 
         map_crop = Image.new("RGBA", (output_size, output_size), (0, 0, 0, 255))
+        ctx = FrameRenderContext(
+            lat=-33.7, lon=151.2, map_zoom=8, radius_km=128, output_size=output_size,
+        )
         result = _composite_single_frame(
             map_crop=map_crop,
             radar_resized=radar_img,
-            lat=-33.7,
-            lon=151.2,
-            map_zoom=8,
-            radius_km=128,
-            output_size=output_size,
+            ctx=ctx,
             confidence_map=confidence_map,
         )
         result_arr = np.array(result)
