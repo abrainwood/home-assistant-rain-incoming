@@ -544,7 +544,7 @@ def test_composite_single_frame_has_label_at_top_and_attribution_at_bottom():
     Uses a blank background and ESRI style so we exercise the full code path.
     """
     from datetime import datetime, timezone
-    from custom_components.rain_incoming.radar.composite import _composite_single_frame
+    from custom_components.rain_incoming.radar.composite import _composite_single_frame, FrameRenderContext
     from custom_components.rain_incoming.radar.map_styles import MapStyle, get_style
 
     output_size = 640
@@ -553,18 +553,21 @@ def test_composite_single_frame_has_label_at_top_and_attribution_at_bottom():
     ts = datetime(2026, 4, 10, 20, 40, 0, tzinfo=timezone.utc)
     esri_def = get_style(MapStyle.ESRI_IMAGERY)
 
-    result = _composite_single_frame(
-        map_crop=background,
-        radar_resized=radar,
+    ctx = FrameRenderContext(
         lat=-33.7,
         lon=151.2,
         map_zoom=8,
         radius_km=128,
         output_size=output_size,
-        timestamp=ts,
         tz_name="UTC",
         location_name="Sydney",
         style_def=esri_def,
+    )
+    result = _composite_single_frame(
+        map_crop=background,
+        radar_resized=radar,
+        ctx=ctx,
+        timestamp=ts,
     )
 
     arr = np.array(result)[:, :, :3]
