@@ -6,6 +6,8 @@
 [![Maintainability](https://sonarcloud.io/api/project_badges/measure?project=abrainwood_home-assistant-rain-incoming&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=abrainwood_home-assistant-rain-incoming)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+> **Alpha** - this integration is under active development. The detection pipeline works and is in daily use, but we're still tuning accuracy and expanding test coverage with real-world data. The current method uses cell tracking with velocity projection (not optical flow or ML). If you try it out, we'd love your feedback - especially false positives/negatives, radar quality issues, or use cases we haven't considered. See [Discussions](https://github.com/abrainwood/home-assistant-rain-incoming/discussions) or [open an issue](https://github.com/abrainwood/home-assistant-rain-incoming/issues).
+
 **Know before it hits.** Rain Incoming watches weather radar and tells you when rain is heading your way - before it arrives. It uses nowcasting: short-term prediction (0-60 minutes out) driven by live radar data, not forecast models. Get animated radar maps and sensors you can use to trigger automations.
 
 ![Radar showing rain approaching from the coast near Groganville, QLD](docs/radar_groganville_256km.gif)
@@ -78,8 +80,8 @@ maximum without degraded performance.
 
 If you have a use case that genuinely requires more than 4 locations, you can
 either:
-- Wait for shared global tile caching (issue #87) which will reduce per-location
-  fetch cost
+- Use locations with overlapping radar tiles - the tile cache is shared across
+  all locations, so nearby locations have minimal additional fetch cost
 - Switch to RainViewer's commercial tier and adjust the integration's
   rate-limit handling
 
@@ -210,7 +212,26 @@ Check that your configured latitude and longitude are correct. The crosshair on 
 
 ## ⚙️ How it works
 
-Incoming Rain fetches radar composite data from RainViewer and analyses multiple frames to track rain cell motion and project whether any cells will reach your location within the lookahead window. A QC pipeline filters out radar noise - things like ground clutter and anomalous propagation - using spatial, temporal, and directional coherence checks. Rain is reported as incoming if it's overhead or projected to arrive within your configured window.
+Rain Incoming fetches radar composite tiles from [RainViewer](https://www.rainviewer.com/) every 10 minutes and analyses multiple frames to detect and track rain cells.
+
+**Current detection method: cell tracking with velocity projection**
+
+1. **Intensity thresholding** - identify precipitation pixels above a minimum dBZ equivalent
+2. **Spatial filtering** - remove isolated pixels too small to be real rain cells
+3. **Cell labeling** - identify distinct rain cells using connected-component analysis
+4. **Centroid tracking** - match cells across consecutive frames by nearest-centroid distance
+5. **Velocity estimation** - compute cell speed and direction from tracked centroids
+6. **Directional coherence** - reject cells with inconsistent or random motion (likely noise)
+7. **Forward projection** - project cell positions forward in 60-second steps to estimate arrival time
+8. **Closing-distance fallback** - for oblique approaches where the velocity vector doesn't point at the location but the cell is consistently getting closer
+
+A multi-stage **QC pipeline** filters radar artifacts before detection: texture analysis, temporal consistency, clutter map learning, speed sanity checks, and motion consistency scoring. Each stage contributes a confidence score that gates which pixels are trusted.
+
+**What we're testing and tuning:**
+- False positive rates in clear-sky conditions (anomalous propagation, ground clutter)
+- Detection accuracy for different rain types (widespread frontal vs isolated convective)
+- Arrival time accuracy across different storm speeds
+- Behaviour in regions with sparse radar coverage (e.g. New Zealand, rural Australia)
 
 For technical details, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
