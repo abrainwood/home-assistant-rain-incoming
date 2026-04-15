@@ -141,8 +141,9 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self.last_rain_nearby_time: datetime | None = None
 
         # Clutter map - loaded lazily in _async_update_data to avoid blocking I/O
+        clutter_filename = f"rain_incoming_clutter_{entry.entry_id}.npz"
         self._clutter_path = os.path.join(
-            hass.config.path(".storage"), CLUTTER_MAP_FILENAME
+            hass.config.path(".storage"), clutter_filename
         )
         self._clutter_map: ClutterMap | None = None
         self._clutter_loaded = False
