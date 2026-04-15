@@ -51,6 +51,34 @@ async def test_coordinator_returns_detection_result(hass: HomeAssistant):
 
 
 @pytest.mark.asyncio
+async def test_coordinator_passes_ha_session_to_provider(hass: HomeAssistant):
+    """The coordinator must pass HA's shared session to get_frames so the
+    provider uses it for manifest fetches instead of creating its own."""
+    entry = make_entry()
+    coordinator = RainDetectorCoordinator(hass, entry)
+
+    mock_session = MagicMock()
+    mock_get_frames = AsyncMock(return_value=[])
+
+    with (
+        patch.object(coordinator._provider, "get_frames", new=mock_get_frames),
+        patch("custom_components.rain_incoming.coordinator.detect", return_value=EMPTY_RESULT),
+        patch(
+            "custom_components.rain_incoming.coordinator.async_get_clientsession",
+            return_value=mock_session,
+        ),
+    ):
+        await coordinator._async_update_data()
+
+    mock_get_frames.assert_called_once()
+    call_kwargs = mock_get_frames.call_args
+    assert call_kwargs.kwargs.get("session") is mock_session, (
+        "Coordinator must pass the HA shared session to provider.get_frames. "
+        f"Got session={call_kwargs.kwargs.get('session')}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_coordinator_raises_update_failed_on_persistent_error(hass: HomeAssistant):
     from homeassistant.helpers.update_coordinator import UpdateFailed
 
