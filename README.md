@@ -104,7 +104,11 @@ either:
 
 ## 🔧 Example automations
 
-### Close pergola cover when rain is incoming
+> **Note:** If you gave your location a name during setup (e.g. "Home"), replace `rain_incoming` with `rain_incoming_home` in the entity IDs below. Check **Settings > Integrations > Rain Incoming** for your actual entity IDs.
+
+### Close pergola cover - simple trigger
+
+Uses just the binary sensor. As soon as rain is detected approaching, close the cover.
 
 ```yaml
 automation:
@@ -119,28 +123,34 @@ automation:
           entity_id: cover.pergola
 ```
 
-### Return lawnmower before rain arrives
+### Return lawnmower - only for moderate+ rain within 5 minutes
+
+Uses the intensity sensor to ignore light drizzle and the arrival time sensor to act only when rain is close. No point recalling the mower for light rain 45 minutes away.
 
 ```yaml
 automation:
-  - alias: "Return lawnmower - rain incoming"
+  - alias: "Return lawnmower - rain close and heavy enough"
     trigger:
       - platform: state
         entity_id: binary_sensor.rain_incoming_status
         to: "on"
     condition:
-      - condition: not
-        conditions:
-          - condition: state
-            entity_id: sensor.rain_incoming_intensity
-            state: "light"
+      - condition: template
+        value_template: >
+          {{ states('sensor.rain_incoming_intensity') in ['moderate', 'heavy', 'extreme'] }}
+      - condition: template
+        value_template: >
+          {% set arrival = states('sensor.rain_incoming_arrival_time') %}
+          {{ arrival != 'unknown' and (as_timestamp(arrival) - as_timestamp(now())) < 300 }}
     action:
       - service: vacuum.return_to_base
         target:
           entity_id: vacuum.lawnmower
 ```
 
-### Bring the washing in
+### Bring the washing in - daytime notification with details
+
+Uses all three sensors in the notification message to give useful context.
 
 ```yaml
 automation:
@@ -150,7 +160,6 @@ automation:
         entity_id: binary_sensor.rain_incoming_status
         to: "on"
     condition:
-      # Only alert during daytime when washing might be out
       - condition: time
         after: "07:00:00"
         before: "19:00:00"
@@ -159,9 +168,32 @@ automation:
         data:
           title: "Rain incoming!"
           message: >
-            Rain expected to arrive at {{ states('sensor.rain_incoming_arrival_time') | as_timestamp | timestamp_custom('%H:%M') }}.
-            Intensity: {{ states('sensor.rain_incoming_intensity') }}.
+            {{ states('sensor.rain_incoming_intensity') | title }} rain expected
+            {% set arrival = states('sensor.rain_incoming_arrival_time') %}
+            {% if arrival != 'unknown' %}at {{ arrival | as_timestamp | timestamp_custom('%H:%M') }}{% endif %}.
             Time to bring the washing in!
+```
+
+### Cancel irrigation when rain is overhead
+
+Uses the "Wet" state (binary sensor turns on) to stop wasting water when it's already raining.
+
+```yaml
+automation:
+  - alias: "Cancel irrigation - already raining"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.rain_incoming_status
+        to: "on"
+    condition:
+      - condition: template
+        value_template: >
+          {% set arrival = states('sensor.rain_incoming_arrival_time') %}
+          {{ arrival != 'unknown' and (as_timestamp(arrival) - as_timestamp(now())) < 60 }}
+    action:
+      - service: switch.turn_off
+        target:
+          entity_id: switch.irrigation
 ```
 
 ---
@@ -170,9 +202,9 @@ automation:
 
 | Entity | Type | Description |
 |---|---|---|
-| `binary_sensor.rain_incoming_status` | Binary | `on` when rain is approaching or overhead |
+| `binary_sensor.rain_incoming_status` | Binary (moisture) | `on`/Wet when rain is approaching or overhead, `off`/Dry when clear |
 | `sensor.rain_incoming_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
-| `sensor.rain_incoming_intensity` | Sensor | Precipitation intensity: none / light / moderate / heavy / extreme |
+| `sensor.rain_incoming_intensity` | Sensor | Precipitation intensity: `none` / `light` / `moderate` / `heavy` / `extreme` |
 | `sensor.rain_incoming_last_rain` | Timestamp | Last time rain was detected nearby |
 | `image.rain_incoming_radar_64km` | Image | Animated radar map - neighbourhood scale (64km radius) |
 | `image.rain_incoming_radar_128km` | Image | Animated radar map - city/regional scale (128km radius) |
