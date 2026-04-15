@@ -6,6 +6,8 @@
 [![Maintainability](https://sonarcloud.io/api/project_badges/measure?project=abrainwood_home-assistant-rain-incoming&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=abrainwood_home-assistant-rain-incoming)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[![Click to open this repository inside your own Home Assistant HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=abrainwood&repository=home-assistant-rain-incoming&category=Integration)
+
 > **Alpha** - this integration is under active development. The detection pipeline works and is in daily use, but we're still tuning accuracy and expanding test coverage with real-world data. The current method uses cell tracking with velocity projection (not optical flow or ML). If you try it out, we'd love your feedback - especially false positives/negatives, radar quality issues, or use cases we haven't considered. See [Discussions](https://github.com/abrainwood/home-assistant-rain-incoming/discussions) or [open an issue](https://github.com/abrainwood/home-assistant-rain-incoming/issues).
 
 **Know before it hits.** Rain Incoming watches weather radar and tells you when rain is heading your way - before it arrives. It uses nowcasting: short-term prediction (0-60 minutes out) driven by live radar data, not forecast models. Get animated radar maps and sensors you can use to trigger automations.
@@ -35,6 +37,7 @@
 ## 📦 Installation
 
 ### Method 1: HACS (recommended)
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
 
 1. Make sure [HACS](https://hacs.xyz) is installed
 2. In HACS, click the three-dot menu (top right) and choose **Custom repositories**
