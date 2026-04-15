@@ -181,6 +181,48 @@ class TestRainViewerProvider:
             with pytest.raises(ClientError):
                 await provider.get_frames(-33.701, 151.209, count=3)
 
+    @pytest.mark.asyncio
+    async def test_prefetch_frames_fetches_concurrently(self):
+        """prefetch_frames must fetch multiple frames concurrently, not sequentially.
+
+        Uses overlap detection: if max_concurrent > 1 during the fetch, the
+        frames were fetched in parallel.
+        """
+        import asyncio
+
+        provider = RainViewerProvider()
+        frames = [
+            RainViewerFrame(
+                timestamp=datetime(2026, 4, 10, 10, i * 10, tzinfo=timezone.utc),
+                path=f"/v2/radar/frame{i}",
+                zoom=7,
+                colour_scheme=2,
+            )
+            for i in range(3)
+        ]
+
+        concurrent_count = 0
+        max_concurrent = 0
+
+        original_fetch = RainViewerFrame._fetch_stitched_grid
+
+        async def tracking_fetch(self, bounds, width, height, session, budget=None):
+            nonlocal concurrent_count, max_concurrent
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            await asyncio.sleep(0.01)
+            concurrent_count -= 1
+
+        with patch.object(RainViewerFrame, "_fetch_stitched_grid", tracking_fetch):
+            await provider.prefetch_frames(
+                frames, FAKE_BOUNDS, 64, 64, MagicMock(),
+            )
+
+        assert max_concurrent > 1, (
+            f"Frames were fetched sequentially (max_concurrent={max_concurrent}). "
+            "prefetch_frames must use asyncio.gather or similar for concurrent fetches."
+        )
+
 
 # --- check_coverage tests ---
 
