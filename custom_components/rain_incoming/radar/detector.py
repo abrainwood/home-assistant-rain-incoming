@@ -56,6 +56,7 @@ class DetectionResult:
     confidence: Confidence
     frame_count: int
     max_approaching_intensity: float = 0.0
+    rain_at_location: bool = False
     tracked_cells: list[TrackedCell] = field(default_factory=list)
     last_labeled: np.ndarray | None = None  # labeled array of last frame's cells
 
@@ -540,6 +541,7 @@ def detect(
                 confidence=confidence,
                 frame_count=frame_count,
                 max_approaching_intensity=rain_intensity,
+                rain_at_location=True,
                 tracked_cells=[],
                 last_labeled=per_frame_labeled[-1] if per_frame_labeled else None,
             )
@@ -613,6 +615,7 @@ def detect(
         confidence=confidence,
         frame_count=frame_count,
         max_approaching_intensity=max_intensity if rain_incoming else 0.0,
+        rain_at_location=rain_at_location is not None,
         tracked_cells=tracked_cells,
         last_labeled=last_labeled,
     )

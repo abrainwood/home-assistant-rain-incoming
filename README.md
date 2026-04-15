@@ -202,7 +202,8 @@ automation:
 
 | Entity | Type | Description |
 |---|---|---|
-| `binary_sensor.rain_incoming_status` | Binary (moisture) | `on`/Wet when rain is approaching or overhead, `off`/Dry when clear |
+| `binary_sensor.rain_incoming_status` | Binary | `on` when rain is approaching or overhead, `off` when clear |
+| `binary_sensor.rain_incoming_raining` | Binary (moisture) | `Wet` when rain is at the location (overhead), `Dry` otherwise |
 | `sensor.rain_incoming_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
 | `sensor.rain_incoming_intensity` | Sensor | Precipitation intensity: `none` / `light` / `moderate` / `heavy` / `extreme` |
 | `sensor.rain_incoming_last_rain` | Timestamp | Last time rain was detected nearby |

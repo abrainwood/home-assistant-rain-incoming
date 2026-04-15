@@ -283,6 +283,41 @@ class TestTrackedCells:
         assert len(result.tracked_cells) >= 1
 
 
+class TestRainAtLocation:
+    """DetectionResult.rain_at_location distinguishes overhead from approaching."""
+
+    def test_overhead_rain_sets_rain_at_location_true(self):
+        """Rain directly at the location must set rain_at_location=True."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        grid[31:34, 31:34] = 0.9  # rain at centre = at location
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert result.rain_at_location is True
+
+    def test_approaching_rain_sets_rain_at_location_false(self):
+        """Rain approaching but not yet overhead must set rain_at_location=False."""
+        cfg = default_config()
+        frames = []
+        for i, col_offset in enumerate([18, 22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert result.rain_at_location is False
+
+    def test_no_rain_sets_rain_at_location_false(self):
+        """No rain at all must set rain_at_location=False."""
+        cfg = default_config()
+        grid = np.zeros((64, 64), dtype=np.float32)
+        frames = [make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds) for i in range(3)]
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is False
+        assert result.rain_at_location is False
+
+
 class TestSpeedCap:
     def test_fast_cell_rejected_by_speed_cap(self):
         """A cell moving at 200+ km/h should NOT trigger rain_incoming."""

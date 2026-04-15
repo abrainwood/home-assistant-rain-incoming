@@ -173,11 +173,38 @@ def test_translations_en_json_matches_strings_json():
 
 
 @pytest.mark.asyncio
-async def test_binary_sensor_device_class_is_moisture(hass: HomeAssistant, mock_entry):
+async def test_binary_sensor_status_has_no_device_class(hass: HomeAssistant, mock_entry):
+    """Status sensor shows On/Off (not Wet/Dry) - no device class."""
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
     state = hass.states.get("binary_sensor.rain_incoming_status")
     assert state is not None
+    assert state.attributes.get("device_class") is None
+
+
+@pytest.mark.asyncio
+async def test_raining_sensor_exists(hass: HomeAssistant, mock_entry):
+    """A separate Raining binary sensor must exist."""
+    await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.rain_incoming_raining")
+    assert state is not None
+
+
+@pytest.mark.asyncio
+async def test_raining_sensor_device_class_is_moisture(hass: HomeAssistant, mock_entry):
+    """Raining sensor shows Wet/Dry - uses moisture device class."""
+    await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.rain_incoming_raining")
+    assert state is not None
     assert state.attributes.get("device_class") == BinarySensorDeviceClass.MOISTURE
+
+
+@pytest.mark.asyncio
+async def test_raining_sensor_off_when_no_rain(hass: HomeAssistant, mock_entry):
+    """Raining sensor must be off when there's no rain."""
+    await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.rain_incoming_raining")
+    assert state is not None
+    assert state.state == "off"
 
 
 # --- Dynamic icons ---
