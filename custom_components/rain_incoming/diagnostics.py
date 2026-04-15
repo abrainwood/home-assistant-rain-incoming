@@ -36,7 +36,7 @@ async def async_get_config_entry_diagnostics(
             "last_update_success_time": str(coordinator.last_update_success_time) if coordinator.last_update_success_time else None,
             "latest_frame_path": coordinator.latest_frame_path,
             "last_rain_nearby_time": str(coordinator.last_rain_nearby_time) if coordinator.last_rain_nearby_time else None,
-            "consecutive_failures": coordinator._consecutive_failures,
+            "consecutive_failures": coordinator.consecutive_failures,
             "update_interval_seconds": coordinator.update_interval.total_seconds() if coordinator.update_interval else None,
         },
         "detection": detection,
