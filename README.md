@@ -239,7 +239,7 @@ A multi-stage **QC pipeline** filters radar artifacts before detection: texture 
 - **Probabilistic output** - "70% chance of rain in 25-35 minutes" instead of binary on/off
 - **PySTEPS integration** - an established open-source nowcasting library used by national weather services, offering ensemble forecasts and Lagrangian advection
 
-We're collecting radar + ground truth data from 8 locations (AU and US) to build a backtesting harness before making detection changes. See the [nowcasting roadmap](docs/nowcasting-roadmap.md) for details.
+We're collecting radar + ground truth data from 8 locations (AU and US) to build a backtesting harness before making detection changes - no guesswork.
 
 For technical details, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
