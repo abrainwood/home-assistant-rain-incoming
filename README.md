@@ -1,5 +1,11 @@
 # Rain Incoming
 
+[![CI](https://github.com/abrainwood/home-assistant-rain-incoming/actions/workflows/ci.yml/badge.svg)](https://github.com/abrainwood/home-assistant-rain-incoming/actions/workflows/ci.yml)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=abrainwood_home-assistant-rain-incoming&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=abrainwood_home-assistant-rain-incoming)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=abrainwood_home-assistant-rain-incoming&metric=coverage)](https://sonarcloud.io/summary/new_code?id=abrainwood_home-assistant-rain-incoming)
+[![Maintainability](https://sonarcloud.io/api/project_badges/measure?project=abrainwood_home-assistant-rain-incoming&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=abrainwood_home-assistant-rain-incoming)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **Know before it hits.** Rain Incoming watches weather radar and tells you when rain is heading your way - before it arrives. It uses nowcasting: short-term prediction (0-60 minutes out) driven by live radar data, not forecast models. Get animated radar maps and sensors you can use to trigger automations.
 
 ![Radar showing rain approaching from the coast near Groganville, QLD](docs/radar_groganville_256km.gif)
