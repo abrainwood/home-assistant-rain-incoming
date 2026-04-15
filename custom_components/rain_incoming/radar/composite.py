@@ -51,9 +51,11 @@ _RADAR_CACHE_MAX = 500
 
 
 def clear_tile_caches() -> None:
-    """Clear both tile caches. Called when the last config entry is unloaded."""
+    """Clear tile caches and reset the semaphore. Called when the last entry is unloaded."""
+    global _tile_semaphore
     _map_tile_cache.clear()
     _radar_tile_cache.clear()
+    _tile_semaphore = None
 
 # Semaphore to limit concurrent tile fetches (shared across map + radar)
 _tile_semaphore: asyncio.Semaphore | None = None

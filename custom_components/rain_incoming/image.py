@@ -43,6 +43,12 @@ def _get_render_lock() -> asyncio.Lock:
     return _render_lock
 
 
+def reset_render_lock() -> None:
+    """Reset the render lock. Called when the last config entry is unloaded."""
+    global _render_lock
+    _render_lock = None
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
