@@ -246,6 +246,29 @@ class TestRainViewerProvider:
             "not create a new aiohttp.ClientSession"
         )
 
+    @pytest.mark.asyncio
+    async def test_get_frames_creates_fallback_session_when_none_provided(self):
+        """When no session is provided, _fetch_manifest must create its own."""
+        provider = RainViewerProvider()
+
+        manifest_resp = AsyncMock()
+        manifest_resp.json = AsyncMock(return_value=MANIFEST)
+
+        with patch(
+            "custom_components.rain_incoming.providers.rainviewer.fetch_with_retry",
+            new=AsyncMock(return_value=manifest_resp),
+        ) as mock_fetch:
+            frames = await provider.get_frames(-33.701, 151.209, count=2)
+
+        assert len(frames) == 2
+        mock_fetch.assert_called_once()
+        # The session arg should be an aiohttp.ClientSession (created internally),
+        # not None
+        call_args = mock_fetch.call_args
+        assert call_args.args[0] is not None, (
+            "When no session is provided, _fetch_manifest must create a fallback session"
+        )
+
 
 # --- check_coverage tests ---
 
