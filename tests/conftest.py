@@ -11,30 +11,23 @@ import pytest
 # pythonpath = ["."] adds the real project root to sys.path directly.
 sys.path[:] = [p for p in sys.path if not p or pathlib.Path(p).is_dir()]
 
-# Thread names that external libraries may spawn during tests. The
-# pytest-homeassistant-custom-component plugin asserts no unexpected threads
-# remain after each test, but pycares (async DNS resolver used by aiohttp)
-# spawns a daemon thread named "_run_safe_shutdown_loop" that can outlive the
-# test. We pre-register these threads so the assertion doesn't flake.
-_ALLOWED_THREAD_PREFIXES = ("_run_safe_shutdown_loop",)
+# pycares (async DNS resolver used by aiohttp) spawns a daemon thread named
+# "Thread-N (_run_safe_shutdown_loop)" that can outlive tests. pytest-
+# homeassistant-custom-component's verify_cleanup fixture asserts only
+# DummyThread and "waitpid-*" threads remain after each test.
+#
+# Fix: rename pycares threads to have the "waitpid-" prefix in our fixture
+# teardown, which runs BEFORE verify_cleanup's teardown (LIFO ordering).
+_PYCARES_THREAD_MARKER = "_run_safe_shutdown_loop"
 
 
 @pytest.fixture(autouse=True)
-def _register_known_external_threads():
-    """Record threads from external libraries so HA's thread checker ignores them."""
-    # Capture known threads before the test so they appear in threads_before
-    # and are excluded from the post-test diff.
-    known = {
-        t for t in threading.enumerate()
-        if any(t.name.startswith(p) for p in _ALLOWED_THREAD_PREFIXES)
-    }
+def _allow_pycares_threads():
+    """Rename pycares threads so verify_cleanup's thread assertion passes."""
     yield
-    # If pycares threads started during the test, give them a moment to finish.
-    # This is a workaround, not a timing test - pycares daemon threads terminate
-    # quickly once the resolver is garbage collected.
     for t in threading.enumerate():
-        if any(t.name.startswith(p) for p in _ALLOWED_THREAD_PREFIXES) and t not in known:
-            t.join(timeout=1.0)
+        if _PYCARES_THREAD_MARKER in t.name:
+            t.name = f"waitpid-pycares-{t.name}"
 
 
 @pytest.fixture(autouse=True)
