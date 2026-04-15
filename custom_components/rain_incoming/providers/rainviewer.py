@@ -251,9 +251,11 @@ class RainViewerProvider(RadarProvider):
     ZOOM = 7
     COLOUR_SCHEME = 2
 
-    async def get_frames(self, lat: float, lon: float, count: int) -> list[RadarFrame]:
+    async def get_frames(
+        self, lat: float, lon: float, count: int, session=None,
+    ) -> list[RadarFrame]:
         """Fetch the most recent `count` frames, oldest-first."""
-        manifest = await self._fetch_manifest()
+        manifest = await self._fetch_manifest(session)
         past = manifest.get("radar", {}).get("past", [])
         selected = past[-count:]  # most recent N, still oldest-first
         return [
@@ -300,9 +302,12 @@ class RainViewerProvider(RadarProvider):
         if rv_frames:
             await asyncio.gather(*[_fetch_one(f) for f in rv_frames])
 
-    async def _fetch_manifest(self) -> dict:
-        async with aiohttp.ClientSession() as session:
+    async def _fetch_manifest(self, session=None) -> dict:
+        if session is not None:
             resp = await fetch_with_retry(session, MANIFEST_URL)
+            return await resp.json(content_type=None)
+        async with aiohttp.ClientSession() as fallback_session:
+            resp = await fetch_with_retry(fallback_session, MANIFEST_URL)
             return await resp.json(content_type=None)
 
 
