@@ -1,7 +1,7 @@
 {
   "domain": "rain_incoming",
   "name": "Rain Incoming",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "documentation": "https://github.com/abrainwood/home-assistant-rain-incoming",
   "issue_tracker": "https://github.com/abrainwood/home-assistant-rain-incoming/issues",
   "requirements": ["numpy>=1.26", "scipy>=1.11"],
