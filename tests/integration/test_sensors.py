@@ -185,7 +185,7 @@ async def test_binary_sensor_status_has_no_device_class(hass: HomeAssistant, moc
 async def test_raining_sensor_exists(hass: HomeAssistant, mock_entry):
     """A separate Raining binary sensor must exist."""
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("binary_sensor.rain_incoming_raining")
+    state = hass.states.get("binary_sensor.rain_incoming_raining_now")
     assert state is not None
 
 
@@ -193,7 +193,7 @@ async def test_raining_sensor_exists(hass: HomeAssistant, mock_entry):
 async def test_raining_sensor_device_class_is_moisture(hass: HomeAssistant, mock_entry):
     """Raining sensor shows Wet/Dry - uses moisture device class."""
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("binary_sensor.rain_incoming_raining")
+    state = hass.states.get("binary_sensor.rain_incoming_raining_now")
     assert state is not None
     assert state.attributes.get("device_class") == BinarySensorDeviceClass.MOISTURE
 
@@ -202,7 +202,7 @@ async def test_raining_sensor_device_class_is_moisture(hass: HomeAssistant, mock
 async def test_raining_sensor_off_when_no_rain(hass: HomeAssistant, mock_entry):
     """Raining sensor must be off when there's no rain."""
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("binary_sensor.rain_incoming_raining")
+    state = hass.states.get("binary_sensor.rain_incoming_raining_now")
     assert state is not None
     assert state.state == "off"
 
