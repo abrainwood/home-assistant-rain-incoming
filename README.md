@@ -115,7 +115,7 @@ automation:
   - alias: "Close pergola cover - rain incoming"
     trigger:
       - platform: state
-        entity_id: binary_sensor.rain_incoming_status
+        entity_id: binary_sensor.rain_incoming_imminent
         to: "on"
     action:
       - service: cover.close_cover
@@ -132,7 +132,7 @@ automation:
   - alias: "Return lawnmower - rain close and heavy enough"
     trigger:
       - platform: state
-        entity_id: binary_sensor.rain_incoming_status
+        entity_id: binary_sensor.rain_incoming_imminent
         to: "on"
     condition:
       - condition: template
@@ -157,7 +157,7 @@ automation:
   - alias: "Washing alert - rain incoming"
     trigger:
       - platform: state
-        entity_id: binary_sensor.rain_incoming_status
+        entity_id: binary_sensor.rain_incoming_imminent
         to: "on"
     condition:
       - condition: time
@@ -183,7 +183,7 @@ automation:
   - alias: "Cancel irrigation - already raining"
     trigger:
       - platform: state
-        entity_id: binary_sensor.rain_incoming_status
+        entity_id: binary_sensor.rain_incoming_imminent
         to: "on"
     condition:
       - condition: template
@@ -202,7 +202,7 @@ automation:
 
 | Entity | Type | Description |
 |---|---|---|
-| `binary_sensor.rain_incoming_status` | Binary | `on` when rain is approaching or overhead, `off` when clear |
+| `binary_sensor.rain_incoming_imminent` | Binary | `on` when rain is approaching or overhead, `off` when clear |
 | `binary_sensor.rain_incoming_raining` | Binary (moisture) | `Wet` when rain is at the location (overhead), `Dry` otherwise |
 | `sensor.rain_incoming_arrival_time` | Timestamp | Predicted arrival time, `unknown` when no rain incoming |
 | `sensor.rain_incoming_intensity` | Sensor | Precipitation intensity: `none` / `light` / `moderate` / `heavy` / `extreme` |

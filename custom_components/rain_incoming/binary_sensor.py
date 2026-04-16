@@ -33,12 +33,12 @@ class RainIncomingBinarySensor(CoordinatorEntity[RainDetectorCoordinator], Binar
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Status"
+    _attr_name = "Imminent"
 
     def __init__(self, coordinator: RainDetectorCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_rain_incoming"
+        self._attr_unique_id = f"{entry.entry_id}_rain_imminent"
 
     @property
     def device_info(self) -> DeviceInfo:

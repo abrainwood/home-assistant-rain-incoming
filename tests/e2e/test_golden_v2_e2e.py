@@ -40,7 +40,7 @@ class TestCanberraGoldenV2:
         ha_client.set_mock_scenario("golden_v2:Canberra:5-10")
         configure_location(CANBERRA_LAT, CANBERRA_LON, "Canberra_v2")
 
-        sensor_id = "binary_sensor.rain_incoming_canberra_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
         state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
         # Save rain image for inspection
@@ -57,7 +57,7 @@ class TestCanberraGoldenV2:
     def test_rain_visible_in_image(self, ha_client):
         """The radar image must show visible rain - not just sensor on."""
         image_id = "image.rain_incoming_canberra_v2_radar_128km"
-        sensor_id = "binary_sensor.rain_incoming_canberra_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
 
         # Ensure we have fresh rain data rendered - poll until sensor is in expected state
         ha_client.update_entity(sensor_id)
@@ -112,7 +112,7 @@ class TestCanberraGoldenV2:
     def test_no_rain_when_classified_none(self, ha_client):
         """Frames 0-2 are all 'none'. With only none frames, sensor should be off."""
         ha_client.set_mock_scenario("golden_v2:Canberra:0-2")
-        sensor_id = "binary_sensor.rain_incoming_canberra_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
         ha_client.update_entity(sensor_id)
         state = ha_client.poll_entity_state(
             sensor_id, timeout=30,
@@ -136,7 +136,7 @@ class TestCanberraGoldenV2:
         the entity unavailable.
         """
         ha_client.set_mock_scenario("golden_v2:Canberra:0-2")
-        sensor_id = "binary_sensor.rain_incoming_canberra_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
         ha_client.update_entity(sensor_id)
         state = ha_client.poll_entity_state(
             sensor_id, timeout=30,
@@ -157,9 +157,9 @@ class TestCanberraGoldenV2:
         can incidentally match precipitation colour thresholds.
         """
         ha_client.set_mock_scenario("golden_v2:Canberra:0-2")
-        ha_client.update_entity("binary_sensor.rain_incoming_canberra_v2_status")
+        ha_client.update_entity("binary_sensor.rain_incoming_canberra_v2_imminent")
         ha_client.poll_entity_state(
-            "binary_sensor.rain_incoming_canberra_v2_status", timeout=30,
+            "binary_sensor.rain_incoming_canberra_v2_imminent", timeout=30,
             condition=lambda s: s.get("state") == "off",
         )
 
@@ -184,9 +184,9 @@ class TestCanberraGoldenV2:
         test is meaningless - it would pass even when the pipeline is broken.
         """
         ha_client.set_mock_scenario("golden_v2:Canberra:5-10")
-        ha_client.update_entity("binary_sensor.rain_incoming_canberra_v2_status")
+        ha_client.update_entity("binary_sensor.rain_incoming_canberra_v2_imminent")
         state = ha_client.poll_entity_state(
-            "binary_sensor.rain_incoming_canberra_v2_status", timeout=30,
+            "binary_sensor.rain_incoming_canberra_v2_imminent", timeout=30,
             condition=lambda s: s.get("state") == "on",
         )
         assert state["state"] != "off", (
@@ -210,7 +210,7 @@ class TestDarwinGoldenV2:
         ha_client.set_mock_scenario("golden_v2:Darwin:5-12")
         configure_location(DARWIN_LAT, DARWIN_LON, "Darwin_v2")
 
-        sensor_id = "binary_sensor.rain_incoming_darwin_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_darwin_v2_imminent"
         state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
         image_id = "image.rain_incoming_darwin_v2_radar_128km"
@@ -231,7 +231,7 @@ class TestDarwinGoldenV2:
         for precipitation-coloured pixels in the rendered image.
         """
         image_id = "image.rain_incoming_darwin_v2_radar_128km"
-        sensor_id = "binary_sensor.rain_incoming_darwin_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_darwin_v2_imminent"
 
         # Ensure we have fresh rain data rendered - poll until sensor is in expected state
         ha_client.update_entity(sensor_id)
@@ -268,7 +268,7 @@ class TestMelbourneGoldenV2:
         ha_client.set_mock_scenario("golden_v2:Melbourne:1-12")
         configure_location(MELBOURNE_LAT, MELBOURNE_LON, "Melbourne_v2")
 
-        sensor_id = "binary_sensor.rain_incoming_melbourne_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_melbourne_v2_imminent"
         # Wait for a complete coordinator cycle with the dry scenario.
         # configure_location's internal poll accepts any non-unavailable state,
         # which may capture a transient "on" from the coordinator's initial
@@ -293,7 +293,7 @@ class TestMelbourneGoldenV2:
         classify this as dry overall.
         """
         ha_client.set_mock_scenario("golden_v2:Melbourne:0-12")
-        sensor_id = "binary_sensor.rain_incoming_melbourne_v2_status"
+        sensor_id = "binary_sensor.rain_incoming_melbourne_v2_imminent"
         ha_client.update_entity(sensor_id)
         state = ha_client.poll_entity_state(
             sensor_id, timeout=30,
