@@ -34,10 +34,16 @@ class TestIntegratedRainValidation:
     """
 
     def _download_gif(self, ha_client, scenario, entity_id=IMAGE_128):
-        """Set scenario, trigger update, wait, download GIF."""
+        """Set scenario, wait for coordinator cycle, then download GIF."""
         ha_client.set_mock_scenario(scenario)
-        ha_client.update_entity(BINARY_SENSOR)
-        time.sleep(15)
+        ha_client.wait_for_coordinator_cycle(BINARY_SENSOR, timeout=60)
+        # Poll until image has non-trivial content (render may still be in flight)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            gif = ha_client.get_image(entity_id)
+            if gif and len(gif) > 1000:
+                return gif
+            time.sleep(2)
         return ha_client.get_image(entity_id)
 
     def test_rain_is_visible_on_radar_image(self, ha_client):
@@ -143,8 +149,17 @@ class TestValidationCanFail:
         """rain_everywhere and no_rain MUST produce visually different GIFs."""
         ha_client.set_mock_scenario("rain_everywhere")
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
-        time.sleep(15)  # wait for render to complete
-        rain_gif = ha_client.get_image(IMAGE_128)
+        # Poll until image has non-trivial content (render may lag coordinator)
+        rain_gif = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            candidate = ha_client.get_image(IMAGE_128)
+            if candidate and len(candidate) > 1000:
+                rain_gif = candidate
+                break
+            time.sleep(2)
+        if rain_gif is None:
+            rain_gif = ha_client.get_image(IMAGE_128)
 
         ha_client.set_mock_scenario("no_rain")
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
