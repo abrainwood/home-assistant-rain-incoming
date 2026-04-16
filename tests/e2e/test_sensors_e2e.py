@@ -76,8 +76,19 @@ class TestIntegratedRainValidation:
         intensity = ha_client.get_state(INTENSITY_SENSOR)
         assert intensity["state"] != "none", f"Rain active but intensity is {intensity['state']}"
 
-        # Check image shows rain
-        rain_gif = ha_client.get_image(IMAGE_128)
+        # Wait for the image render to reflect the new scenario.
+        # async_image() returns from cache immediately when warm, so the
+        # render may still be in flight when the sensor has already updated.
+        rain_gif = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            candidate = ha_client.get_image(IMAGE_128)
+            if candidate and candidate != no_rain_gif:
+                rain_gif = candidate
+                break
+            time.sleep(2)
+
+        assert rain_gif is not None, "Rain image never changed from baseline after 30s"
         differs, fraction = images_differ_significantly(rain_gif, no_rain_gif)
         assert differs, (
             f"Sensors say rain (state={sensor['state']}, intensity={intensity['state']}) "
@@ -108,7 +119,17 @@ class TestIntegratedRainValidation:
             f"Approaching rain but arrival is {arrival['state']}"
         )
 
-        rain_gif = ha_client.get_image(IMAGE_128)
+        # Wait for the image render to reflect the new scenario.
+        rain_gif = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            candidate = ha_client.get_image(IMAGE_128)
+            if candidate and candidate != no_rain_gif:
+                rain_gif = candidate
+                break
+            time.sleep(2)
+
+        assert rain_gif is not None, "Approaching rain image never changed from baseline after 30s"
         differs, fraction = images_differ_significantly(rain_gif, no_rain_gif)
         assert differs, (
             f"Sensors say approaching rain but image identical to baseline (diff: {fraction:.4f})"
@@ -122,11 +143,22 @@ class TestValidationCanFail:
         """rain_everywhere and no_rain MUST produce visually different GIFs."""
         ha_client.set_mock_scenario("rain_everywhere")
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
+        time.sleep(15)  # wait for render to complete
         rain_gif = ha_client.get_image(IMAGE_128)
 
         ha_client.set_mock_scenario("no_rain")
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
-        clean_gif = ha_client.get_image(IMAGE_128)
+        # Poll until image changes from the rain version
+        clean_gif = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            candidate = ha_client.get_image(IMAGE_128)
+            if candidate and candidate != rain_gif:
+                clean_gif = candidate
+                break
+            time.sleep(2)
+        if clean_gif is None:
+            clean_gif = ha_client.get_image(IMAGE_128)
 
         # Rain vs clean must differ
         differs_rain, frac_rain = images_differ_significantly(rain_gif, clean_gif)
