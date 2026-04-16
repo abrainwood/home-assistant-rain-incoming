@@ -19,7 +19,7 @@ import time
 from tests.e2e.image_helpers import images_differ_significantly
 
 
-BINARY_SENSOR = "binary_sensor.rain_incoming_status"
+BINARY_SENSOR = "binary_sensor.rain_incoming_imminent"
 ARRIVAL_SENSOR = "sensor.rain_incoming_arrival_time"
 INTENSITY_SENSOR = "sensor.rain_incoming_intensity"
 IMAGE_128 = "image.rain_incoming_radar_128km"

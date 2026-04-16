@@ -57,7 +57,7 @@ def mock_entry():
 @pytest.mark.asyncio
 async def test_binary_sensor_unavailable_when_no_data(hass: HomeAssistant, mock_entry):
     await setup_integration(hass, mock_entry, MOCK_RESULT_UNAVAILABLE)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert state is not None
     assert state.state == "unavailable"
 
@@ -65,7 +65,7 @@ async def test_binary_sensor_unavailable_when_no_data(hass: HomeAssistant, mock_
 @pytest.mark.asyncio
 async def test_binary_sensor_on_when_rain_coming(hass: HomeAssistant, mock_entry):
     await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert state is not None
     assert state.state == "on"
     assert state.attributes["confidence"] == "normal"
@@ -74,7 +74,7 @@ async def test_binary_sensor_on_when_rain_coming(hass: HomeAssistant, mock_entry
 @pytest.mark.asyncio
 async def test_binary_sensor_off_when_no_rain(hass: HomeAssistant, mock_entry):
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert state is not None
     assert state.state == "off"
 
@@ -173,11 +173,38 @@ def test_translations_en_json_matches_strings_json():
 
 
 @pytest.mark.asyncio
-async def test_binary_sensor_device_class_is_moisture(hass: HomeAssistant, mock_entry):
+async def test_binary_sensor_status_has_no_device_class(hass: HomeAssistant, mock_entry):
+    """Status sensor shows On/Off (not Wet/Dry) - no device class."""
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
+    assert state is not None
+    assert state.attributes.get("device_class") is None
+
+
+@pytest.mark.asyncio
+async def test_raining_sensor_exists(hass: HomeAssistant, mock_entry):
+    """A separate Raining binary sensor must exist."""
+    await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.rain_incoming_raining_now")
+    assert state is not None
+
+
+@pytest.mark.asyncio
+async def test_raining_sensor_device_class_is_moisture(hass: HomeAssistant, mock_entry):
+    """Raining sensor shows Wet/Dry - uses moisture device class."""
+    await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.rain_incoming_raining_now")
     assert state is not None
     assert state.attributes.get("device_class") == BinarySensorDeviceClass.MOISTURE
+
+
+@pytest.mark.asyncio
+async def test_raining_sensor_off_when_no_rain(hass: HomeAssistant, mock_entry):
+    """Raining sensor must be off when there's no rain."""
+    await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
+    state = hass.states.get("binary_sensor.rain_incoming_raining_now")
+    assert state is not None
+    assert state.state == "off"
 
 
 # --- Dynamic icons ---
@@ -186,14 +213,14 @@ async def test_binary_sensor_device_class_is_moisture(hass: HomeAssistant, mock_
 @pytest.mark.asyncio
 async def test_binary_sensor_icon_pouring_when_rain(hass: HomeAssistant, mock_entry):
     await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert state.attributes["icon"] == "mdi:weather-pouring"
 
 
 @pytest.mark.asyncio
 async def test_binary_sensor_icon_sunny_when_no_rain(hass: HomeAssistant, mock_entry):
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert state.attributes["icon"] == "mdi:weather-sunny"
 
 
@@ -216,7 +243,7 @@ async def test_arrival_sensor_icon_clock_when_no_rain(hass: HomeAssistant, mock_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entity_id", [
-    "binary_sensor.rain_incoming_status",
+    "binary_sensor.rain_incoming_imminent",
     "sensor.rain_incoming_arrival_time",
 ])
 async def test_config_values_not_in_attributes(hass: HomeAssistant, mock_entry, entity_id):
@@ -240,7 +267,7 @@ async def test_binary_sensor_exposes_last_update_success_attribute(hass: HomeAss
     coordinator.async_set_updated_data(MOCK_RESULT_RAIN_COMING)
     await hass.async_block_till_done()
 
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert state is not None
     assert "last_update_success" in state.attributes
     value = state.attributes["last_update_success"]
@@ -250,7 +277,7 @@ async def test_binary_sensor_exposes_last_update_success_attribute(hass: HomeAss
 @pytest.mark.asyncio
 async def test_binary_sensor_still_has_dynamic_attributes(hass: HomeAssistant, mock_entry):
     await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert "confidence" in state.attributes
     assert "frame_count" in state.attributes
 
@@ -285,7 +312,7 @@ async def test_named_location_device_name(hass: HomeAssistant, mock_entry_named)
     await setup_integration(hass, mock_entry_named, MOCK_RESULT_NO_RAIN)
     # Entity IDs use the device name - with a named location
     # the device is "Rain Incoming - Beach House", so entity IDs change
-    state = hass.states.get("binary_sensor.rain_incoming_beach_house_status")
+    state = hass.states.get("binary_sensor.rain_incoming_beach_house_imminent")
     assert state is not None, (
         f"Expected named entity. Available: {[s.entity_id for s in hass.states.async_all()]}"
     )
@@ -295,7 +322,7 @@ async def test_named_location_device_name(hass: HomeAssistant, mock_entry_named)
 async def test_unnamed_location_device_name(hass: HomeAssistant, mock_entry):
     """Entries without location_name still use 'Rain Incoming' device name."""
     await setup_integration(hass, mock_entry, MOCK_RESULT_NO_RAIN)
-    state = hass.states.get("binary_sensor.rain_incoming_status")
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
     assert state is not None
 
 
