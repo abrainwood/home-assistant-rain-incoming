@@ -221,7 +221,7 @@ async def _fetch_tile(session: aiohttp.ClientSession, url: str) -> Image.Image:
     # than the limit. Holding through resp.read() closes that gap.
     async with _get_tile_semaphore():
         resp = await fetch_with_retry(
-            session, url, max_retries=1, timeout_total=15.0
+            session, url, max_retries=2, timeout_total=15.0
         )
         data = await asyncio.wait_for(resp.read(), timeout=10)
     return Image.open(BytesIO(data)).convert("RGBA")

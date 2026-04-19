@@ -144,7 +144,7 @@ async def fetch_with_retry(
                 delay = base_delay * (2 ** attempt)
                 _LOGGER.warning(
                     "Timeout on %s, retrying in %.1fs (attempt %d/%d)",
-                    url, delay, attempt + 1, max_retries,
+                    url, delay, attempt + 1, max_retries + 1,
                 )
                 await asyncio.sleep(delay)
                 continue
@@ -160,7 +160,7 @@ async def fetch_with_retry(
                 _LOGGER.warning(
                     "%s (%d) on %s, retrying in %.1fs (attempt %d/%d)",
                     "Rate limited" if resp.status == 429 else "Server error",
-                    resp.status, url, delay, attempt + 1, max_retries,
+                    resp.status, url, delay, attempt + 1, max_retries + 1,
                 )
                 resp.release()
                 await asyncio.sleep(delay)
