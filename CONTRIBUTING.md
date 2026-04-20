@@ -175,6 +175,35 @@ By contributing under the DCO, you acknowledge that your contributions may be in
 
 If you'd prefer your contribution NOT be part of any future relicensed version, please open a discussion before submitting the PR.
 
+## Translations
+
+We welcome translations for the config flow and sensor UI. Currently only English is provided.
+
+### How to add a translation
+
+1. Copy `custom_components/rain_incoming/translations/en.json` to a new file named with the [BCP 47 language tag](https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry), e.g. `de.json` for German, `fr.json` for French, `ja.json` for Japanese
+2. Translate the values (not the keys) in the new file
+3. Do NOT modify `strings.json` - it's the development source and must stay in sync with `en.json`
+4. Submit a PR with just the new translation file
+
+### What to translate
+
+The file contains:
+- **Config flow**: setup wizard title, description, field labels, error messages, abort messages
+- **Options flow**: settings page title and field labels
+- **Selector labels**: map style names
+
+### Guidelines
+
+- Keep translations concise - HA UI space is limited
+- Preserve `{placeholder}` variables exactly as they appear
+- Error messages should be actionable ("must be between 20 and 60" not just "invalid")
+- Don't translate technical terms that are well-known in the target language (e.g. "RainViewer", "CARTO", "ESRI")
+
+### Testing your translation
+
+Set your HA instance language to the target language in **Settings > System > General > Language**, then navigate to the Rain Incoming integration setup flow and options flow to verify all strings render correctly.
+
 ## References
 
 - [RainViewer API documentation](https://www.rainviewer.com/api.html)
