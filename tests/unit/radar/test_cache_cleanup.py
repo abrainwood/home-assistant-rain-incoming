@@ -21,8 +21,9 @@ class TestClearTileCaches:
     """clear_tile_caches must empty both module-level caches."""
 
     def test_clears_both_caches(self):
+        import time
         # Populate caches with dummy data
-        _map_tile_cache[("test", 7, 10, 20)] = Image.new("RGBA", (1, 1))
+        _map_tile_cache[("test", 7, 10, 20)] = (Image.new("RGBA", (1, 1)), time.monotonic())
         _radar_tile_cache[("/v2/radar/x", 7, 10, 20, 2)] = Image.new("RGBA", (1, 1))
 
         assert len(_map_tile_cache) > 0
@@ -48,13 +49,15 @@ class TestMapCacheBounded:
 
     def test_map_cache_evicts_when_full(self):
         """Filling the map cache past _MAP_CACHE_MAX must trigger eviction."""
+        import time
         from custom_components.rain_incoming.radar.composite import _evict_map_cache_if_full
 
         _map_tile_cache.clear()
         try:
             tiny = Image.new("RGBA", (1, 1))
+            now = time.monotonic()
             for i in range(_MAP_CACHE_MAX + 10):
-                _map_tile_cache[("style", 7, i, 0)] = tiny
+                _map_tile_cache[("style", 7, i, 0)] = (tiny, now)
 
             assert len(_map_tile_cache) > _MAP_CACHE_MAX
 
@@ -78,8 +81,9 @@ class TestUnloadClearsCaches:
         from custom_components.rain_incoming import async_unload_entry
         from custom_components.rain_incoming.const import DOMAIN
 
+        import time
         # Populate caches
-        _map_tile_cache[("test", 7, 1, 1)] = Image.new("RGBA", (1, 1))
+        _map_tile_cache[("test", 7, 1, 1)] = (Image.new("RGBA", (1, 1)), time.monotonic())
         _radar_tile_cache[("/v2/radar/x", 7, 1, 1, 2)] = Image.new("RGBA", (1, 1))
 
         hass = MagicMock()
