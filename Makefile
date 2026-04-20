@@ -41,3 +41,14 @@ dev-logs:
 dev-restart:
 	docker compose -f docker-compose.dev.yml down
 	docker compose -f docker-compose.dev.yml up -d
+
+# --- Volume safety ---
+# Prevent accidental deletion of dev HA volumes. These contain config,
+# auth tokens, and integration state that take time to recreate.
+
+dev-nuke:
+	@echo "WARNING: This will DELETE all HA dev data (config, auth, integrations)."
+	@echo "Volume: ha-dev-config"
+	@read -p "Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted."; exit 1)
+	docker compose -f docker-compose.dev.yml down -v
+	@echo "Dev volumes removed. Run 'make dev' to start fresh."

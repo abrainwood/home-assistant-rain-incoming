@@ -176,6 +176,10 @@ Assume external dependencies will break. Code must be resilient and observable.
 - **Log enough for users to diagnose.** Include HTTP status, URL or service name, and a human-readable message. Don't log raw tracebacks for expected failure modes.
 - **Fail visible, not silent.** Missing data, empty renders, stale sensors - these must appear in the HA system log, not hide behind debug-level logging.
 
+## Docker volume safety
+
+**Never run `docker compose down -v`, `docker volume rm`, or `docker volume prune` against dev volumes.** These contain HA config, auth tokens, and integration state that take significant time to recreate. Use `make dev-stop` (safe) or `make dev-nuke` (interactive confirmation) instead.
+
 ## Handling unknowns
 
 LLMs are naturally optimistic - bias toward pessimism. If you're unsure about something, say so. If you can verify quickly, do it. If you can't, stop and ask rather than silently assume.
