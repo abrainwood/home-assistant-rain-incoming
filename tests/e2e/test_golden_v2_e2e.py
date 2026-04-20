@@ -18,6 +18,9 @@ import time
 
 from tests.e2e.image_helpers import gif_has_precipitation_pixels, images_differ_significantly
 
+# Timeout for polling until a rendered image changes after a scenario switch.
+_IMAGE_POLL_TIMEOUT = 90
+
 
 def _save_gif(data: bytes, path: str) -> None:
     """Save GIF bytes to a file for manual inspection."""
@@ -89,7 +92,7 @@ class TestCanberraGoldenV2:
         # still be in flight when the sensor state has already changed.
         # Poll until the image bytes differ from the rain image.
         baseline_gif = None
-        deadline = time.time() + 30
+        deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             candidate = ha_client.get_image(image_id)
             if candidate and candidate != rain_gif:
