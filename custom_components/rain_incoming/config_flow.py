@@ -174,7 +174,8 @@ class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict | None = None
     ) -> ConfigFlowResult:
         existing = self.hass.config_entries.async_entries(DOMAIN)
-        if len(existing) >= MAX_LOCATIONS:
+        enabled = [e for e in existing if e.disabled_by is None]
+        if len(enabled) >= MAX_LOCATIONS:
             return self.async_abort(reason="too_many_locations")
 
         errors: dict[str, str] = {}

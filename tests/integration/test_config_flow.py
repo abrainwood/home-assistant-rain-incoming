@@ -564,6 +564,34 @@ async def test_config_flow_accepts_when_below_location_limit(hass: HomeAssistant
 
 
 @pytest.mark.asyncio
+async def test_config_flow_allows_when_disabled_entries_free_slots(hass: HomeAssistant):
+    """4 entries with 1 disabled = 3 enabled. Should allow a 4th enabled entry."""
+    from homeassistant.config_entries import ConfigEntryDisabler
+
+    for i in range(4):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                "latitude": float(i),
+                "longitude": float(i),
+                "lookahead_minutes": 60,
+                CONF_MAP_STYLE: "voyager",
+            },
+            version=2,
+            disabled_by=ConfigEntryDisabler.USER if i == 0 else None,
+        )
+        entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    assert result["type"] == FlowResultType.FORM, (
+        f"With 1 disabled entry, should allow adding (3 enabled < 4 max). "
+        f"Got: {result['type']}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_config_flow_rejects_when_above_location_limit(hass: HomeAssistant):
     for i in range(5):
         entry = MockConfigEntry(
