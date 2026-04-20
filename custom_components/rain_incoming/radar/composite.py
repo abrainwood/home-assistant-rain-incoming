@@ -40,11 +40,28 @@ _CROSSHAIR_RADIUS = 8
 _CROSSHAIR_LINE_LENGTH = 16
 _CROSSHAIR_LINE_GAP = 12
 
-# Module-level LRU cache for static map tiles: (style, zoom, x, y) -> RGBA Image
+# Module-level LRU cache for static map tiles: (style, zoom, x, y) -> (RGBA Image, timestamp)
 # Bounded to prevent unbounded memory growth (each tile ~256KB).
 # OrderedDict with move_to_end on access provides true LRU eviction.
-_map_tile_cache: OrderedDict[tuple, Image.Image] = OrderedDict()
+# Entries expire after _MAP_CACHE_TTL_SECONDS to pick up provider tile updates.
+import time as _time_module
+
+_map_tile_cache: OrderedDict[tuple, tuple[Image.Image, float]] = OrderedDict()
 _MAP_CACHE_MAX = 200
+_MAP_CACHE_TTL_SECONDS = 86400  # 24 hours
+
+
+def _get_cached_map_tile(cache_key: tuple) -> Image.Image | None:
+    """Return a cached map tile if present and not expired, else None."""
+    entry = _map_tile_cache.get(cache_key)
+    if entry is None:
+        return None
+    tile, cached_at = entry
+    if _time_module.monotonic() - cached_at > _MAP_CACHE_TTL_SECONDS:
+        del _map_tile_cache[cache_key]
+        return None
+    _map_tile_cache.move_to_end(cache_key)
+    return tile
 
 # Module-level LRU cache for radar tiles: (frame_path, zoom, x, y, scheme) -> RGBA Image
 # The cache key includes frame_path, so stale data can never be served.
@@ -243,9 +260,8 @@ async def _fetch_map_tile(
 
     # Cache key includes style so different styles don't share stale tiles.
     cache_key = (style_def.style, zoom, tx, ty)
-    cached = _map_tile_cache.get(cache_key)  # type: ignore[arg-type]
+    cached = _get_cached_map_tile(cache_key)
     if cached is not None:
-        _map_tile_cache.move_to_end(cache_key)  # type: ignore[arg-type]  # LRU touch
         return cached
 
     # Gate cache-miss fetches through the shared semaphore so map tiles count
@@ -263,7 +279,7 @@ async def _fetch_map_tile(
         tile = ImageEnhance.Color(tile).enhance(1.8)
 
     _evict_map_cache_if_full()
-    _map_tile_cache[cache_key] = tile  # type: ignore[index]
+    _map_tile_cache[cache_key] = (tile, _time_module.monotonic())  # type: ignore[index]
     return tile
 
 

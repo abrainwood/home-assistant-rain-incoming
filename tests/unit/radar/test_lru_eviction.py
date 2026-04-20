@@ -23,16 +23,17 @@ class TestMapCacheLRU:
         """A tile accessed recently must not be evicted even if inserted first."""
         _map_tile_cache.clear()
         try:
+            import time
             tiny = Image.new("RGBA", (1, 1))
+            now = time.monotonic()
             # Insert MAX + 10 entries
             for i in range(_MAP_CACHE_MAX + 10):
-                _map_tile_cache[("style", 7, i, 0)] = tiny
+                _map_tile_cache[("style", 7, i, 0)] = (tiny, now)
 
-            # Access the very first entry via the LRU touch pattern used in production:
-            # .get() followed by .move_to_end()
+            # Access the very first entry via the LRU touch pattern used in production
             first_key = ("style", 7, 0, 0)
-            _ = _map_tile_cache.get(first_key)
-            _map_tile_cache.move_to_end(first_key)
+            from custom_components.rain_incoming.radar.composite import _get_cached_map_tile
+            _get_cached_map_tile(first_key)
 
             _evict_map_cache_if_full()
 
