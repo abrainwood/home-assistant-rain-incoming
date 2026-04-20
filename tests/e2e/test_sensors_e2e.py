@@ -24,6 +24,12 @@ ARRIVAL_SENSOR = "sensor.rain_incoming_arrival_time"
 INTENSITY_SENSOR = "sensor.rain_incoming_intensity"
 IMAGE_128 = "image.rain_incoming_radar_128km"
 
+# Timeout for polling until a rendered image changes after a scenario switch.
+# The render pipeline in CI (coordinator cycle + tile fetches + composite_frames
+# + GIF encoding) can take 60s+ on a shared runner under load. 90s gives
+# headroom without being so long that a genuine failure takes forever to report.
+_IMAGE_POLL_TIMEOUT = 90
+
 
 class TestIntegratedRainValidation:
     """Tests that tie sensor states to radar image content.
@@ -33,23 +39,28 @@ class TestIntegratedRainValidation:
     the ocean on the Voyager base map and could not distinguish rain from map.
     """
 
-    def _download_gif(self, ha_client, scenario, entity_id=IMAGE_128):
-        """Set scenario, wait for coordinator cycle, then download GIF."""
+    def _download_gif(self, ha_client, scenario, entity_id=IMAGE_128, previous_gif=None):
+        """Set scenario, wait for coordinator cycle, then download GIF.
+
+        If previous_gif is provided, polls until the image differs from it
+        (handles async_image returning stale cached data). Otherwise polls
+        until the image has non-trivial content.
+        """
         ha_client.set_mock_scenario(scenario)
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR, timeout=60)
-        # Poll until image has non-trivial content (render may still be in flight)
-        deadline = time.time() + 30
+        deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             gif = ha_client.get_image(entity_id)
             if gif and len(gif) > 1000:
-                return gif
+                if previous_gif is None or gif != previous_gif:
+                    return gif
             time.sleep(2)
         return ha_client.get_image(entity_id)
 
     def test_rain_is_visible_on_radar_image(self, ha_client):
         """The radar image MUST look different with rain vs without rain."""
         no_rain_gif = self._download_gif(ha_client, "no_rain")
-        rain_gif = self._download_gif(ha_client, "rain_everywhere")
+        rain_gif = self._download_gif(ha_client, "rain_everywhere", previous_gif=no_rain_gif)
 
         assert no_rain_gif and rain_gif, "Failed to download GIFs"
 
@@ -86,7 +97,7 @@ class TestIntegratedRainValidation:
         # async_image() returns from cache immediately when warm, so the
         # render may still be in flight when the sensor has already updated.
         rain_gif = None
-        deadline = time.time() + 30
+        deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             candidate = ha_client.get_image(IMAGE_128)
             if candidate and candidate != no_rain_gif:
@@ -94,7 +105,7 @@ class TestIntegratedRainValidation:
                 break
             time.sleep(2)
 
-        assert rain_gif is not None, "Rain image never changed from baseline after 30s"
+        assert rain_gif is not None, "Rain image never changed from baseline after poll timeout"
         differs, fraction = images_differ_significantly(rain_gif, no_rain_gif)
         assert differs, (
             f"Sensors say rain (state={sensor['state']}, intensity={intensity['state']}) "
@@ -127,7 +138,7 @@ class TestIntegratedRainValidation:
 
         # Wait for the image render to reflect the new scenario.
         rain_gif = None
-        deadline = time.time() + 30
+        deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             candidate = ha_client.get_image(IMAGE_128)
             if candidate and candidate != no_rain_gif:
@@ -135,7 +146,7 @@ class TestIntegratedRainValidation:
                 break
             time.sleep(2)
 
-        assert rain_gif is not None, "Approaching rain image never changed from baseline after 30s"
+        assert rain_gif is not None, "Approaching rain image never changed from baseline after poll timeout"
         differs, fraction = images_differ_significantly(rain_gif, no_rain_gif)
         assert differs, (
             f"Sensors say approaching rain but image identical to baseline (diff: {fraction:.4f})"
@@ -151,7 +162,7 @@ class TestValidationCanFail:
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
         # Poll until image has non-trivial content (render may lag coordinator)
         rain_gif = None
-        deadline = time.time() + 30
+        deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             candidate = ha_client.get_image(IMAGE_128)
             if candidate and len(candidate) > 1000:
@@ -165,7 +176,7 @@ class TestValidationCanFail:
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
         # Poll until image changes from the rain version
         clean_gif = None
-        deadline = time.time() + 30
+        deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             candidate = ha_client.get_image(IMAGE_128)
             if candidate and candidate != rain_gif:
