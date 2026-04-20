@@ -283,6 +283,29 @@ async def test_binary_sensor_still_has_dynamic_attributes(hass: HomeAssistant, m
 
 
 @pytest.mark.asyncio
+async def test_binary_sensor_exposes_max_cell_confidence(hass: HomeAssistant, mock_entry):
+    """The imminent sensor must expose the max cell confidence as an attribute."""
+    from custom_components.rain_incoming.radar.detector import TrackedCell
+    result_with_cells = DetectionResult(
+        rain_incoming=True,
+        arrival_time=datetime(2026, 4, 7, 10, 30, tzinfo=timezone.utc),
+        confidence=Confidence.NORMAL,
+        frame_count=6,
+        max_approaching_intensity=0.65,
+        tracked_cells=[
+            TrackedCell(lat=-33.7, lon=151.2, velocity_kmh=40, bearing=180, confidence=0.85),
+            TrackedCell(lat=-33.8, lon=151.3, velocity_kmh=35, bearing=190, confidence=0.72),
+        ],
+    )
+    await setup_integration(hass, mock_entry, result_with_cells)
+    state = hass.states.get("binary_sensor.rain_incoming_imminent")
+    assert "max_cell_confidence" in state.attributes, (
+        "Imminent sensor must expose max_cell_confidence attribute"
+    )
+    assert state.attributes["max_cell_confidence"] == 0.85
+
+
+@pytest.mark.asyncio
 async def test_arrival_sensor_still_has_dynamic_attributes(hass: HomeAssistant, mock_entry):
     await setup_integration(hass, mock_entry, MOCK_RESULT_RAIN_COMING)
     state = hass.states.get("sensor.rain_incoming_arrival_time")
