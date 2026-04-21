@@ -16,45 +16,34 @@ import aiohttp.resolver
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from custom_components.rain_incoming.radar.geo import lat_lon_to_tile
+from custom_components.rain_incoming.providers.rainviewer import (
+    MAX_COLOUR_DISTANCE,
+    PRECIP_COLOURS,
+    TILE_SIZE as _TILE_SIZE,
+    _tile_bounds,
+)
+from custom_components.rain_incoming.radar.composite import km_per_pixel
+from custom_components.rain_incoming.const import (
+    RAINVIEWER_ANALYSIS_GRID,
+    RAINVIEWER_COLOUR_SCHEME,
+    RAINVIEWER_TILE_SIZE,
+    RAINVIEWER_ZOOM,
+)
+
 MANIFEST_URL = "https://api.rainviewer.com/public/weather-maps.json"
 TILE_BASE_URL = "https://tilecache.rainviewer.com"
 MAP_TILE_URL = "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-ZOOM = 7
-COLOUR_SCHEME = 6
-TILE_SIZE = 256
+ZOOM = RAINVIEWER_ZOOM
+COLOUR_SCHEME = RAINVIEWER_COLOUR_SCHEME
+TILE_SIZE = RAINVIEWER_TILE_SIZE
 LAT, LON = -33.701, 151.209
-GRID_HALF = 2
+GRID_HALF = RAINVIEWER_ANALYSIS_GRID
 OUTPUT_SIZE = 640
 
-_PRECIP_COLOURS = [
-    (0, 91, 142), (0, 119, 170), (0, 154, 213), (81, 197, 232),
-    (255, 224, 0), (255, 170, 0), (255, 68, 0), (193, 0, 0), (255, 119, 255),
-]
-_MAX_COLOUR_DIST = 60.0
-
-
-def lat_lon_to_tile(lat, lon, zoom):
-    x = int((lon + 180.0) / 360.0 * (2 ** zoom))
-    lat_r = math.radians(lat)
-    y = int((1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi) / 2.0 * (2 ** zoom))
-    return x, y
-
-
-def tile_bounds(tx, ty, zoom):
-    n = 2 ** zoom
-    lon_min = tx / n * 360.0 - 180.0
-    lon_max = (tx + 1) / n * 360.0 - 180.0
-    lat_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * ty / n))))
-    lat_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (ty + 1) / n))))
-    return lat_min, lat_max, lon_min, lon_max
-
-
-def km_per_pixel(lat, zoom):
-    """Approximate km per pixel at a given latitude and zoom."""
-    # At equator, full circumference = 40075km across 256 * 2^zoom pixels
-    total_px = TILE_SIZE * (2 ** zoom)
-    km_per_px_equator = 40075.0 / total_px
-    return km_per_px_equator * math.cos(math.radians(lat))
+# RGB-only view of the production precipitation colour table (strip the intensity field)
+_PRECIP_COLOURS = [(r, g, b) for r, g, b, _ in PRECIP_COLOURS]
+_MAX_COLOUR_DIST = MAX_COLOUR_DISTANCE
 
 
 def filter_precipitation_only(tile):
@@ -112,6 +101,25 @@ async def fetch_radar_grid(session, frame_path, center_tx, center_ty):
             except Exception as e:
                 print(f"  Failed radar ({tx},{ty}): {e}")
     return canvas
+
+
+def location_to_pixel(lat, lon, center_tx, center_ty, zoom, grid_half, tile_size):
+    """Convert lat/lon to pixel coordinates in the tile grid canvas."""
+    canvas_size = (2 * grid_half + 1) * tile_size
+    min_tx = center_tx - grid_half
+    min_ty = center_ty - grid_half
+    max_tx = center_tx + grid_half
+    max_ty = center_ty + grid_half
+    top_left = _tile_bounds(min_tx, min_ty, zoom)
+    bottom_right = _tile_bounds(max_tx, max_ty, zoom)
+    clon_min = top_left.lon_min
+    clat_max = top_left.lat_max
+    clon_max = bottom_right.lon_max
+    clat_min = bottom_right.lat_min
+
+    loc_x = int((lon - clon_min) / (clon_max - clon_min) * canvas_size)
+    loc_y = int((clat_max - lat) / (clat_max - clat_min) * canvas_size)
+    return loc_x, loc_y
 
 
 def draw_location_marker(img, x, y):
@@ -185,18 +193,7 @@ async def main():
 
     composite = Image.alpha_composite(base_map, radar)
 
-    # Calculate location pixel in the full canvas
-    canvas_size = (2 * GRID_HALF + 1) * TILE_SIZE
-    min_tx = center_tx - GRID_HALF
-    min_ty = center_ty - GRID_HALF
-    max_tx = center_tx + GRID_HALF
-    max_ty = center_ty + GRID_HALF
-    _, clat_max, clon_min, _ = tile_bounds(min_tx, min_ty, ZOOM)
-    clat_min, _, _, clon_max = tile_bounds(max_tx, max_ty, ZOOM)
-
-    loc_x = int((LON - clon_min) / (clon_max - clon_min) * canvas_size)
-    loc_y = int((clat_max - LAT) / (clat_max - clat_min) * canvas_size)
-
+    loc_x, loc_y = location_to_pixel(LAT, LON, center_tx, center_ty, ZOOM, GRID_HALF, TILE_SIZE)
     kpp = km_per_pixel(LAT, ZOOM)
     print(f"Resolution: {kpp:.2f} km/pixel at lat {LAT}")
 

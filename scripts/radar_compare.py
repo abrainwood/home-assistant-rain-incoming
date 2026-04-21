@@ -98,13 +98,9 @@ def _build_detector_config(lat: float, lon: float) -> DetectorConfig:
 
 
 def _classify_intensity(max_intensity: float) -> str:
-    if max_intensity >= 0.77:
-        return "heavy"
-    if max_intensity >= 0.38:
-        return "moderate"
-    if max_intensity >= 0.10:
-        return "light"
-    return "none"
+    """Classify intensity using the same labels as the HA sensor entity."""
+    from custom_components.rain_incoming.sensor import _intensity_label
+    return _intensity_label(max_intensity)
 
 
 def _build_report(
