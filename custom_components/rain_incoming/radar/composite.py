@@ -225,7 +225,7 @@ def draw_range_rings(
         )
         label = f"{km}km"
         bbox = font.getbbox(label)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        _, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         lx = cx + 4
         ly = cy - r - th - 2
         _draw_text_with_outline(draw, lx, ly, label, font, is_dark=is_dark)
@@ -467,14 +467,6 @@ def _composite_single_frame(
     """
     if confidence_map is not None:
         radar_arr = np.array(radar_resized)
-        # Resize confidence map if dimensions differ
-        if confidence_map.shape != (radar_arr.shape[0], radar_arr.shape[1]):
-            from PIL import Image as PILImage
-            conf_img = PILImage.fromarray((confidence_map * 255).astype(np.uint8))
-            conf_img = conf_img.resize(
-                (radar_arr.shape[1], radar_arr.shape[0]), PILImage.BILINEAR
-            )
-            confidence_map = np.array(conf_img).astype(np.float32) / 255.0
         # Binary detection mask: pixels with strong radar returns render at full
         # opacity regardless of QC confidence. The threshold is applied to raw
         # luminance so that real precipitation (bright pixels in the radar tile)
@@ -548,7 +540,6 @@ def _render_gif_sync(
     # Quantize all frames to the FIRST frame's palette so colors (crosshair,
     # range rings, labels) stay consistent across the animation.
     first_quantized = frames[0].convert("RGB").quantize(colors=256, method=Image.Quantize.MEDIANCUT)
-    palette = first_quantized.getpalette()
 
     quantized_frames = []
     for f in frames:

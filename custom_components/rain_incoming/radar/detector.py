@@ -436,7 +436,7 @@ def _build_cell_tracks(
             next_centroids,
             max_distance=max_match_distance,
         )
-        match_map: dict[int, int] = {t0: t1 for t0, t1 in matches}
+        match_map: dict[int, int] = dict(matches)
         matched_next: set[int] = set(match_map.values())
 
         new_active: list[list[_TrackEntry]] = []
