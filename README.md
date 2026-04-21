@@ -234,7 +234,7 @@ The binary sensor and arrival time sensor expose these attributes for debugging 
 
 ### Cold-start period
 
-The integration learns your local clutter patterns over 12+ hours. During this period you may see slightly reduced accuracy.
+The integration learns your local clutter patterns over approximately 2 weeks. During this period you may see more false positives as the clutter map builds up a baseline of which radar returns are persistent noise vs real precipitation. Accuracy improves gradually as the map matures.
 
 ### False positives
 

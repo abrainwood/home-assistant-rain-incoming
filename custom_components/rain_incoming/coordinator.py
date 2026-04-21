@@ -74,7 +74,7 @@ FRAMES_TO_FETCH = 8
 # Clutter map persistence
 CLUTTER_MAP_FILENAME = "rain_incoming_clutter.npz"
 CLUTTER_SAVE_INTERVAL = 36  # save every 36 cycles (~6 hours at 10-min intervals)
-CLUTTER_MATURITY_CYCLES = 72  # fully mature after ~12 hours
+CLUTTER_MATURITY_CYCLES = 2016  # fully mature after ~2 weeks at 10-min intervals
 
 
 def _build_analysis_tiles(lat: float, lon: float, zoom: int) -> list[tuple[int, int]]:
