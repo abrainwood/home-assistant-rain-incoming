@@ -284,3 +284,117 @@ class TestMainSkipsEmptyLocation:
         captured = capsys.readouterr()
         assert "empty_loc" in captured.out
         assert "no captures found" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Test: --verify flag prints scorecard (POD/FAR/CSI)
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyFlagPrintsScorecard:
+    def test_verify_flag_prints_scorecard(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """With --verify, output contains POD/FAR/CSI scorecard instead of per-prediction ts= lines."""
+        from scripts.backtest.cli import main
+        from scripts.backtest.metrics import ContingencyTable, ScoreCard
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "sydney")
+
+        predictions = [_make_prediction(rain_incoming=True, window_end_ts=1776700000)]
+
+        scorecard = ScoreCard(
+            location="sydney",
+            contingency=ContingencyTable(hits=1, misses=0, false_alarms=0, correct_negatives=0),
+            total_windows=2,
+            skipped_gaps=1,
+            lead_time_errors=[5.0],
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.FutureRadarVerifier") as MockVerifier, \
+             patch("scripts.backtest.cli.compute_scorecard", return_value=scorecard):
+            instance = MockEngine.return_value
+            instance.replay.return_value = predictions
+            verifier_instance = MockVerifier.return_value
+            verifier_instance.verify.return_value = []
+
+            main(["--data-dir", str(data_dir), "--verify"])
+
+        captured = capsys.readouterr()
+        assert "POD" in captured.out
+        assert "FAR" in captured.out
+        assert "CSI" in captured.out
+        # Should NOT contain per-prediction ts= lines
+        assert "ts=" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Test: without --verify, output contains per-prediction ts= lines
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyFlagNotSetPrintsPredictions:
+    def test_verify_flag_not_set_prints_predictions(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """Without --verify, output contains per-prediction ts= lines (existing behavior)."""
+        from scripts.backtest.cli import main
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "sydney")
+
+        predictions = [_make_prediction(rain_incoming=True, window_end_ts=1776700000)]
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.replay.return_value = predictions
+
+            main(["--data-dir", str(data_dir)])
+
+        captured = capsys.readouterr()
+        assert "ts=" in captured.out
+        assert "POD" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Test: --verify with no predictions prints a zeros scorecard
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyWithNoPredictionsPrintsZeros:
+    def test_verify_with_no_predictions_prints_zeros(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """A location with no valid windows still prints a scorecard with all zeros."""
+        from scripts.backtest.cli import main
+        from scripts.backtest.metrics import ContingencyTable, ScoreCard
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "empty_loc")
+
+        scorecard = ScoreCard(
+            location="empty_loc",
+            contingency=ContingencyTable(hits=0, misses=0, false_alarms=0, correct_negatives=0),
+            total_windows=0,
+            skipped_gaps=0,
+            lead_time_errors=[],
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.FutureRadarVerifier") as MockVerifier, \
+             patch("scripts.backtest.cli.compute_scorecard", return_value=scorecard):
+            instance = MockEngine.return_value
+            instance.replay.return_value = []  # no predictions
+            verifier_instance = MockVerifier.return_value
+            verifier_instance.verify.return_value = []
+
+            main(["--data-dir", str(data_dir), "--verify"])
+
+        captured = capsys.readouterr()
+        assert "POD" in captured.out
+        assert "no verified arrival times" in captured.out

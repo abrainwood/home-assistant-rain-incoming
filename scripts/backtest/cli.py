@@ -12,7 +12,33 @@ import sys
 from pathlib import Path
 
 from scripts.backtest.data_loader import load_captures
+from scripts.backtest.metrics import ScoreCard, compute_scorecard
 from scripts.backtest.replay import ReplayConfig, ReplayEngine
+from scripts.backtest.verifier import FutureRadarVerifier
+
+
+def _print_scorecard(scorecard: ScoreCard) -> None:
+    """Print a scorecard summary to stdout."""
+    ct = scorecard.contingency
+    print(
+        f"{scorecard.location}: {scorecard.total_windows} windows "
+        f"({scorecard.skipped_gaps} gaps skipped)"
+    )
+    print(
+        f"  POD:  {scorecard.pod:.3f}  FAR:  {scorecard.far:.3f}  "
+        f"CSI:  {scorecard.csi:.3f}  Bias: {scorecard.bias:.2f}"
+    )
+    print(
+        f"  Hits: {ct.hits}  Misses: {ct.misses}  "
+        f"FA: {ct.false_alarms}  CN: {ct.correct_negatives}"
+    )
+    mean = scorecard.mean_lead_time_error
+    median = scorecard.median_lead_time_error
+    if mean is not None and median is not None:
+        count = len(scorecard.lead_time_errors)
+        print(f"  Lead time error: mean={mean:.1f}min median={median:.1f}min (n={count})")
+    else:
+        print("  Lead time error: no verified arrival times")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -42,6 +68,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--window-size", type=int, default=8)
     parser.add_argument("--max-gap-seconds", type=int, default=900)
     parser.add_argument("--lookahead-minutes", type=int, default=60)
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        default=False,
+        help="Verify predictions against future captures and print a scorecard",
+    )
 
     args = parser.parse_args(argv)
 
@@ -77,20 +109,30 @@ def main(argv: list[str] | None = None) -> None:
 
         predictions = engine.replay(captures)
 
-        total = len(predictions)
-        if total:
-            rain_count = sum(1 for p in predictions if p.rain_incoming)
-            print(
-                f"{location_name}: {total} windows, "
-                f"{rain_count} rain ({rain_count / total * 100:.0f}%)"
+        if args.verify:
+            total_possible_windows = max(0, len(captures) - config.window_size + 1)
+            skipped_gaps = total_possible_windows - len(predictions)
+            verifier = FutureRadarVerifier(captures)
+            records = verifier.verify(predictions)
+            scorecard = compute_scorecard(
+                location_name, records, total_possible_windows, skipped_gaps
             )
+            _print_scorecard(scorecard)
         else:
-            print(f"{location_name}: no valid windows")
+            total = len(predictions)
+            if total:
+                rain_count = sum(1 for p in predictions if p.rain_incoming)
+                print(
+                    f"{location_name}: {total} windows, "
+                    f"{rain_count} rain ({rain_count / total * 100:.0f}%)"
+                )
+            else:
+                print(f"{location_name}: no valid windows")
 
-        for p in predictions:
-            arrival = f"{p.arrival_minutes:.0f}min" if p.arrival_minutes is not None else "-"
-            print(
-                f"  ts={p.window_end_ts} rain={p.rain_incoming} "
-                f"at_loc={p.rain_at_location} arrival={arrival} "
-                f"cells={p.cell_count} conf={p.confidence}"
-            )
+            for p in predictions:
+                arrival = f"{p.arrival_minutes:.0f}min" if p.arrival_minutes is not None else "-"
+                print(
+                    f"  ts={p.window_end_ts} rain={p.rain_incoming} "
+                    f"at_loc={p.rain_at_location} arrival={arrival} "
+                    f"cells={p.cell_count} conf={p.confidence}"
+                )
