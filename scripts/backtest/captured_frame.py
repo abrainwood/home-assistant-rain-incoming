@@ -76,7 +76,7 @@ class CapturedRadarFrame(RadarFrame):
     def _load_tile(self, tx: int, ty: int, path: Path) -> np.ndarray:
         """Load a single tile PNG and convert to a float32 intensity array.
 
-        Returns a zero array if the file is missing or unreadable.
+        Returns a zero array if the file is missing, unreadable, or corrupt.
         """
         try:
             png_bytes = path.read_bytes()
@@ -87,4 +87,11 @@ class CapturedRadarFrame(RadarFrame):
             )
             return np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32)
 
-        return _tile_to_intensity_array(png_bytes)
+        try:
+            return _tile_to_intensity_array(png_bytes)
+        except Exception as exc:
+            _LOGGER.warning(
+                "Captured frame: tile (%d,%d) failed to decode at %s: %s",
+                tx, ty, path, exc,
+            )
+            return np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.float32)

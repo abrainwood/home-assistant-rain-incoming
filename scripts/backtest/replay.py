@@ -239,6 +239,14 @@ class ReplayEngine:
         clutter_map: ClutterMap | None = None
         clutter_update_count = 0
 
+        # Build frames once and reuse across overlapping windows.
+        # Without this, the same tile PNG is decoded in every window
+        # that contains it (~12ms per tile × 4 tiles × 8 frames wasted
+        # per overlapping window).
+        frame_cache: dict[int, CapturedRadarFrame] = {
+            r.frame_ts: _frame_from_record(r) for r in sorted_captures
+        }
+
         for start in range(len(sorted_captures) - window_size + 1):
             window = sorted_captures[start : start + window_size]
 
@@ -250,7 +258,7 @@ class ReplayEngine:
                 )
                 continue
 
-            frames = [_frame_from_record(r) for r in window]
+            frames = [frame_cache[r.frame_ts] for r in window]
             detector_config = _build_detector_config(window[0], config.lookahead_seconds)
 
             confidence_maps: list[np.ndarray] | None = None
