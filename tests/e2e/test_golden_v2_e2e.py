@@ -12,23 +12,17 @@ controlled baseline. Tests that depend on mature QC (clutter
 suppression, etc.) should inject a known clutter map, not rely on
 accumulated state from prior tests.
 
-IMPORTANT: all three golden capture locations have real precipitation
-in their analysis area across ALL frames, including those classified
-"none" at the capture location. The "none" classification means no
-rain was directly overhead at capture time - it does NOT mean the
-analysis area is dry. The detector correctly reports rain_incoming
-for all golden data with cold QC.
-
-Inverse validation (proving tests CAN fail with wrong input) lives
-in test_sensors_e2e.py using synthetic scenarios - the only data we
-have where the analysis area is genuinely dry (transparent tiles).
-Golden-data-layer inverse validation requires genuinely dry captures,
-tracked in #139.
-
-Data sources:
+Data sources (wet captures):
 - Canberra: 13 frames, real precip in all frames (8-13% of analysis area)
 - Darwin: 13 frames, real precip in all frames (1-2% of analysis area)
 - Melbourne: 13 frames, real precip in all frames (10-13% of analysis area)
+
+Data sources (dry captures):
+- Melbourne_dry: 13 frames, 0% precip in 10 frames, trace noise in 3 frames
+
+Inverse validation: wet golden data must produce state="on", dry
+golden data must produce state="off". Each direction proves the
+other's assertion can fail.
 """
 from __future__ import annotations
 
@@ -224,4 +218,80 @@ class TestMelbourneGoldenV2:
         assert has_precip, (
             f"Sensor says rain but radar image has no precipitation pixels "
             f"(fraction={fraction:.4f}). Rain is not visible in the rendered image."
+        )
+
+
+# --- Melbourne dry ---
+MELBOURNE_DRY_LAT = -37.8136
+MELBOURNE_DRY_LON = 144.9631
+
+
+class TestMelbourneDryGoldenV2:
+    """Melbourne dry capture - genuinely clear radar.
+
+    Captured during a period with no precipitation in the Melbourne
+    analysis area. 10 of 13 frames have zero precipitation pixels;
+    3 frames have trace noise (0.01-0.05% coverage, max intensity 0.77).
+
+    With cold QC, the detector correctly reports rain_incoming=False
+    with zero tracked cells.
+
+    This class provides golden-data-layer inverse validation: dry
+    real tiles must produce state="off", proving that the wet golden
+    tests (which assert "on") are not tautologies.
+    """
+
+    def test_no_rain_detected(self, ha_client, configure_location):
+        """All 13 dry frames: sensor must be off."""
+        ha_client.set_mock_scenario("golden_v2:Melbourne_dry:0-12")
+        configure_location(MELBOURNE_DRY_LAT, MELBOURNE_DRY_LON, "Melbourne_dry_v2")
+
+        sensor_id = "binary_sensor.rain_incoming_melbourne_dry_v2_imminent"
+        state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
+
+        assert state["state"] == "off", (
+            f"Melbourne dry capture (0% precip in analysis area) "
+            f"but sensor says '{state['state']}'. "
+            f"Attributes: {state.get('attributes', {})}"
+        )
+
+        dry_gif = ha_client.get_image("image.rain_incoming_melbourne_dry_v2_radar_128km")
+        if dry_gif:
+            _save_gif(dry_gif, "/tmp/golden_v2_melbourne_dry.gif")
+
+    def test_no_precipitation_in_image(self, ha_client):
+        """Dry radar image must NOT show precipitation pixels."""
+        ha_client.set_mock_scenario("golden_v2:Melbourne_dry:0-12")
+        sensor_id = "binary_sensor.rain_incoming_melbourne_dry_v2_imminent"
+        ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
+
+        dry_gif = ha_client.get_image("image.rain_incoming_melbourne_dry_v2_radar_128km")
+        assert dry_gif and len(dry_gif) > 1000, (
+            f"Dry GIF is missing or too small ({len(dry_gif) if dry_gif else 0} bytes)"
+        )
+        _save_gif(dry_gif, "/tmp/golden_v2_melbourne_dry_vis.gif")
+
+        has_precip, fraction = gif_has_precipitation_pixels(dry_gif)
+        assert not has_precip, (
+            f"Dry capture but radar image has precipitation pixels "
+            f"(fraction={fraction:.4f}). False positive in rendered image."
+        )
+
+    def test_inverse_dry_data_must_not_detect_rain(self, ha_client):
+        """Dry golden data must NOT produce state='on'.
+
+        This is the inverse of the wet golden tests. If this test
+        passed with state='on', it would mean the pipeline detects
+        rain in empty radar data - and the wet tests' "on" assertions
+        would be meaningless.
+        """
+        ha_client.set_mock_scenario("golden_v2:Melbourne_dry:0-12")
+        sensor_id = "binary_sensor.rain_incoming_melbourne_dry_v2_imminent"
+        ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
+
+        state = ha_client.get_state(sensor_id)
+        assert state["state"] != "on", (
+            f"Dry golden data (0% precip) but sensor says 'on' - "
+            f"pipeline is detecting rain in empty tiles and wet tests "
+            f"are not proving anything"
         )
