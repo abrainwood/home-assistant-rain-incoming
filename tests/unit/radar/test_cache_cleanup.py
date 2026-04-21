@@ -123,13 +123,19 @@ class TestAsyncPrimitivesResetOnClear:
     def test_render_lock_reset_on_clear(self):
         import custom_components.rain_incoming.image as img_mod
 
-        # Force creation
-        img_mod._get_render_lock()
-        assert img_mod._render_lock is not None
+        # Force creation for two entries
+        img_mod._get_render_lock("entry_a")
+        img_mod._get_render_lock("entry_b")
+        assert len(img_mod._render_locks) == 2
 
+        # Reset specific entry
         from custom_components.rain_incoming.image import reset_render_lock
-        reset_render_lock()
+        reset_render_lock("entry_a")
+        assert "entry_a" not in img_mod._render_locks
+        assert "entry_b" in img_mod._render_locks
 
-        assert img_mod._render_lock is None, (
-            "Render lock must be reset to None after reset_render_lock"
+        # Reset all (last entry unload)
+        reset_render_lock()
+        assert len(img_mod._render_locks) == 0, (
+            "Render locks must be cleared after reset_render_lock()"
         )

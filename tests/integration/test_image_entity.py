@@ -452,25 +452,35 @@ class TestRenderTaskCancelledOnEntityRemoval:
 
 
 # ---------------------------------------------------------------------------
-# Fix 2: Concurrent renders across radii must be serialized
+# Fix 2: Concurrent renders across radii must be serialized PER LOCATION
 # ---------------------------------------------------------------------------
 
 class TestRenderSerialization:
-    """Render tasks across different radius entities must not run concurrently.
+    """Render tasks for the SAME location must not run concurrently.
 
     With 3 radii (64, 128, 256km), all render tasks fire when the coordinator
-    updates. Without a global lock they run simultaneously, multiplying
+    updates. Without serialization they run simultaneously, multiplying
     connection load by 3x and causing HA-wide lockups when tiles are slow.
 
-    Fix: a module-level asyncio.Lock ensures only one render runs at a time.
+    Fix: a per-coordinator asyncio.Lock serializes renders within one
+    location. Different locations can render in parallel (#144).
     """
 
     @pytest.mark.asyncio
-    async def test_concurrent_renders_across_radii_are_serialized(self):
-        """Two _render_to_cache calls must not execute render_animated_composite
-        simultaneously — the second must wait for the first to complete."""
-        entity_128 = _make_entity()
-        entity_256 = _make_entity()  # different radius, same coordinator update
+    async def test_same_location_renders_are_serialized(self):
+        """Two _render_to_cache calls for the same coordinator must not
+        execute render_animated_composite simultaneously."""
+        coord = _make_coordinator()
+        entry = _make_entry()
+        entity_128 = RadarImageEntity(coord, entry, 128)
+        entity_256 = RadarImageEntity(coord, entry, 256)
+
+        hass = MagicMock()
+        hass.config.latitude = -33.7
+        hass.config.longitude = 151.2
+        hass.config.time_zone = "Australia/Sydney"
+        entity_128.hass = hass
+        entity_256.hass = hass
 
         concurrent_count = 0
         max_concurrent = 0
@@ -479,7 +489,7 @@ class TestRenderSerialization:
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.02)  # simulate non-trivial render work
+            await asyncio.sleep(0.02)
             concurrent_count -= 1
             return b"GIF89a_test"
 
@@ -499,8 +509,61 @@ class TestRenderSerialization:
             )
 
         assert max_concurrent == 1, (
-            f"Renders ran concurrently (max={max_concurrent}). "
-            "A global render lock must serialize renders across all radius entities."
+            f"Same-location renders ran concurrently (max={max_concurrent}). "
+            "Per-coordinator render lock must serialize renders within one location."
+        )
+
+    @pytest.mark.asyncio
+    async def test_different_locations_render_in_parallel(self):
+        """Two _render_to_cache calls for DIFFERENT coordinators must run
+        concurrently. The global lock previously starved 256km entities
+        when multiple locations were configured (#144)."""
+        coord_a = _make_coordinator()
+        coord_b = _make_coordinator()
+        entry_a = _make_entry()
+        entry_b = MagicMock()
+        entry_b.data = {"latitude": -37.8, "longitude": 144.9}
+        entry_b.entry_id = "test_entry_b"
+
+        entity_a = RadarImageEntity(coord_a, entry_a, 128)
+        entity_b = RadarImageEntity(coord_b, entry_b, 128)
+
+        hass = MagicMock()
+        hass.config.latitude = -33.7
+        hass.config.longitude = 151.2
+        hass.config.time_zone = "Australia/Sydney"
+        entity_a.hass = hass
+        entity_b.hass = hass
+
+        concurrent_count = 0
+        max_concurrent = 0
+
+        async def tracked_render(*args, **kwargs):
+            nonlocal concurrent_count, max_concurrent
+            concurrent_count += 1
+            max_concurrent = max(max_concurrent, concurrent_count)
+            await asyncio.sleep(0.02)
+            concurrent_count -= 1
+            return b"GIF89a_test"
+
+        with (
+            patch(
+                "custom_components.rain_incoming.image.render_animated_composite",
+                new=tracked_render,
+            ),
+            patch(
+                "custom_components.rain_incoming.image.async_get_clientsession",
+                return_value=MagicMock(),
+            ),
+        ):
+            await asyncio.gather(
+                entity_a._render_to_cache(),
+                entity_b._render_to_cache(),
+            )
+
+        assert max_concurrent == 2, (
+            f"Different-location renders did not run in parallel (max={max_concurrent}). "
+            "Per-coordinator locks must allow different locations to render concurrently."
         )
 
 
