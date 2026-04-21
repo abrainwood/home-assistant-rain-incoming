@@ -34,8 +34,12 @@ asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["."]
 
 [tool.coverage.run]
-source = ["custom_components/rain_incoming"]
+source = ["custom_components/rain_incoming", "scripts"]
+relative_files = true
 omit = ["tests/*"]
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 [tool.mutmut]
 paths_to_mutate = "custom_components/rain_incoming/radar/motion.py"
