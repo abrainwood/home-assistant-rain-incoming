@@ -34,7 +34,12 @@ asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["."]
 
 [tool.coverage.run]
-source = ["custom_components/rain_incoming"]
+# Single source root so the coverage XML has one <source>.</source> element
+# with fully-qualified filenames like "custom_components/rain_incoming/foo.py".
+# SonarCloud needs this to map coverage to sonar.sources.
+source = ["."]
+include = ["custom_components/rain_incoming/*", "scripts/*"]
+relative_files = true
 omit = ["tests/*"]
 
 [tool.mutmut]

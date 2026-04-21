@@ -23,7 +23,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run tests with coverage
-        run: pytest tests/unit/ tests/integration/ --cov=custom_components/rain_incoming --cov-report=xml:coverage.xml -q
+        run: pytest tests/unit/ tests/integration/ --cov --cov-report=xml:coverage.xml -q
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
