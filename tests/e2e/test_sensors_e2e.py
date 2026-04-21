@@ -199,3 +199,31 @@ class TestValidationCanFail:
         assert frac_clean < 0.05, (
             f"Two no_rain images differ by {frac_clean:.4f} - too much noise in comparison"
         )
+
+    def test_inverse_dry_scenario_must_not_detect_rain(self, ha_client):
+        """no_rain scenario must produce state='off'.
+
+        Proves the dry assertion can fail: if the pipeline were broken
+        and always returned 'on', this test would catch it.
+        """
+        ha_client.set_mock_scenario("no_rain")
+        sensor = ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
+
+        assert sensor["state"] == "off", (
+            f"Synthetic no_rain scenario but sensor says '{sensor['state']}' - "
+            f"the pipeline is detecting rain in transparent tiles"
+        )
+
+    def test_inverse_rain_scenario_must_not_be_dry(self, ha_client):
+        """rain_everywhere scenario must produce state='on'.
+
+        Proves the rain assertion can fail: if the pipeline were broken
+        and always returned 'off', this test would catch it.
+        """
+        ha_client.set_mock_scenario("rain_everywhere")
+        sensor = ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
+
+        assert sensor["state"] == "on", (
+            f"Synthetic rain_everywhere scenario but sensor says '{sensor['state']}' - "
+            f"the pipeline is not detecting rain in solid rain tiles"
+        )
