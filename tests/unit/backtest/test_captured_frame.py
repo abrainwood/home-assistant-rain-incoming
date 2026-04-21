@@ -156,3 +156,54 @@ def test_get_intensity_at_returns_zero(dry_frame):
     # get_intensity_at is a stub - always returns 0.0
     result = dry_frame.get_intensity_at(-37.8, 144.9)
     assert result == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Corrupt tile handling
+# ---------------------------------------------------------------------------
+
+def test_corrupt_tile_produces_zeros_and_logs_warning(tmp_path, caplog):
+    """A corrupt PNG must produce zeros and log a WARNING, not crash."""
+    import logging
+    from scripts.backtest.captured_frame import CapturedRadarFrame
+
+    # Write garbage bytes to a file
+    corrupt_tile = tmp_path / "corrupt.png"
+    corrupt_tile.write_bytes(b"this is not a PNG")
+
+    tile_paths = {(115, 78): corrupt_tile}
+    ts = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    frame = CapturedRadarFrame(_timestamp=ts, _tile_paths=tile_paths, _zoom=_ZOOM)
+
+    bounds = _analysis_bounds()
+    with caplog.at_level(logging.WARNING, logger="scripts.backtest.captured_frame"):
+        grid = frame.get_intensity_grid(bounds, 256, 256)
+
+    assert isinstance(grid, np.ndarray)
+    assert grid.max() == 0.0, "Corrupt tile should produce zeros, not crash"
+    assert any("corrupt" in r.message.lower() or "failed" in r.message.lower()
+               for r in caplog.records if r.levelno >= logging.WARNING), (
+        "Corrupt tile must log a WARNING"
+    )
+
+
+def test_zero_byte_tile_produces_zeros_and_logs_warning(tmp_path, caplog):
+    """A zero-byte file must produce zeros and log a WARNING."""
+    import logging
+    from scripts.backtest.captured_frame import CapturedRadarFrame
+
+    empty_tile = tmp_path / "empty.png"
+    empty_tile.write_bytes(b"")
+
+    tile_paths = {(115, 78): empty_tile}
+    ts = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    frame = CapturedRadarFrame(_timestamp=ts, _tile_paths=tile_paths, _zoom=_ZOOM)
+
+    bounds = _analysis_bounds()
+    with caplog.at_level(logging.WARNING, logger="scripts.backtest.captured_frame"):
+        grid = frame.get_intensity_grid(bounds, 256, 256)
+
+    assert grid.max() == 0.0, "Zero-byte tile should produce zeros, not crash"
+    assert len([r for r in caplog.records if r.levelno >= logging.WARNING]) > 0, (
+        "Zero-byte tile must log a WARNING"
+    )

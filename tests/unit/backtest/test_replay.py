@@ -392,3 +392,38 @@ class TestReplayWithRealTiles:
             "Inverse validation failed: expected all predictions to be rain_incoming=True "
             "when detect() is mocked to always return rain"
         )
+
+
+# ---------------------------------------------------------------------------
+# Frame caching: overlapping windows must reuse CapturedRadarFrame instances
+# ---------------------------------------------------------------------------
+
+
+class TestFrameCachingAcrossWindows:
+    """Frames shared between overlapping windows must not be rebuilt.
+
+    Without caching, each window creates new CapturedRadarFrame objects,
+    re-reading and re-decoding tile PNGs for every overlapping frame.
+    With 920 captures and window_size=8, the same tile gets decoded
+    ~8x per frame instead of once.
+    """
+
+    def test_frame_from_record_called_once_per_capture(self):
+        """_frame_from_record must be called exactly len(captures) times,
+        not len(captures) * windows_containing_that_capture times."""
+        captures = _make_records(10)  # 3 windows of 8
+        engine = ReplayEngine(ReplayConfig(window_size=8, qc_enabled=False))
+
+        with patch("scripts.backtest.replay.detect", return_value=_mock_detect_result()):
+            with patch(
+                "scripts.backtest.replay._frame_from_record",
+                wraps=__import__("scripts.backtest.replay", fromlist=["_frame_from_record"])._frame_from_record,
+            ) as mock_frame:
+                engine.replay(captures)
+
+        # Should be called once per capture (10), not once per window slot (3*8=24)
+        assert mock_frame.call_count == len(captures), (
+            f"_frame_from_record called {mock_frame.call_count} times for "
+            f"{len(captures)} captures - frames are being rebuilt per window "
+            f"instead of cached"
+        )

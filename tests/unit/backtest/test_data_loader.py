@@ -1,6 +1,7 @@
 """Unit tests for scripts.backtest.data_loader."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -285,3 +286,70 @@ class TestLoadObservationsNullPrecipMm:
         assert len(records) == 1
         assert records[0].rain_mm is None
         assert records[0].is_raining is False
+
+
+# ---------------------------------------------------------------------------
+# Corrupt file handling
+# ---------------------------------------------------------------------------
+
+
+class TestLoadCapturesCorruptMeta:
+    """Corrupt or malformed meta.json must be skipped with a WARNING."""
+
+    def test_corrupt_meta_json_skipped(self, tmp_path, caplog):
+        day_dir = tmp_path / "2026-04-21"
+        day_dir.mkdir()
+        meta_file = day_dir / "1200_meta.json"
+        meta_file.write_text("this is not json{{{")
+
+        with caplog.at_level(logging.WARNING, logger="scripts.backtest.data_loader"):
+            records = load_captures(tmp_path)
+
+        assert records == [], "Corrupt meta.json should be skipped, not crash"
+        assert any(r.levelno >= logging.WARNING for r in caplog.records), (
+            "Corrupt meta.json must log a WARNING"
+        )
+
+    def test_missing_fields_in_meta_json_skipped(self, tmp_path, caplog):
+        day_dir = tmp_path / "2026-04-21"
+        day_dir.mkdir()
+        meta_file = day_dir / "1200_meta.json"
+        meta_file.write_text(json.dumps({"incomplete": True}))
+
+        with caplog.at_level(logging.WARNING, logger="scripts.backtest.data_loader"):
+            records = load_captures(tmp_path)
+
+        assert records == [], "Meta with missing fields should be skipped"
+        assert any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+class TestLoadObservationsCorruptJsonl:
+    """Corrupt JSONL lines must be skipped with a WARNING."""
+
+    def test_malformed_jsonl_line_skipped(self, tmp_path, caplog):
+        obs_file = tmp_path / "2026-04-21.jsonl"
+        good_line = json.dumps({
+            "station_id": "94087",
+            "obs_utc": "2026-04-21T10:00:00Z",
+            "rain_mm": 0.0,
+            "quality": 3,
+        })
+        obs_file.write_text(good_line + "\n" + "not valid json\n")
+
+        with caplog.at_level(logging.WARNING, logger="scripts.backtest.data_loader"):
+            records = load_observations(tmp_path)
+
+        assert len(records) == 1, "Good line should be kept, bad line skipped"
+        assert any(r.levelno >= logging.WARNING for r in caplog.records), (
+            "Malformed JSONL line must log a WARNING"
+        )
+
+    def test_unreadable_obs_file_skipped(self, tmp_path, caplog):
+        obs_file = tmp_path / "2026-04-21.jsonl"
+        obs_file.write_bytes(b"\x80\x81\x82\x83")  # invalid UTF-8
+
+        with caplog.at_level(logging.WARNING, logger="scripts.backtest.data_loader"):
+            records = load_observations(tmp_path)
+
+        assert records == [], "Unreadable file should be skipped"
+        assert any(r.levelno >= logging.WARNING for r in caplog.records)

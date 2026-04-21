@@ -5,9 +5,12 @@ records for replay.  Also loads ground-truth observation JSONL files.
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+_LOGGER = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +96,11 @@ def load_captures(location_dir: Path) -> list[CaptureRecord]:
     seen_frame_ts: set[int] = set()
 
     for meta_path in sorted(location_dir.rglob("*_meta.json")):
-        record = _parse_capture(meta_path)
+        try:
+            record = _parse_capture(meta_path)
+        except (json.JSONDecodeError, KeyError, OSError, ValueError) as exc:
+            _LOGGER.warning("Skipping corrupt meta file %s: %s", meta_path, exc)
+            continue
         if record.frame_ts in seen_frame_ts:
             continue
         seen_frame_ts.add(record.frame_ts)
@@ -143,12 +150,22 @@ def load_observations(obs_dir: Path) -> list[ObservationRecord]:
     records: list[ObservationRecord] = []
 
     for jsonl_path in sorted(obs_dir.rglob("*.jsonl")):
-        for line in jsonl_path.read_text().splitlines():
+        try:
+            text = jsonl_path.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            _LOGGER.warning("Skipping unreadable obs file %s: %s", jsonl_path, exc)
+            continue
+        for line_num, line in enumerate(text.splitlines(), 1):
             line = line.strip()
             if not line:
                 continue
-            raw = json.loads(line)
-            records.append(_parse_observation_line(raw))
+            try:
+                raw = json.loads(line)
+                records.append(_parse_observation_line(raw))
+            except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                _LOGGER.warning(
+                    "Skipping malformed line %d in %s: %s", line_num, jsonl_path, exc
+                )
 
     records.sort(key=lambda r: r.obs_utc)
     return records
