@@ -53,7 +53,7 @@ class TestComputeConfidenceMap:
         """Weight keys that don't match any factor should log a warning."""
         grid = np.full((32, 32), 0.5, dtype=np.float32)
         config = QCConfig(weights={"texture": 1.0, "bogus_factor": 0.5})
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="custom_components.rain_incoming.radar.qc.scoring"):
             compute_confidence_map(grid, config)
         assert "bogus_factor" in caplog.text
 
