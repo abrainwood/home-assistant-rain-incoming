@@ -28,25 +28,31 @@ from .radar.composite import render_animated_composite
 # and return a broken-image icon.
 _RENDER_TIMEOUT_SECONDS = 55.0
 
-# Global lock: only one render runs at a time across all radius entities.
-# Multiple radii (64/128/256km) all fire when the coordinator updates. Without
-# this lock they compete simultaneously for tile connections, multiplying peak
-# load by the number of radii and causing HA-wide lockups when tiles are slow.
-_render_lock: asyncio.Lock | None = None
+# Render locks: one per coordinator (config entry), keyed by entry_id.
+# Multiple radii (64/128/256km) for the SAME location serialize behind one
+# lock to prevent tile fetch storms. Different locations render in parallel -
+# a global lock starved 256km entities when multiple locations were configured
+# (#144).
+_render_locks: dict[str, asyncio.Lock] = {}
 
 
-def _get_render_lock() -> asyncio.Lock:
-    """Lazily create the render lock (must be called inside a running event loop)."""
-    global _render_lock
-    if _render_lock is None:
-        _render_lock = asyncio.Lock()
-    return _render_lock
+def _get_render_lock(entry_id: str) -> asyncio.Lock:
+    """Get or create the render lock for a config entry."""
+    if entry_id not in _render_locks:
+        _render_locks[entry_id] = asyncio.Lock()
+    return _render_locks[entry_id]
 
 
-def reset_render_lock() -> None:
-    """Reset the render lock. Called when the last config entry is unloaded."""
-    global _render_lock
-    _render_lock = None
+def reset_render_lock(entry_id: str | None = None) -> None:
+    """Reset render lock(s). Called when a config entry is unloaded.
+
+    If entry_id is provided, removes just that entry's lock.
+    If None, removes all locks (backward compat for last-entry-unload).
+    """
+    if entry_id is not None:
+        _render_locks.pop(entry_id, None)
+    else:
+        _render_locks.clear()
 
 
 async def async_setup_entry(
@@ -123,6 +129,10 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
     def _schedule_render(self) -> None:
         """Start a background render task if one isn't already running."""
         if self._render_task is not None and not self._render_task.done():
+            _LOGGER.debug(
+                "Radar %dkm: render already in progress, skipping",
+                self._radius_km,
+            )
             return
         self._render_task = self.hass.async_create_task(
             self._render_to_cache(),
@@ -139,13 +149,21 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         """
         frame_path = self.coordinator.latest_frame_path
         if frame_path is None:
-            return  # nothing to render yet
+            _LOGGER.info(
+                "Radar %dkm: coordinator has no frame data yet, skipping render",
+                self._radius_km,
+            )
+            return
 
         if frame_path == self._cached_frame_path and self._cached_image is not None:
             return  # already cached this frame
 
         frame_paths = self.coordinator.frame_paths
         if not frame_paths:
+            _LOGGER.warning(
+                "Radar %dkm: coordinator has latest_frame_path but no frame_paths list",
+                self._radius_km,
+            )
             return
 
         data = self._entry.data
@@ -171,7 +189,7 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         )
 
         try:
-            async with _get_render_lock():
+            async with _get_render_lock(self._entry.entry_id):
                 result = await asyncio.wait_for(
                     render_animated_composite(
                         lat=lat,
@@ -256,11 +274,25 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         exceeding HA's ~60s image_proxy timeout.
         """
         if self._cached_image is None and self._render_task is not None and not self._render_task.done():
+            _LOGGER.debug(
+                "Radar %dkm: cache empty, awaiting in-flight render task",
+                self._radius_km,
+            )
             try:
                 await self._render_task
             except Exception:
-                pass  # _render_to_cache already logs the error
+                _LOGGER.warning(
+                    "Radar %dkm: render task failed while async_image was waiting",
+                    self._radius_km, exc_info=True,
+                )
         if self._cached_image is not None:
             return self._cached_image
-        _LOGGER.debug("Radar %dkm: returning placeholder (cache not yet populated)", self._radius_km)
+        _LOGGER.warning(
+            "Radar %dkm: serving placeholder - no cached image available "
+            "(coordinator.latest_frame_path=%s, render_task=%s)",
+            self._radius_km,
+            self.coordinator.latest_frame_path,
+            "running" if self._render_task and not self._render_task.done()
+            else "done" if self._render_task else "none",
+        )
         return self._make_placeholder()
