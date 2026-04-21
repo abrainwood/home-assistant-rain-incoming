@@ -461,6 +461,135 @@ def _build_cell_tracks(
     return completed
 
 
+@dataclass
+class _FrameAnalysis:
+    """Intermediate results from per-frame processing."""
+
+    grids: list[np.ndarray]
+    effective_grids: list[np.ndarray]
+    per_frame_labeled: list[np.ndarray]
+    per_frame_centroids: list[dict[int, tuple[float, float]]]
+
+
+def _prepare_frame_analysis(
+    frames: list[RadarFrame],
+    config: DetectorConfig,
+    confidence_maps: list[np.ndarray] | None,
+) -> _FrameAnalysis:
+    """Steps 1-3: extract grids, apply QC, threshold+filter, label each frame."""
+    bounds = config.analysis_bounds
+    W, H = config.grid_width, config.grid_height
+
+    grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
+    effective_grids = _apply_qc_confidence(grids, confidence_maps)
+
+    masks = [threshold_intensity(g, config.intensity_threshold) for g in effective_grids]
+    masks = [filter_by_area(m, config.min_cell_area_pixels) for m in masks]
+
+    per_frame_labeled: list[np.ndarray] = []
+    per_frame_centroids: list[dict[int, tuple[float, float]]] = []
+    for mask in masks:
+        labeled, _ = ndimage.label(mask)
+        per_frame_labeled.append(labeled)
+        per_frame_centroids.append(extract_cell_centroids(labeled))
+
+    return _FrameAnalysis(grids, effective_grids, per_frame_labeled, per_frame_centroids)
+
+
+def _no_tracks_result(
+    rain_at_location: tuple[int, float] | None,
+    frames: list[RadarFrame],
+    confidence: Confidence,
+    frame_count: int,
+    last_labeled: np.ndarray | None,
+) -> DetectionResult:
+    """Build the result for the case where no valid cell tracks were found."""
+    if rain_at_location is not None:
+        rain_frame_idx, rain_intensity = rain_at_location
+        return DetectionResult(
+            rain_incoming=True,
+            arrival_time=frames[rain_frame_idx].timestamp,
+            confidence=confidence,
+            frame_count=frame_count,
+            max_approaching_intensity=rain_intensity,
+            rain_at_location=True,
+            tracked_cells=[],
+            last_labeled=last_labeled,
+        )
+    return DetectionResult(
+        rain_incoming=False,
+        arrival_time=None,
+        confidence=confidence,
+        frame_count=frame_count,
+        max_approaching_intensity=0.0,
+    )
+
+
+def _process_tracks(
+    valid_tracks: list[list[_TrackEntry]],
+    frames: list[RadarFrame],
+    config: DetectorConfig,
+    loc_row: int,
+    loc_col: int,
+    proximity_px: float,
+    km_per_row: float,
+    km_per_col: float,
+    last_grid: np.ndarray,
+    last_labeled: np.ndarray,
+    last_conf_map: np.ndarray | None,
+) -> tuple[list[TrackedCell], datetime | None, float]:
+    """Evaluate each valid track and accumulate earliest arrival and max intensity."""
+    last_frame_time = frames[-1].timestamp
+    earliest_arrival: datetime | None = None
+    max_intensity: float = 0.0
+    tracked_cells: list[TrackedCell] = []
+
+    for track in valid_tracks:
+        _, _, final_centroid = track[-1]
+        cur_row, cur_col = final_centroid
+        dist_to_loc = math.sqrt((cur_row - loc_row) ** 2 + (cur_col - loc_col) ** 2)
+
+        if dist_to_loc <= proximity_px:
+            result = _evaluate_overhead_cell(
+                track, frames, config,
+                km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
+            )
+        else:
+            result = _evaluate_approaching_cell(
+                track, frames, config, loc_row, loc_col, proximity_px,
+                km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
+                last_frame_time,
+            )
+
+        if result is None:
+            continue
+
+        cell, arrival_dt, intensity_contribution = result
+        tracked_cells.append(cell)
+        if arrival_dt is not None:
+            if earliest_arrival is None or arrival_dt < earliest_arrival:
+                earliest_arrival = arrival_dt
+            max_intensity = max(max_intensity, intensity_contribution)
+
+    return tracked_cells, earliest_arrival, max_intensity
+
+
+def _merge_location_rain(
+    rain_at_location: tuple[int, float] | None,
+    frames: list[RadarFrame],
+    earliest_arrival: datetime | None,
+    max_intensity: float,
+) -> tuple[datetime | None, float]:
+    """Fold the direct rain-at-location check into the cell-tracking results."""
+    if rain_at_location is None:
+        return earliest_arrival, max_intensity
+    rain_frame_idx, rain_intensity = rain_at_location
+    rain_arrival = frames[rain_frame_idx].timestamp
+    if earliest_arrival is None or rain_arrival < earliest_arrival:
+        earliest_arrival = rain_arrival
+    return earliest_arrival, max(max_intensity, rain_intensity)
+
+
 def detect(
     frames: list[RadarFrame],
     location: tuple[float, float],
@@ -488,125 +617,53 @@ def detect(
 
     confidence = Confidence.DEGRADED if frame_count < 3 else Confidence.NORMAL
 
+    analysis = _prepare_frame_analysis(frames, config, confidence_maps)
     bounds = config.analysis_bounds
     W, H = config.grid_width, config.grid_height
 
-    # 1. Extract intensity grids from all frames
-    grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
-
-    # Apply QC confidence as a multiplier before thresholding
-    effective_grids = _apply_qc_confidence(grids, confidence_maps)
-
-    # 2. Threshold + spatial filter each frame independently
-    masks = [threshold_intensity(g, config.intensity_threshold) for g in effective_grids]
-    masks = [filter_by_area(m, config.min_cell_area_pixels) for m in masks]
-
-    # 3. Label each frame independently
-    per_frame_centroids: list[dict[int, tuple[float, float]]] = []
-    per_frame_labeled: list[np.ndarray] = []
-    for mask in masks:
-        labeled, _ = ndimage.label(mask)
-        per_frame_labeled.append(labeled)
-        per_frame_centroids.append(extract_cell_centroids(labeled))
-
-    # 3b. Direct rain-at-location check across recent frames.
-    # Check a neighborhood around the location pixel, not just the exact pixel.
-    # Rain 10km away is still "overhead" for practical purposes.
     loc_row, loc_col = _location_to_pixel(location[0], location[1], bounds, W, H)
     km_per_row, km_per_col = _pixel_size_km(bounds, W, H)
     proximity_px = int(config.proximity_radius_km / ((km_per_row + km_per_col) / 2))
+
     rain_at_location = _check_rain_at_location(
-        effective_grids, config.intensity_threshold, loc_row, loc_col,
+        analysis.effective_grids, config.intensity_threshold, loc_row, loc_col,
         proximity_px=proximity_px,
         confidence_maps=confidence_maps,
     )
 
-    # 4. Build cell tracks across frames
     max_match_dist = max(W, H) * 0.25  # allow up to 25% of grid size per frame
-    all_tracks = _build_cell_tracks(per_frame_centroids, max_match_dist)
+    all_tracks = _build_cell_tracks(analysis.per_frame_centroids, max_match_dist)
 
-    # 5. Keep only tracks that span >= min_temporal_frames AND end in the last frame
     last_frame_idx = frame_count - 1
     valid_tracks = [
         t for t in all_tracks
         if len(t) >= config.min_temporal_frames and t[-1][0] == last_frame_idx
     ]
 
+    last_labeled = analysis.per_frame_labeled[-1]
+
     if not valid_tracks:
-        if rain_at_location is not None:
-            rain_frame_idx, rain_intensity = rain_at_location
-            return DetectionResult(
-                rain_incoming=True,
-                arrival_time=frames[rain_frame_idx].timestamp,
-                confidence=confidence,
-                frame_count=frame_count,
-                max_approaching_intensity=rain_intensity,
-                rain_at_location=True,
-                tracked_cells=[],
-                last_labeled=per_frame_labeled[-1] if per_frame_labeled else None,
-            )
-        return DetectionResult(
-            rain_incoming=False,
-            arrival_time=None,
-            confidence=confidence,
-            frame_count=frame_count,
-            max_approaching_intensity=0.0,
+        return _no_tracks_result(
+            rain_at_location, frames, confidence, frame_count, last_labeled,
         )
 
-    # 6. For each valid track: compute velocity, check coherence, project forward
-    # loc_row, loc_col already computed above for the rain-at-location check
-    km_per_row, km_per_col = _pixel_size_km(bounds, W, H)
-    proximity_px = config.proximity_radius_km / ((km_per_row + km_per_col) / 2)
-    last_frame_time = frames[-1].timestamp
-
-    earliest_arrival: datetime | None = None
-    max_intensity: float = 0.0
-    last_grid = grids[-1]
-    last_labeled = per_frame_labeled[-1]
-    tracked_cells: list[TrackedCell] = []
-
-    # Pre-compute confidence map for the last frame (for per-cell confidence)
     last_conf_map = (
         confidence_maps[-1]
         if confidence_maps is not None and len(confidence_maps) == len(frames)
         else None
     )
+    proximity_px_f = config.proximity_radius_km / ((km_per_row + km_per_col) / 2)
 
-    for track in valid_tracks:
-        # Check current position first - overhead rain triggers immediately
-        _, _, final_centroid = track[-1]
-        cur_row, cur_col = final_centroid
-        dist_to_loc = math.sqrt((cur_row - loc_row) ** 2 + (cur_col - loc_col) ** 2)
+    tracked_cells, earliest_arrival, max_intensity = _process_tracks(
+        valid_tracks, frames, config,
+        loc_row, loc_col, proximity_px_f,
+        km_per_row, km_per_col,
+        analysis.grids[-1], last_labeled, last_conf_map,
+    )
 
-        if dist_to_loc <= proximity_px:
-            result = _evaluate_overhead_cell(
-                track, frames, config,
-                km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
-            )
-        else:
-            result = _evaluate_approaching_cell(
-                track, frames, config, loc_row, loc_col, proximity_px,
-                km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
-                last_frame_time,
-            )
-
-        if result is None:
-            continue
-
-        cell, arrival_dt, intensity_contribution = result
-        tracked_cells.append(cell)
-        if arrival_dt is not None:
-            if earliest_arrival is None or arrival_dt < earliest_arrival:
-                earliest_arrival = arrival_dt
-            max_intensity = max(max_intensity, intensity_contribution)
-
-    # Combine cell-tracking results with the direct rain-at-location check
-    if rain_at_location is not None:
-        rain_frame_idx, rain_intensity = rain_at_location
-        rain_arrival = frames[rain_frame_idx].timestamp
-        if earliest_arrival is None or rain_arrival < earliest_arrival:
-            earliest_arrival = rain_arrival
-        max_intensity = max(max_intensity, rain_intensity)
+    earliest_arrival, max_intensity = _merge_location_rain(
+        rain_at_location, frames, earliest_arrival, max_intensity,
+    )
 
     rain_incoming = earliest_arrival is not None
     return DetectionResult(

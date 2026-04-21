@@ -236,6 +236,49 @@ class RainIncomingConfigFlow(ConfigFlow, domain=DOMAIN):
             return None
 
 
+def _merge_options_into_data(existing_data: dict, user_input: dict) -> dict:
+    """Return a copy of existing_data with any keys present in user_input overwritten."""
+    _EDITABLE_OPTION_KEYS = (
+        CONF_LATITUDE,
+        CONF_LONGITUDE,
+        CONF_LOCATION_NAME,
+        CONF_LOOKAHEAD_MINUTES,
+        CONF_MAP_STYLE,
+    )
+    merged = dict(existing_data)
+    for key in _EDITABLE_OPTION_KEYS:
+        if key in user_input:
+            merged[key] = user_input[key]
+    return merged
+
+
+def _resolve_options_schema_defaults(
+    current_data: dict, user_input: dict | None
+) -> vol.Schema:
+    """Return schema keyword args for the options form.
+
+    On first render use persisted entry.data; on re-render after a validation
+    failure restore what the user typed so they don't have to retype everything.
+    """
+    if user_input is not None:
+        # Re-render after validation failure: restore what the user typed.
+        return _build_options_schema(
+            default_lat=user_input.get(CONF_LATITUDE, current_data.get(CONF_LATITUDE, 0.0)),
+            default_lon=user_input.get(CONF_LONGITUDE, current_data.get(CONF_LONGITUDE, 0.0)),
+            default_lookahead=user_input.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
+            default_location_name=user_input.get(CONF_LOCATION_NAME, ""),
+            default_map_style=user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
+        )
+    # First render: use persisted values from entry.data.
+    return _build_options_schema(
+        default_lat=current_data.get(CONF_LATITUDE, 0.0),
+        default_lon=current_data.get(CONF_LONGITUDE, 0.0),
+        default_lookahead=current_data.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES),
+        default_location_name=current_data.get(CONF_LOCATION_NAME, ""),
+        default_map_style=current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
+    )
+
+
 class RainIncomingOptionsFlow(OptionsFlow):
     """Options flow: change map_style, location_name, and lookahead post-install.
 
@@ -253,57 +296,24 @@ class RainIncomingOptionsFlow(OptionsFlow):
         if user_input is not None:
             errors = _validate_options_input(user_input)
             if not errors:
-                # Merge the new options into entry.data so the title reflects changes.
-                merged_data = dict(self._config_entry.data)
-                if CONF_LATITUDE in user_input:
-                    merged_data[CONF_LATITUDE] = user_input[CONF_LATITUDE]
-                if CONF_LONGITUDE in user_input:
-                    merged_data[CONF_LONGITUDE] = user_input[CONF_LONGITUDE]
-                if CONF_LOCATION_NAME in user_input:
-                    merged_data[CONF_LOCATION_NAME] = user_input[CONF_LOCATION_NAME]
-                if CONF_LOOKAHEAD_MINUTES in user_input:
-                    merged_data[CONF_LOOKAHEAD_MINUTES] = user_input[CONF_LOOKAHEAD_MINUTES]
-                if CONF_MAP_STYLE in user_input:
-                    merged_data[CONF_MAP_STYLE] = user_input[CONF_MAP_STYLE]
+                return self._apply_options(user_input)
 
-                self.hass.config_entries.async_update_entry(
-                    self._config_entry,
-                    data=merged_data,
-                    title=_build_title({**merged_data}),
-                )
-                # Trigger reload so the coordinator picks up the new style immediately.
-                self.hass.config_entries.async_schedule_reload(self._config_entry.entry_id)
-                # Return empty options - all values are stored in entry.data.
-                # Avoids dual storage where the same values live in both
-                # data and options, creating a divergence risk.
-                return self.async_create_entry(data={})
-
-        # Pre-populate from entry.data (canonical source of truth).
-        # When re-rendering after a validation error, use what the user typed so
-        # they don't have to retype values they already entered correctly.
-        current_data = self._config_entry.data
-        if user_input is not None:
-            # Re-render after validation failure: restore what the user typed.
-            default_lat = user_input.get(CONF_LATITUDE, current_data.get(CONF_LATITUDE, 0.0))
-            default_lon = user_input.get(CONF_LONGITUDE, current_data.get(CONF_LONGITUDE, 0.0))
-            default_lookahead = user_input.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES)
-            default_location_name = user_input.get(CONF_LOCATION_NAME, "")
-            default_map_style = user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE)
-        else:
-            # First render: use persisted values from entry.data.
-            default_lat = current_data.get(CONF_LATITUDE, 0.0)
-            default_lon = current_data.get(CONF_LONGITUDE, 0.0)
-            default_lookahead = current_data.get(CONF_LOOKAHEAD_MINUTES, DEFAULT_LOOKAHEAD_MINUTES)
-            default_location_name = current_data.get(CONF_LOCATION_NAME, "")
-            default_map_style = current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE,
-            )
-        schema = _build_options_schema(
-            default_lat=default_lat,
-            default_lon=default_lon,
-            default_lookahead=default_lookahead,
-            default_location_name=default_location_name,
-            default_map_style=default_map_style,
-        )
+        schema = _resolve_options_schema_defaults(self._config_entry.data, user_input)
         return self.async_show_form(
             step_id="init", data_schema=schema, errors=errors
         )
+
+    def _apply_options(self, user_input: dict) -> ConfigFlowResult:
+        """Persist validated options into entry.data, update title, and schedule reload."""
+        merged_data = _merge_options_into_data(self._config_entry.data, user_input)
+        self.hass.config_entries.async_update_entry(
+            self._config_entry,
+            data=merged_data,
+            title=_build_title(merged_data),
+        )
+        # Trigger reload so the coordinator picks up the new style immediately.
+        self.hass.config_entries.async_schedule_reload(self._config_entry.entry_id)
+        # Return empty options - all values are stored in entry.data.
+        # Avoids dual storage where the same values live in both
+        # data and options, creating a divergence risk.
+        return self.async_create_entry(data={})

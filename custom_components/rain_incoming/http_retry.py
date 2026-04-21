@@ -108,6 +108,67 @@ def _is_retryable_status(status: int) -> bool:
     return status == 429 or status >= 500
 
 
+async def _apply_rate_limit_pacing(budget: RateLimitBudget | None) -> None:
+    """Sleep if the rate limit budget says we should slow down."""
+    if budget is None:
+        return
+    delay = budget.suggested_delay()
+    if delay > 0:
+        _LOGGER.info(
+            "Rate limit pacing: sleeping %.2fs before request (utilization %.0f%%)",
+            delay, budget.utilization * 100,
+        )
+        await asyncio.sleep(delay)
+
+
+async def _handle_timeout(url: str, attempt: int, max_retries: int, base_delay: float) -> bool:
+    """Log and sleep after a timeout.
+
+    Returns True if the caller should retry, False if retries are exhausted
+    (caller must re-raise the original exception).
+    """
+    if attempt < max_retries:
+        delay = base_delay * (2 ** attempt)
+        _LOGGER.warning(
+            "Timeout on %s, retrying in %.1fs (attempt %d/%d)",
+            url, delay, attempt + 1, max_retries + 1,
+        )
+        await asyncio.sleep(delay)
+        return True
+    _LOGGER.warning("All %d retries exhausted (timeout) for %s", max_retries, url)
+    return False
+
+
+async def _handle_retryable_status(
+    resp: aiohttp.ClientResponse,
+    url: str,
+    attempt: int,
+    max_retries: int,
+    base_delay: float,
+) -> bool:
+    """Handle a retryable HTTP status (429/5xx).
+
+    Returns True if the caller should continue to the next attempt,
+    or raises / calls raise_for_status() if retries are exhausted.
+    """
+    if attempt < max_retries:
+        delay = _get_retry_delay(resp, attempt, base_delay)
+        _LOGGER.warning(
+            "%s (%d) on %s, retrying in %.1fs (attempt %d/%d)",
+            "Rate limited" if resp.status == 429 else "Server error",
+            resp.status, url, delay, attempt + 1, max_retries + 1,
+        )
+        resp.release()
+        await asyncio.sleep(delay)
+        return True
+    _LOGGER.warning(
+        "All %d retries exhausted (%d) for %s",
+        max_retries, resp.status, url,
+    )
+    resp.raise_for_status()
+    return False  # raise_for_status always raises; satisfies type checker
+
+
 async def fetch_with_retry(
     session: aiohttp.ClientSession,
     url: str,
@@ -128,48 +189,22 @@ async def fetch_with_retry(
     """
     request_timeout = aiohttp.ClientTimeout(total=timeout_total)
     for attempt in range(max_retries + 1):
-        if budget is not None:
-            delay = budget.suggested_delay()
-            if delay > 0:
-                _LOGGER.info(
-                    "Rate limit pacing: sleeping %.2fs before request (utilization %.0f%%)",
-                    delay, budget.utilization * 100,
-                )
-                await asyncio.sleep(delay)
+        await _apply_rate_limit_pacing(budget)
 
         try:
             resp = await session.get(url, timeout=request_timeout, headers=headers)
         except (asyncio.TimeoutError, aiohttp.ServerTimeoutError):
-            if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
-                _LOGGER.warning(
-                    "Timeout on %s, retrying in %.1fs (attempt %d/%d)",
-                    url, delay, attempt + 1, max_retries + 1,
-                )
-                await asyncio.sleep(delay)
+            if await _handle_timeout(url, attempt, max_retries, base_delay):
                 continue
-            _LOGGER.warning("All %d retries exhausted (timeout) for %s", max_retries, url)
             raise
 
         if budget is not None:
             budget.update_from_headers(resp.headers)
 
         if _is_retryable_status(resp.status):
-            if attempt < max_retries:
-                delay = _get_retry_delay(resp, attempt, base_delay)
-                _LOGGER.warning(
-                    "%s (%d) on %s, retrying in %.1fs (attempt %d/%d)",
-                    "Rate limited" if resp.status == 429 else "Server error",
-                    resp.status, url, delay, attempt + 1, max_retries + 1,
-                )
-                resp.release()
-                await asyncio.sleep(delay)
+            should_retry = await _handle_retryable_status(resp, url, attempt, max_retries, base_delay)
+            if should_retry:
                 continue
-            _LOGGER.warning(
-                "All %d retries exhausted (%d) for %s",
-                max_retries, resp.status, url,
-            )
-            resp.raise_for_status()
 
         # Non-retryable status (success or 4xx other than 429)
         resp.raise_for_status()
