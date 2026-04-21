@@ -213,111 +213,12 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             raise UpdateFailed(f"RainViewer fetch failed: {err}") from err
 
         config = self._build_config()
-        bounds = config.analysis_bounds
-        W, H = config.grid_width, config.grid_height
 
-        # Load clutter map on first update (off the event loop)
-        if not self._clutter_loaded:
-            self._clutter_map = await self.hass.async_add_executor_job(
-                load_clutter_map, self._clutter_path
-            )
-            self._clutter_loaded = True
-
-        # Fetch tile grids BEFORE running detection - get_intensity_grid returns
-        # zeros until the tiles have been fetched and stitched.
-
-        # Incremental fetch: reuse cached frames for paths we've already fetched,
-        # only hit the network for genuinely new frames.
-        reused = []
-        to_fetch = []
-        for frame in frames:
-            cached = self._frame_cache.get(frame.path)
-            if cached is not None:
-                reused.append(cached)
-            else:
-                to_fetch.append(frame)
-
-        _LOGGER.debug(
-            "Frames: %d cached, %d new", len(reused), len(to_fetch)
-        )
-
-        if to_fetch:
-            await self._provider.prefetch_frames(
-                to_fetch, bounds, W, H, session,
-                budget=self._rate_limit_budget,
-            )
-
-        # Build the resolved frame list in manifest order, substituting cached
-        # objects for known paths so their pre-populated _cached_grid is used.
-        frames = [
-            self._frame_cache.get(f.path, f)
-            for f in frames
-        ]
-
-        # Only cache frames that have successfully fetched grids.
-        # If a fetch failed (rate limited, timeout), the frame will have no
-        # cached grid - don't cache it so we retry on the next poll.
-        self._frame_cache = {
-            f.path: f
-            for f in frames
-            if getattr(f, "_cached_grid", None) is not None
-        }
-
-        # Compute per-frame QC confidence maps BEFORE detection so they can
-        # be used to gate intensity thresholding in the detector.
-        grids = [f.get_intensity_grid(bounds, W, H) for f in frames]
-
-        # If NO frames were successfully fetched, raise so sensors show
-        # unavailable instead of a false "no rain". We check _cached_grid
-        # (set by _fetch_stitched_grid on success) rather than grid content,
-        # because all-zero grids are valid - they mean "no precipitation".
-        if frames and all(getattr(f, "_cached_grid", None) is None for f in frames):
-            raise UpdateFailed(
-                "All radar tile fetches failed - no frames have data"
-            )
-        qc_config = QCConfig()
-
-        # Update clutter map with the latest frame
-        latest_grid = grids[-1] if grids else None
-        if latest_grid is not None:
-            if self._clutter_map is None:
-                self._clutter_map = ClutterMap(
-                    echo_count=np.zeros_like(latest_grid, dtype=np.float32),
-                    update_count=0.0,
-                )
-            update_clutter_map(self._clutter_map, latest_grid)
-            self._clutter_cycle_count += 1
-
-            # Save periodically
-            if self._clutter_cycle_count % CLUTTER_SAVE_INTERVAL == 0:
-                try:
-                    await self.hass.async_add_executor_job(
-                        save_clutter_map, self._clutter_map, self._clutter_path
-                    )
-                except Exception as e:
-                    _LOGGER.warning(
-                        "Failed to save clutter map: %s: %s",
-                        type(e).__name__, e,
-                    )
-
-        # Get clutter frequency and maturity for QC scoring
-        clutter_freq = None
-        clutter_maturity = 0.0
-        if self._clutter_map is not None:
-            clutter_freq = get_clutter_frequency(self._clutter_map)
-            clutter_maturity = min(1.0, self._clutter_map.update_count / CLUTTER_MATURITY_CYCLES)
-
-        self.confidence_maps = []
-        for i, grid in enumerate(grids):
-            grids_up_to_i = grids[: i + 1]
-            cmap = compute_confidence_map(
-                grid,
-                config=qc_config,
-                grids=grids_up_to_i,
-                clutter_freq=clutter_freq,
-                clutter_maturity=clutter_maturity,
-            )
-            self.confidence_maps.append(cmap.confidence)
+        await self._ensure_clutter_map_loaded()
+        frames = await self._resolve_frame_cache(frames, config, session)
+        grids = self._extract_grids(frames, config)
+        await self._update_clutter_map(grids)
+        self.confidence_maps = self._compute_confidence_maps(grids)
 
         result = detect(
             frames=frames,
@@ -326,29 +227,140 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             confidence_maps=self.confidence_maps,
         )
 
-        # Post-detection pass: refine confidence with speed/motion factors
-        # (only for the last frame, which is what gets rendered)
-        if (
-            result.tracked_cells
-            and result.last_labeled is not None
-            and self.confidence_maps
-        ):
-            refined = refine_confidence_post_detection(
-                pre_confidence=self.confidence_maps[-1],
-                cells=result.tracked_cells,
-                labeled=result.last_labeled,
-                config=qc_config,
-            )
-            self.confidence_maps[-1] = refined
+        self._refine_post_detection_confidence(result)
+        self._store_result_state(frames, result)
+        self._schedule_next_poll()
 
-        # Store frame paths, timestamps, and tracked cells for the radar image entity
+        return result
+
+    async def _ensure_clutter_map_loaded(self) -> None:
+        """Load the clutter map from disk on first update (off the event loop)."""
+        if not self._clutter_loaded:
+            self._clutter_map = await self.hass.async_add_executor_job(
+                load_clutter_map, self._clutter_path
+            )
+            self._clutter_loaded = True
+
+    async def _resolve_frame_cache(self, frames, config, session) -> list:
+        """Resolve frames via cache, fetch only new ones, and return the merged list.
+
+        Incremental fetch: reuse cached frames for paths already fetched,
+        only hit the network for genuinely new frames. Frames whose tile fetch
+        failed (no _cached_grid) are evicted so they are retried next poll.
+        """
+        bounds = config.analysis_bounds
+        W, H = config.grid_width, config.grid_height
+
+        reused = []
+        to_fetch = []
+        for frame in frames:
+            if self._frame_cache.get(frame.path) is not None:
+                reused.append(self._frame_cache[frame.path])
+            else:
+                to_fetch.append(frame)
+
+        _LOGGER.debug("Frames: %d cached, %d new", len(reused), len(to_fetch))
+
+        if to_fetch:
+            await self._provider.prefetch_frames(
+                to_fetch, bounds, W, H, session,
+                budget=self._rate_limit_budget,
+            )
+
+        # Substitute cached objects in manifest order so pre-populated grids are used.
+        frames = [self._frame_cache.get(f.path, f) for f in frames]
+
+        # Only keep frames that have successfully fetched grids.
+        self._frame_cache = {
+            f.path: f
+            for f in frames
+            if getattr(f, "_cached_grid", None) is not None
+        }
+
+        return frames
+
+    def _extract_grids(self, frames, config) -> list:
+        """Extract intensity grids from frames, raising if all fetches failed.
+
+        All-zero grids are valid (no precipitation) so we check _cached_grid
+        rather than grid content to detect actual fetch failures.
+        """
+        bounds = config.analysis_bounds
+        W, H = config.grid_width, config.grid_height
+
+        if frames and all(getattr(f, "_cached_grid", None) is None for f in frames):
+            raise UpdateFailed("All radar tile fetches failed - no frames have data")
+
+        return [f.get_intensity_grid(bounds, W, H) for f in frames]
+
+    async def _update_clutter_map(self, grids: list) -> None:
+        """Update the clutter map with the latest frame and save periodically."""
+        latest_grid = grids[-1] if grids else None
+        if latest_grid is None:
+            return
+
+        if self._clutter_map is None:
+            self._clutter_map = ClutterMap(
+                echo_count=np.zeros_like(latest_grid, dtype=np.float32),
+                update_count=0.0,
+            )
+        update_clutter_map(self._clutter_map, latest_grid)
+        self._clutter_cycle_count += 1
+
+        if self._clutter_cycle_count % CLUTTER_SAVE_INTERVAL == 0:
+            try:
+                await self.hass.async_add_executor_job(
+                    save_clutter_map, self._clutter_map, self._clutter_path
+                )
+            except Exception as e:
+                _LOGGER.warning(
+                    "Failed to save clutter map: %s: %s",
+                    type(e).__name__, e,
+                )
+
+    def _compute_confidence_maps(self, grids: list) -> list:
+        """Compute per-frame QC confidence maps for use in detection."""
+        clutter_freq = None
+        clutter_maturity = 0.0
+        if self._clutter_map is not None:
+            clutter_freq = get_clutter_frequency(self._clutter_map)
+            clutter_maturity = min(1.0, self._clutter_map.update_count / CLUTTER_MATURITY_CYCLES)
+
+        qc_config = QCConfig()
+        confidence_maps = []
+        for i, grid in enumerate(grids):
+            cmap = compute_confidence_map(
+                grid,
+                config=qc_config,
+                grids=grids[: i + 1],
+                clutter_freq=clutter_freq,
+                clutter_maturity=clutter_maturity,
+            )
+            confidence_maps.append(cmap.confidence)
+        return confidence_maps
+
+    def _refine_post_detection_confidence(self, result: DetectionResult) -> None:
+        """Refine the last frame's confidence map using speed/motion factors from detection."""
+        if not (result.tracked_cells and result.last_labeled is not None and self.confidence_maps):
+            return
+
+        qc_config = QCConfig()
+        refined = refine_confidence_post_detection(
+            pre_confidence=self.confidence_maps[-1],
+            cells=result.tracked_cells,
+            labeled=result.last_labeled,
+            config=qc_config,
+        )
+        self.confidence_maps[-1] = refined
+
+    def _store_result_state(self, frames: list, result: DetectionResult) -> None:
+        """Persist frame metadata, tracked cells, and rain proximity time."""
         self.frame_paths = [f.path for f in frames if hasattr(f, "path")]
         self.frame_timestamps = [f.timestamp for f in frames]
         self.tracked_cells = result.tracked_cells
         if self.frame_paths:
             self.latest_frame_path = self.frame_paths[-1]
 
-        # Update last_rain_nearby_time when rain is currently at the location
         if (
             result.rain_incoming
             and result.arrival_time is not None
@@ -360,13 +372,16 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         self._consecutive_failures = 0
         self.last_update_success_time = datetime.now(timezone.utc)
 
-        # Schedule the next poll at the next aligned time
+    def _schedule_next_poll(self) -> None:
+        """Set update_interval to fire at the next aligned poll time."""
         now = datetime.now(timezone.utc)
         next_poll = next_aligned_poll_time(now)
         self.update_interval = max(next_poll - now, timedelta(seconds=10))
-        _LOGGER.debug("Next poll at %s (in %ds)", next_poll.strftime("%H:%M"), self.update_interval.total_seconds())
-
-        return result
+        _LOGGER.debug(
+            "Next poll at %s (in %ds)",
+            next_poll.strftime("%H:%M"),
+            self.update_interval.total_seconds(),
+        )
 
     async def _fetch_with_backoff(self, lat: float, lon: float, session=None):
         backoff = BACKOFF_BASE_SECONDS

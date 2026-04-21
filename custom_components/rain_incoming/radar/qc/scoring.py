@@ -14,6 +14,62 @@ from .types import ConfidenceMap, QCConfig
 _LOGGER = logging.getLogger(__name__)
 
 
+def _apply_clutter_maturity_gating(
+    weights: dict[str, float],
+    factor_scores: dict[str, np.ndarray],
+    clutter_maturity: float,
+) -> dict[str, float]:
+    """Scale down the clutter weight by maturity and redistribute the surplus to other active factors."""
+    if "clutter" not in weights or clutter_maturity >= 1.0:
+        return weights
+
+    effective = dict(weights)
+    original_clutter_w = effective["clutter"]
+    effective_clutter_w = original_clutter_w * clutter_maturity
+    redistributed = original_clutter_w - effective_clutter_w
+    effective["clutter"] = effective_clutter_w
+
+    other_total = sum(w for k, w in effective.items() if k != "clutter" and k in factor_scores)
+    if other_total > 0:
+        for k in effective:
+            if k != "clutter" and k in factor_scores:
+                effective[k] += redistributed * (effective[k] / other_total)
+
+    return effective
+
+
+def _weighted_combine(
+    factor_scores: dict[str, np.ndarray],
+    weights: dict[str, float],
+    shape_like: np.ndarray,
+) -> np.ndarray:
+    """Combine factor scores into a single confidence array using the given weights."""
+    unmatched = set(weights.keys()) - set(factor_scores.keys())
+    if unmatched:
+        _LOGGER.warning("QC weight keys have no matching factor score: %s", unmatched)
+
+    confidence = np.zeros_like(shape_like, dtype=np.float32)
+    total_weight = 0.0
+    for name, weight in weights.items():
+        if name in factor_scores:
+            confidence += weight * factor_scores[name]
+            total_weight += weight
+
+    if total_weight > 0:
+        confidence /= total_weight
+
+    return confidence
+
+
+def _apply_cold_start_penalty(confidence: np.ndarray, clutter_maturity: float) -> np.ndarray:
+    """Reduce confidence slightly when the clutter map is still immature (< 0.5)."""
+    if clutter_maturity >= 0.5:
+        return confidence
+    # At maturity=0: penalty = 0.92 (8% reduction); at maturity=0.5: penalty = 1.0 (no reduction)
+    penalty = 1.0 - (0.08 * (1.0 - clutter_maturity * 2))
+    return confidence * penalty
+
+
 def compute_confidence_map(
     grid: np.ndarray,
     config: QCConfig | None = None,
@@ -52,46 +108,9 @@ def compute_confidence_map(
         clutter_score = score_clutter(grid, clutter_freq)
         factor_scores["clutter"] = clutter_score
 
-    # Apply maturity gating to clutter weight
-    effective_weights = dict(config.weights)
-    if "clutter" in effective_weights and clutter_maturity < 1.0:
-        original_clutter_w = effective_weights["clutter"]
-        effective_clutter_w = original_clutter_w * clutter_maturity
-        redistributed = original_clutter_w - effective_clutter_w
-        effective_weights["clutter"] = effective_clutter_w
-
-        # Redistribute to other active factors proportionally
-        other_total = sum(
-            w for k, w in effective_weights.items()
-            if k != "clutter" and k in factor_scores
-        )
-        if other_total > 0:
-            for k in effective_weights:
-                if k != "clutter" and k in factor_scores:
-                    effective_weights[k] += redistributed * (effective_weights[k] / other_total)
-
-    # Weighted combination of all available factors
-    unmatched = set(effective_weights.keys()) - set(factor_scores.keys())
-    if unmatched:
-        _LOGGER.warning("QC weight keys have no matching factor score: %s", unmatched)
-
-    confidence = np.zeros_like(texture, dtype=np.float32)
-    total_weight = 0.0
-    for name, weight in effective_weights.items():
-        if name in factor_scores:
-            confidence += weight * factor_scores[name]
-            total_weight += weight
-
-    if total_weight > 0:
-        confidence /= total_weight
-
-    # Cold-start: when clutter map is immature, be more conservative.
-    # Raise the effective threshold by reducing confidence slightly.
-    if clutter_maturity < 0.5:
-        cold_start_penalty = 1.0 - (0.08 * (1.0 - clutter_maturity * 2))
-        # At maturity=0: penalty = 0.92 (8% reduction)
-        # At maturity=0.5: penalty = 1.0 (no reduction)
-        confidence *= cold_start_penalty
+    effective_weights = _apply_clutter_maturity_gating(dict(config.weights), factor_scores, clutter_maturity)
+    confidence = _weighted_combine(factor_scores, effective_weights, texture)
+    confidence = _apply_cold_start_penalty(confidence, clutter_maturity)
 
     return ConfidenceMap(confidence=confidence, factor_scores=factor_scores)
 
