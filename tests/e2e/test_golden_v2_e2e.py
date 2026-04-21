@@ -19,6 +19,12 @@ rain was directly overhead at capture time - it does NOT mean the
 analysis area is dry. The detector correctly reports rain_incoming
 for all golden data with cold QC.
 
+Inverse validation (proving tests CAN fail with wrong input) lives
+in test_sensors_e2e.py using synthetic scenarios - the only data we
+have where the analysis area is genuinely dry (transparent tiles).
+Golden-data-layer inverse validation requires genuinely dry captures,
+tracked in #139.
+
 Data sources:
 - Canberra: 13 frames, real precip in all frames (8-13% of analysis area)
 - Darwin: 13 frames, real precip in all frames (1-2% of analysis area)
@@ -27,12 +33,8 @@ Data sources:
 from __future__ import annotations
 
 import os
-import time
 
 from tests.e2e.image_helpers import gif_has_precipitation_pixels, images_differ_significantly
-
-# Timeout for polling until a rendered image changes after a scenario switch.
-_IMAGE_POLL_TIMEOUT = 90
 
 
 def _save_gif(data: bytes, path: str) -> None:
@@ -40,17 +42,6 @@ def _save_gif(data: bytes, path: str) -> None:
     if os.environ.get("RAIN_TEST_DEBUG_DUMP"):
         with open(path, "wb") as f:
             f.write(data)
-
-
-def _poll_until_image_changes(ha_client, image_id, previous_gif, timeout=_IMAGE_POLL_TIMEOUT):
-    """Poll until image bytes differ from previous_gif. Returns new bytes or None."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        candidate = ha_client.get_image(image_id)
-        if candidate and candidate != previous_gif:
-            return candidate
-        time.sleep(2)
-    return None
 
 
 # --- Canberra ---
@@ -75,28 +66,22 @@ class TestCanberraGoldenV2:
         sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
         state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        image_id = "image.rain_incoming_canberra_v2_radar_128km"
-        rain_gif = ha_client.get_image(image_id)
-        if rain_gif:
-            _save_gif(rain_gif, "/tmp/golden_v2_canberra_rain.gif")
-
         assert state["state"] == "on", (
             f"Canberra frames 5-10 (rain_incoming) but sensor says '{state['state']}'. "
             f"Attributes: {state.get('attributes', {})}"
         )
 
+        rain_gif = ha_client.get_image("image.rain_incoming_canberra_v2_radar_128km")
+        if rain_gif:
+            _save_gif(rain_gif, "/tmp/golden_v2_canberra_rain.gif")
+
     def test_rain_visible_in_image(self, ha_client):
         """The radar image must show visible precipitation pixels."""
-        image_id = "image.rain_incoming_canberra_v2_radar_128km"
+        ha_client.set_mock_scenario("golden_v2:Canberra:5-10")
         sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
+        ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        ha_client.update_entity(sensor_id)
-        ha_client.poll_entity_state(
-            sensor_id, timeout=30,
-            condition=lambda s: s.get("state") not in (None, "unavailable"),
-        )
-
-        rain_gif = ha_client.get_image(image_id)
+        rain_gif = ha_client.get_image("image.rain_incoming_canberra_v2_radar_128km")
         assert rain_gif and len(rain_gif) > 1000, (
             f"Rain GIF is missing or too small ({len(rain_gif) if rain_gif else 0} bytes)"
         )
@@ -108,39 +93,23 @@ class TestCanberraGoldenV2:
             f"(fraction={fraction:.4f}). Rain is not visible in the rendered image."
         )
 
-    def test_inverse_rain_data_must_not_be_dry(self, ha_client):
-        """Rain golden data must NOT produce state='off'.
-
-        Proves the rain detection test isn't a tautology - if the
-        pipeline were broken and always returned 'off', this test
-        would catch it.
-        """
-        ha_client.set_mock_scenario("golden_v2:Canberra:5-10")
-        sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
-        ha_client.update_entity(sensor_id)
-        state = ha_client.poll_entity_state(
-            sensor_id, timeout=30,
-            condition=lambda s: s.get("state") == "on",
-        )
-        assert state["state"] == "on", (
-            f"Rain golden data (frames 5-10) but sensor is '{state['state']}' - "
-            f"rain detection is broken and the positive test wouldn't catch it"
-        )
-
     def test_image_render_is_deterministic(self, ha_client):
-        """Two fetches of the same image must be byte-identical.
+        """Two fetches of the same scenario must produce byte-identical images.
 
         Proves the image comparison method is reliable - if rendering
         were non-deterministic, differential image tests would be
         meaningless.
         """
-        image_id = "image.rain_incoming_canberra_v2_radar_128km"
+        ha_client.set_mock_scenario("golden_v2:Canberra:5-10")
+        sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
+        ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
+        image_id = "image.rain_incoming_canberra_v2_radar_128km"
         gif_1 = ha_client.get_image(image_id)
-        assert gif_1 and len(gif_1) > 100, "GIF 1 missing"
+        assert gif_1 and len(gif_1) > 1000, "GIF 1 missing or too small"
 
         gif_2 = ha_client.get_image(image_id)
-        assert gif_2 and len(gif_2) > 100, "GIF 2 missing"
+        assert gif_2 and len(gif_2) > 1000, "GIF 2 missing or too small"
 
         differs, fraction = images_differ_significantly(gif_1, gif_2, threshold=0.01)
         assert not differs, (
@@ -169,28 +138,22 @@ class TestDarwinGoldenV2:
         sensor_id = "binary_sensor.rain_incoming_darwin_v2_imminent"
         state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        image_id = "image.rain_incoming_darwin_v2_radar_128km"
-        rain_gif = ha_client.get_image(image_id)
-        if rain_gif:
-            _save_gif(rain_gif, "/tmp/golden_v2_darwin_rain.gif")
-
         assert state["state"] == "on", (
             f"Darwin frames 5-12 (rain_overhead) but sensor says '{state['state']}'. "
             f"Attributes: {state.get('attributes', {})}"
         )
 
+        rain_gif = ha_client.get_image("image.rain_incoming_darwin_v2_radar_128km")
+        if rain_gif:
+            _save_gif(rain_gif, "/tmp/golden_v2_darwin_rain.gif")
+
     def test_rain_visible_in_image(self, ha_client):
         """Darwin radar image must show visible precipitation pixels."""
-        image_id = "image.rain_incoming_darwin_v2_radar_128km"
+        ha_client.set_mock_scenario("golden_v2:Darwin:5-12")
         sensor_id = "binary_sensor.rain_incoming_darwin_v2_imminent"
+        ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        ha_client.update_entity(sensor_id)
-        ha_client.poll_entity_state(
-            sensor_id, timeout=30,
-            condition=lambda s: s.get("state") not in (None, "unavailable"),
-        )
-
-        rain_gif = ha_client.get_image(image_id)
+        rain_gif = ha_client.get_image("image.rain_incoming_darwin_v2_radar_128km")
         assert rain_gif and len(rain_gif) > 1000, (
             f"Rain GIF is missing or too small ({len(rain_gif) if rain_gif else 0} bytes)"
         )
@@ -235,29 +198,23 @@ class TestMelbourneGoldenV2:
         sensor_id = "binary_sensor.rain_incoming_melbourne_v2_imminent"
         state = ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        image_id = "image.rain_incoming_melbourne_v2_radar_128km"
-        rain_gif = ha_client.get_image(image_id)
-        if rain_gif:
-            _save_gif(rain_gif, "/tmp/golden_v2_melbourne_rain.gif")
-
         assert state["state"] == "on", (
             f"Melbourne frames 1-12 have 10-13% precip in analysis area "
             f"but sensor says '{state['state']}'. "
             f"Attributes: {state.get('attributes', {})}"
         )
 
+        rain_gif = ha_client.get_image("image.rain_incoming_melbourne_v2_radar_128km")
+        if rain_gif:
+            _save_gif(rain_gif, "/tmp/golden_v2_melbourne_rain.gif")
+
     def test_rain_visible_in_image(self, ha_client):
         """Melbourne radar image must show visible precipitation pixels."""
-        image_id = "image.rain_incoming_melbourne_v2_radar_128km"
+        ha_client.set_mock_scenario("golden_v2:Melbourne:1-12")
         sensor_id = "binary_sensor.rain_incoming_melbourne_v2_imminent"
+        ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        ha_client.update_entity(sensor_id)
-        ha_client.poll_entity_state(
-            sensor_id, timeout=30,
-            condition=lambda s: s.get("state") not in (None, "unavailable"),
-        )
-
-        rain_gif = ha_client.get_image(image_id)
+        rain_gif = ha_client.get_image("image.rain_incoming_melbourne_v2_radar_128km")
         assert rain_gif and len(rain_gif) > 1000, (
             f"Rain GIF is missing or too small ({len(rain_gif) if rain_gif else 0} bytes)"
         )
