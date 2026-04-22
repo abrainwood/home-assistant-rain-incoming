@@ -398,3 +398,80 @@ class TestVerifyWithNoPredictionsPrintsZeros:
         captured = capsys.readouterr()
         assert "POD" in captured.out
         assert "no verified arrival times" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Test: --dump-errors prints misses and false alarms
+# ---------------------------------------------------------------------------
+
+
+class TestDumpErrors:
+    def test_dump_errors_prints_misses_and_false_alarms(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--dump-errors must list misses and false alarms with timestamps."""
+        from scripts.backtest.cli import main
+        from scripts.backtest.metrics import (
+            ContingencyTable, ScoreCard, VerificationRecord,
+        )
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "test_loc")
+
+        records = [
+            VerificationRecord(window_end_ts=1000, predicted_rain=True, actual_rain=True),   # hit
+            VerificationRecord(window_end_ts=2000, predicted_rain=False, actual_rain=True),  # miss
+            VerificationRecord(window_end_ts=3000, predicted_rain=True, actual_rain=False),  # FA
+            VerificationRecord(window_end_ts=4000, predicted_rain=False, actual_rain=False), # CN
+        ]
+        scorecard = ScoreCard(
+            location="test_loc",
+            contingency=ContingencyTable(hits=1, misses=1, false_alarms=1, correct_negatives=1),
+            total_windows=4,
+            skipped_gaps=0,
+            lead_time_errors=[],
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.FutureRadarVerifier") as MockVerifier, \
+             patch("scripts.backtest.cli.compute_scorecard", return_value=scorecard):
+            instance = MockEngine.return_value
+            instance.replay.return_value = [MagicMock()]
+            verifier_instance = MockVerifier.return_value
+            verifier_instance.verify.return_value = records
+
+            main(["--data-dir", str(data_dir), "--verify", "--dump-errors"])
+
+        captured = capsys.readouterr()
+        # Should contain scorecard
+        assert "POD" in captured.out
+        # Should contain misses section with timestamp
+        assert "MISSES" in captured.out
+        assert "2000" in captured.out
+        # Should contain false alarms section with timestamp
+        assert "FALSE ALARMS" in captured.out
+        assert "3000" in captured.out
+        # Should NOT contain hits or correct negatives
+        assert "1000" not in captured.out or "hit" not in captured.out.lower().split("1000")[0][-20:]
+        assert "4000" not in captured.out or "correct" not in captured.out.lower()
+
+    def test_dump_errors_without_verify_is_ignored(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--dump-errors without --verify should not crash."""
+        from scripts.backtest.cli import main
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "test_loc")
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.replay.return_value = []
+
+            main(["--data-dir", str(data_dir), "--dump-errors"])
+
+        captured = capsys.readouterr()
+        # Should not crash, should not print error sections
+        assert "MISSES" not in captured.out

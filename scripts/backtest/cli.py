@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from scripts.backtest.data_loader import load_captures
-from scripts.backtest.metrics import ScoreCard, compute_scorecard
+from scripts.backtest.metrics import ScoreCard, VerificationRecord, compute_scorecard
 from scripts.backtest.replay import ReplayConfig, ReplayEngine
 from scripts.backtest.verifier import FutureRadarVerifier
 
@@ -39,6 +39,31 @@ def _print_scorecard(scorecard: ScoreCard) -> None:
         print(f"  Lead time error: mean={mean:.1f}min median={median:.1f}min (n={count})")
     else:
         print("  Lead time error: no verified arrival times")
+
+
+def _print_errors(records: list[VerificationRecord]) -> None:
+    """Print individual misses and false alarms with timestamps."""
+    from datetime import datetime, timezone
+
+    misses = [r for r in records if not r.predicted_rain and r.actual_rain]
+    false_alarms = [r for r in records if r.predicted_rain and not r.actual_rain]
+
+    if misses:
+        print(f"\n  MISSES ({len(misses)}) - rain occurred but not predicted:")
+        for r in misses:
+            dt = datetime.fromtimestamp(r.window_end_ts, tz=timezone.utc)
+            arrival = f"arrived after {r.actual_arrival_minutes:.0f}min" if r.actual_arrival_minutes is not None else "arrival time unknown"
+            print(f"    ts={r.window_end_ts}  {dt:%Y-%m-%d %H:%M}Z  {arrival}")
+
+    if false_alarms:
+        print(f"\n  FALSE ALARMS ({len(false_alarms)}) - rain predicted but did not occur:")
+        for r in false_alarms:
+            dt = datetime.fromtimestamp(r.window_end_ts, tz=timezone.utc)
+            predicted = f"predicted in {r.predicted_arrival_minutes:.0f}min" if r.predicted_arrival_minutes is not None else "no arrival estimate"
+            print(f"    ts={r.window_end_ts}  {dt:%Y-%m-%d %H:%M}Z  {predicted}")
+
+    if not misses and not false_alarms:
+        print("\n  No errors - perfect forecast!")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -73,6 +98,12 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         default=False,
         help="Verify predictions against future captures and print a scorecard",
+    )
+    parser.add_argument(
+        "--dump-errors",
+        action="store_true",
+        default=False,
+        help="With --verify, list individual misses and false alarms with timestamps",
     )
 
     args = parser.parse_args(argv)
@@ -118,6 +149,8 @@ def main(argv: list[str] | None = None) -> None:
                 location_name, records, total_possible_windows, skipped_gaps
             )
             _print_scorecard(scorecard)
+            if args.dump_errors:
+                _print_errors(records)
         else:
             total = len(predictions)
             if total:
