@@ -40,3 +40,4 @@ home-assistant_v2.db
 .local/
 .claude/
 reports/
+backtest_data/
