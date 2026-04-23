@@ -669,3 +669,66 @@ class TestVerifyProximityCheck:
         # Second prediction: dry capture at BASE_TS+2400 is within its lookahead
         # (BASE_TS+1800 + 1200 = BASE_TS+3000), and it's dry
         assert result[1].actual_rain is False
+
+
+# ---------------------------------------------------------------------------
+# Frame caching: verifier must not rebuild frames for the same capture
+# ---------------------------------------------------------------------------
+
+
+class TestVerifierFrameCaching:
+    """The verifier checks multiple predictions against the same future captures.
+    Without caching, _rain_at_location builds a new CapturedRadarFrame for each
+    check, re-decoding tile PNGs repeatedly."""
+
+    def test_captured_frame_built_once_per_unique_capture(self, tmp_path):
+        """CapturedRadarFrame must be created at most once per unique capture,
+        not once per _rain_at_location call."""
+        from unittest.mock import patch as mock_patch
+        from scripts.backtest.verifier import FutureRadarVerifier, VerifierConfig
+        from scripts.backtest.captured_frame import CapturedRadarFrame
+
+        # Create 3 dry captures with transparent tile PNGs
+        tile_bytes = _make_transparent_tile_png()
+        captures = []
+        for i in range(3):
+            ts = _BASE_TS + i * 600
+            tile_dir = tmp_path / str(ts)
+            tile_dir.mkdir()
+            tile_paths = {}
+            for tx, ty in _ANALYSIS_TILES:
+                path = tile_dir / f"7_{tx}_{ty}_s2.png"
+                path.write_bytes(tile_bytes)
+                tile_paths[(tx, ty)] = path
+            captures.append(_make_capture(ts, tile_paths))
+
+        # 2 predictions that both look at overlapping future captures
+        predictions = [
+            PredictionRecord(
+                window_end_ts=_BASE_TS,  # looks at captures 0,1,2
+                rain_incoming=True, rain_at_location=False,
+                arrival_minutes=30.0, confidence="normal",
+                cell_count=1, max_intensity=0.5,
+            ),
+            PredictionRecord(
+                window_end_ts=_BASE_TS + 600,  # looks at captures 1,2
+                rain_incoming=True, rain_at_location=False,
+                arrival_minutes=30.0, confidence="normal",
+                cell_count=1, max_intensity=0.5,
+            ),
+        ]
+        config = VerifierConfig(lookahead_seconds=1800)
+
+        with mock_patch(
+            "scripts.backtest.verifier.CapturedRadarFrame",
+            wraps=CapturedRadarFrame,
+        ) as mock_frame_cls:
+            verifier = FutureRadarVerifier(captures, config)
+            verifier.verify(predictions)
+
+        # With caching: each capture constructed at most once in __init__ = 3
+        # Without caching: capture 1 and 2 checked by both predictions = 5
+        assert mock_frame_cls.call_count <= len(captures), (
+            f"CapturedRadarFrame constructed {mock_frame_cls.call_count} times "
+            f"for {len(captures)} captures - frames not being cached"
+        )
