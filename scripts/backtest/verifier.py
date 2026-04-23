@@ -47,6 +47,16 @@ class FutureRadarVerifier:
     ) -> None:
         self._captures = sorted(captures, key=lambda c: c.frame_ts)
         self._config = config or VerifierConfig()
+        # Pre-build frames once so _rain_at_location reuses them across
+        # predictions instead of re-decoding tile PNGs for every check.
+        self._frame_cache: dict[int, CapturedRadarFrame] = {
+            c.frame_ts: CapturedRadarFrame(
+                _timestamp=datetime.fromtimestamp(c.frame_ts, tz=timezone.utc),
+                _tile_paths=c.tile_paths,
+                _zoom=c.zoom,
+            )
+            for c in self._captures
+        }
 
     def verify(self, predictions: list[PredictionRecord]) -> list[VerificationRecord]:
         """Verify each prediction against future radar captures."""
@@ -84,11 +94,7 @@ class FutureRadarVerifier:
         """Return True if any future capture shows rain in the location neighborhood."""
         config = self._config
         bounds = _build_analysis_bounds(capture)
-        frame = CapturedRadarFrame(
-            _timestamp=datetime.fromtimestamp(capture.frame_ts, tz=timezone.utc),
-            _tile_paths=capture.tile_paths,
-            _zoom=capture.zoom,
-        )
+        frame = self._frame_cache[capture.frame_ts]
         grid = frame.get_intensity_grid(bounds, _GRID_SIZE, _GRID_SIZE)
 
         loc_row, loc_col = _location_pixel(capture.lat, capture.lon, bounds, _GRID_SIZE)
