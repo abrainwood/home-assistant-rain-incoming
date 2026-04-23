@@ -14,6 +14,7 @@ from pathlib import Path
 from scripts.backtest.data_loader import load_captures
 from scripts.backtest.metrics import ScoreCard, VerificationRecord, compute_scorecard
 from scripts.backtest.replay import ReplayConfig, ReplayEngine
+from scripts.backtest.report import write_scorecard_markdown, write_verification_csv
 from scripts.backtest.verifier import FutureRadarVerifier
 
 
@@ -105,6 +106,12 @@ def main(argv: list[str] | None = None) -> None:
         default=False,
         help="With --verify, list individual misses and false alarms with timestamps",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="With --verify, write CSV and markdown reports to this directory",
+    )
 
     args = parser.parse_args(argv)
 
@@ -130,6 +137,8 @@ def main(argv: list[str] | None = None) -> None:
         lookahead_seconds=args.lookahead_minutes * 60,
     )
     engine = ReplayEngine(config)
+    all_scorecards: list[ScoreCard] = []
+    all_records: dict[str, list[VerificationRecord]] = {}
 
     for loc_dir in location_dirs:
         location_name = loc_dir.name
@@ -151,6 +160,8 @@ def main(argv: list[str] | None = None) -> None:
             _print_scorecard(scorecard)
             if args.dump_errors:
                 _print_errors(records)
+            all_scorecards.append(scorecard)
+            all_records[location_name] = records
         else:
             total = len(predictions)
             if total:
@@ -169,3 +180,11 @@ def main(argv: list[str] | None = None) -> None:
                     f"at_loc={p.rain_at_location} arrival={arrival} "
                     f"cells={p.cell_count} conf={p.confidence}"
                 )
+
+    # Write reports if --output-dir and --verify were both specified
+    if args.output_dir and all_scorecards:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        for location_name, records in all_records.items():
+            write_verification_csv(records, location_name, args.output_dir / f"{location_name}.csv")
+        write_scorecard_markdown(all_scorecards, args.output_dir / "scorecard.md")
+        print(f"\nReports written to {args.output_dir}")
