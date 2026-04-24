@@ -102,3 +102,68 @@ class TestWriteMarkdownScorecard:
         content = md_path.read_text()
         assert "darwin" in content
         assert "cairns" in content
+
+
+class TestJsonScorecardRoundtrip:
+    def test_write_and_load_produces_same_data(self, tmp_path):
+        """JSON scorecard must roundtrip: write then load produces equivalent scorecards."""
+        from scripts.backtest.report import write_scorecard_json, load_scorecard_json
+
+        original = ScoreCard(
+            location="darwin",
+            contingency=ContingencyTable(hits=99, misses=33, false_alarms=129, correct_negatives=627),
+            total_windows=916,
+            skipped_gaps=28,
+            lead_time_errors=[-7.0, 0.0, 5.0],
+        )
+        json_path = tmp_path / "scorecards.json"
+        write_scorecard_json([original], json_path)
+
+        loaded = load_scorecard_json(json_path)
+        assert len(loaded) == 1
+        assert loaded[0].location == "darwin"
+        assert loaded[0].contingency.hits == 99
+        assert loaded[0].contingency.misses == 33
+        assert loaded[0].contingency.false_alarms == 129
+        assert loaded[0].contingency.correct_negatives == 627
+        assert loaded[0].total_windows == 916
+        assert loaded[0].skipped_gaps == 28
+        assert loaded[0].lead_time_errors == [-7.0, 0.0, 5.0]
+
+
+class TestCompareScorecards:
+    def test_compare_shows_deltas(self):
+        """Compare must show before→after values and deltas for each metric."""
+        from scripts.backtest.report import compare_scorecards
+
+        previous = [ScoreCard(
+            location="darwin",
+            contingency=ContingencyTable(hits=99, misses=33, false_alarms=129, correct_negatives=627),
+            total_windows=916, skipped_gaps=28, lead_time_errors=[],
+        )]
+        current = [ScoreCard(
+            location="darwin",
+            contingency=ContingencyTable(hits=120, misses=12, false_alarms=80, correct_negatives=676),
+            total_windows=916, skipped_gaps=28, lead_time_errors=[],
+        )]
+
+        output = compare_scorecards(current, previous)
+
+        assert "darwin" in output
+        assert "POD" in output
+        assert "FAR" in output
+        assert "CSI" in output
+
+    def test_compare_missing_location_shows_new(self):
+        """A location in current but not previous should show as new."""
+        from scripts.backtest.report import compare_scorecards
+
+        previous = []
+        current = [ScoreCard(
+            location="new_loc",
+            contingency=ContingencyTable(hits=10),
+            total_windows=20, skipped_gaps=0, lead_time_errors=[],
+        )]
+
+        output = compare_scorecards(current, previous)
+        assert "new_loc" in output

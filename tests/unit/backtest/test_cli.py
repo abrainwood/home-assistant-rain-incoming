@@ -521,3 +521,56 @@ class TestOutputDir:
 
         assert (output_dir / "test_loc.csv").exists(), "CSV file not created"
         assert (output_dir / "scorecard.md").exists(), "Markdown scorecard not created"
+
+
+# ---------------------------------------------------------------------------
+# Test: --compare prints delta table
+# ---------------------------------------------------------------------------
+
+
+class TestCompare:
+    def test_compare_prints_deltas(self, tmp_path: Path, capsys) -> None:
+        """--compare must load previous JSON and print a delta table."""
+        from scripts.backtest.cli import main
+        from scripts.backtest.metrics import ContingencyTable, ScoreCard
+        from scripts.backtest.report import write_scorecard_json
+
+        # Create previous run with JSON scorecard
+        prev_dir = tmp_path / "previous"
+        prev_dir.mkdir()
+        prev_scorecard = ScoreCard(
+            location="test_loc",
+            contingency=ContingencyTable(hits=50, misses=10, false_alarms=20, correct_negatives=100),
+            total_windows=180, skipped_gaps=0, lead_time_errors=[],
+        )
+        write_scorecard_json([prev_scorecard], prev_dir / "scorecards.json")
+
+        # Set up current run
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "test_loc")
+        output_dir = tmp_path / "current"
+
+        cur_scorecard = ScoreCard(
+            location="test_loc",
+            contingency=ContingencyTable(hits=60, misses=5, false_alarms=15, correct_negatives=100),
+            total_windows=180, skipped_gaps=0, lead_time_errors=[],
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.FutureRadarVerifier") as MockVerifier, \
+             patch("scripts.backtest.cli.compute_scorecard", return_value=cur_scorecard):
+            instance = MockEngine.return_value
+            instance.replay.return_value = [MagicMock()]
+            verifier_instance = MockVerifier.return_value
+            verifier_instance.verify.return_value = []
+
+            main(["--data-dir", str(data_dir), "--verify",
+                  "--output-dir", str(output_dir),
+                  "--compare", str(prev_dir)])
+
+        captured = capsys.readouterr()
+        assert "Comparison" in captured.out
+        assert "test_loc" in captured.out
+        # JSON scorecard should also be saved
+        assert (output_dir / "scorecards.json").exists()
