@@ -57,16 +57,68 @@ Constant-velocity cell projection assumption fails near terrain. Cells accelerat
 - Historical velocity profiles per location
 - Terrain-weighted arrival time adjustment
 
-## Framework Improvements Needed
+## QC Quick-Run Results (curated subset, 10 per category)
 
-### Compare feature
-`--compare <previous-dir>` to show POD/FAR/CSI deltas between runs. Save scorecards as JSON alongside markdown for machine-readable comparison.
+QC reduces false alarms but also kills real detections (cold clutter map).
+Full `--qc full` run in progress to get population-level numbers with warm clutter map.
 
-### Subset/tagging
-`--max-captures N` for quick iteration (~200 captures = ~1.5 days). Full run for significant changes. Tag output dirs meaningfully: `reports/baseline-qc-none`, `reports/qc-full`.
+| Location | FA (qc=none) | FA (qc=full) | Hits (qc=none) | Hits (qc=full) |
+|----------|--------------|--------------|----------------|----------------|
+| darwin | 20 | 5 | 10 | 12 |
+| penrith | 20 | 4 | 10 | 6 |
+| mobile | 20 | 5 | 10 | 10 |
+| cairns | 20 | 7 | 10 | 10 |
 
-### Verifier performance
-Quillayute (100% rain) took ~25min to verify. Verifier needs binary search or index for future capture lookup instead of linear scan.
+QC Bias dropped to 0.5-0.85 (under-forecasting). Need warmer clutter map or adjusted QC thresholds.
+
+## Tuning Backlog
+
+Each item is a hypothesis to test via quick subset run then validate with full run.
+
+### Detection thresholds
+
+- **T1: Intensity threshold** - currently 0.1. Lower catches more rain but increases noise. Test 0.05 and 0.15 to map the sensitivity curve.
+- **T2: Min cell area** - currently 5 pixels. Raising to 10-15 would filter small clutter blobs but might miss isolated cells. Test 10 and 20.
+- **T3: Proximity radius** - currently 128km. The verifier checks 10x10 pixels (~30km). Tightening detection proximity to 64km would reduce "near miss" false alarms but miss rain approaching from further out. Test 64km and 96km.
+- **T4: Min temporal frames** - currently 3 frames. Raising to 4-5 means a cell must be tracked for 30-50 minutes before triggering. Reduces pop-up false alarms but delays detection. Test 4 and 5.
+
+### QC pipeline
+
+- **Q1: Clutter maturity period** - currently 2 weeks (2016 cycles). In backtesting the clutter map starts cold and never matures. Test with a pre-warmed clutter map from a separate warmup run.
+- **Q2: QC confidence threshold** - QC multiplies intensity by confidence (0-1). Low-confidence cells get dimmed below the detection threshold. The effective threshold is `intensity * confidence >= 0.1`. Test raising/lowering the confidence floor.
+- **Q3: Texture vs temporal weights** - texture analysis catches speckle noise, temporal catches inconsistent cells. Current weights may over-penalize real rain with speckle-like texture (convective rain is inherently noisy). Test reducing texture weight.
+
+### Cell tracking
+
+- **C1: Max storm speed** - currently 150 km/h. Cells moving faster are rejected. Rarely a factor but could filter bogus high-speed matches.
+- **C2: Max angular variance** - currently ~90 degrees (in radians). Cells with inconsistent motion direction are rejected. Tightening reduces false matches but misses cells that change direction.
+- **C3: Velocity estimation window** - uses consecutive frame pairs. Averaging over 3-4 frame pairs would smooth noisy velocity estimates but add lag.
+
+### Arrival time
+
+- **A1: Closing distance fallback** - when cell velocity points away from location but distance is decreasing, we use a fallback arrival estimate. This catches "approaching but not pointed directly at us" scenarios. May be too generous - test disabling it.
+- **A2: Acceleration model** - constant velocity assumption fails near terrain. Test a simple linear acceleration model (velocity change between frame pairs).
+
+### Verification alignment
+
+- **V1: Align detection and verification proximity** - detector uses 128km, verifier uses ~30km. Many "false alarms" may be correct detections of rain that passes nearby but not overhead. Test with verifier proximity matching detector proximity.
+- **V2: Extended verification window** - currently 60min. Some "false alarms" may be rain that arrived after 60min. Test 90min and 120min windows to reclassify.
+
+## Framework Improvements Done
+
+- [x] Compare feature (`--compare`)
+- [x] Curated subset selection (`--generate-subset`, `--subset`)
+- [x] Tile decode optimisation (15ms → 1.2ms)
+- [x] Centroid extraction optimisation (12.5s → 25ms)
+- [x] Frame caching in replay and verifier
+
+## Framework Improvements Remaining
 
 ### Dry window skip
 Consecutive dry windows with unchanged latest frame produce identical detection results. Skip detection when the new frame is also dry - major speedup for locations with long dry periods.
+
+### Per-category comparison
+Compare should show deltas per category (hit rate for hits, FA rate for FAs) not just aggregate POD/FAR. The curated set is balanced so aggregate scores are always ~0.5.
+
+### Ground truth verifier
+BOM/METAR observation correlation with cell-path-aware station matching. Separate from radar-only verification.
