@@ -14,7 +14,13 @@ from pathlib import Path
 from scripts.backtest.data_loader import load_captures
 from scripts.backtest.metrics import ScoreCard, VerificationRecord, compute_scorecard
 from scripts.backtest.replay import ReplayConfig, ReplayEngine
-from scripts.backtest.report import write_scorecard_markdown, write_verification_csv
+from scripts.backtest.report import (
+    compare_scorecards,
+    load_scorecard_json,
+    write_scorecard_json,
+    write_scorecard_markdown,
+    write_verification_csv,
+)
 from scripts.backtest.verifier import FutureRadarVerifier
 
 
@@ -112,6 +118,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="With --verify, write CSV and markdown reports to this directory",
     )
+    parser.add_argument(
+        "--compare",
+        type=Path,
+        default=None,
+        help="Compare against a previous run's output directory (requires scorecards.json)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -187,4 +199,14 @@ def main(argv: list[str] | None = None) -> None:
         for location_name, records in all_records.items():
             write_verification_csv(records, location_name, args.output_dir / f"{location_name}.csv")
         write_scorecard_markdown(all_scorecards, args.output_dir / "scorecard.md")
+        write_scorecard_json(all_scorecards, args.output_dir / "scorecards.json")
         print(f"\nReports written to {args.output_dir}")
+
+    # Compare against previous run if requested
+    if args.compare and all_scorecards:
+        prev_json = args.compare / "scorecards.json"
+        if prev_json.exists():
+            previous = load_scorecard_json(prev_json)
+            print(compare_scorecards(all_scorecards, previous))
+        else:
+            print(f"\nWarning: {prev_json} not found, skipping comparison", file=sys.stderr)
