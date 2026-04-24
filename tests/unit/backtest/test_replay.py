@@ -427,3 +427,38 @@ class TestFrameCachingAcrossWindows:
             f"{len(captures)} captures - frames are being rebuilt per window "
             f"instead of cached"
         )
+
+
+# ---------------------------------------------------------------------------
+# Replay from manifest: only replay specific windows, not all consecutive
+# ---------------------------------------------------------------------------
+
+
+class TestReplayManifest:
+    """replay_manifest must replay only the windows listed in the manifest."""
+
+    def test_replays_only_manifest_windows(self):
+        """Only windows whose window_end_ts matches a manifest entry should be replayed."""
+        from scripts.backtest.manifest import ManifestEntry
+
+        captures = _make_records(10)  # ts: BASE+0 through BASE+5400
+        # Pick only 2 specific windows (window_end_ts = ts of last frame in window)
+        manifest_entries = [
+            ManifestEntry(location="Melbourne_dry", window_end_ts=_BASE_TS + 7 * 600,
+                          category="hit", subcategory="strong"),
+            ManifestEntry(location="Melbourne_dry", window_end_ts=_BASE_TS + 9 * 600,
+                          category="false_alarm", subcategory="overhead_noise"),
+        ]
+
+        engine = ReplayEngine(ReplayConfig(window_size=8, qc_enabled=False))
+
+        with patch("scripts.backtest.replay.detect", return_value=_mock_detect_result()):
+            predictions = engine.replay_manifest(captures, manifest_entries)
+
+        assert len(predictions) == 2, (
+            f"Expected 2 predictions for 2 manifest entries, got {len(predictions)}"
+        )
+        # Verify the correct window_end_ts values
+        pred_ts = {p.window_end_ts for p in predictions}
+        assert _BASE_TS + 7 * 600 in pred_ts
+        assert _BASE_TS + 9 * 600 in pred_ts

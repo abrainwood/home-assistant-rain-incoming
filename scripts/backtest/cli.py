@@ -82,8 +82,32 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        required=True,
+        default=None,
         help="Root directory containing captures/ and observations/",
+    )
+    parser.add_argument(
+        "--generate-subset",
+        type=Path,
+        default=None,
+        help="Generate a manifest from a previous run's CSV directory, then exit",
+    )
+    parser.add_argument(
+        "--n-per-category",
+        type=int,
+        default=20,
+        help="With --generate-subset, number of windows per category per location",
+    )
+    parser.add_argument(
+        "--manifest-output",
+        type=Path,
+        default=None,
+        help="With --generate-subset, path to write the manifest JSON",
+    )
+    parser.add_argument(
+        "--subset",
+        type=Path,
+        default=None,
+        help="Replay only windows listed in this manifest JSON",
     )
     parser.add_argument(
         "--locations",
@@ -127,6 +151,22 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
+    # Handle --generate-subset mode (doesn't need --data-dir)
+    if args.generate_subset:
+        from scripts.backtest.selector import select_representative_windows
+        from scripts.backtest.manifest import save_manifest
+
+        entries = select_representative_windows(args.generate_subset, args.n_per_category)
+        output_path = args.manifest_output or Path("manifest.json")
+        save_manifest(entries, "quick", "Auto-generated curated subset",
+                      str(args.generate_subset), output_path)
+        print(f"Generated manifest with {len(entries)} windows at {output_path}")
+        return
+
+    if args.data_dir is None:
+        print("Error: --data-dir is required for replay mode", file=sys.stderr)
+        sys.exit(1)
+
     captures_dir = args.data_dir / "captures"
     if not captures_dir.is_dir():
         print(f"Error: {captures_dir} not found", file=sys.stderr)
@@ -152,6 +192,16 @@ def main(argv: list[str] | None = None) -> None:
     all_scorecards: list[ScoreCard] = []
     all_records: dict[str, list[VerificationRecord]] = {}
 
+    # Load manifest if --subset specified
+    manifest_by_location: dict[str, list] | None = None
+    if args.subset:
+        from scripts.backtest.manifest import load_manifest
+        manifest = load_manifest(args.subset)
+        manifest_by_location = {}
+        for entry in manifest.entries:
+            manifest_by_location.setdefault(entry.location, []).append(entry)
+        print(f"Using manifest: {manifest.name} ({len(manifest.entries)} windows)")
+
     for loc_dir in location_dirs:
         location_name = loc_dir.name
         captures = load_captures(loc_dir)
@@ -159,7 +209,13 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{location_name}: no captures found, skipping")
             continue
 
-        predictions = engine.replay(captures)
+        if manifest_by_location is not None:
+            loc_entries = manifest_by_location.get(location_name, [])
+            if not loc_entries:
+                continue  # no manifest entries for this location
+            predictions = engine.replay_manifest(captures, loc_entries)
+        else:
+            predictions = engine.replay(captures)
 
         if args.verify:
             total_possible_windows = max(0, len(captures) - config.window_size + 1)
