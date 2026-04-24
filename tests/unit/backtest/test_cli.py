@@ -67,12 +67,12 @@ def _make_prediction(
 
 class TestMainWithNoArgs:
     def test_main_with_no_args_exits_with_error(self) -> None:
-        """Calling main() with no arguments triggers argparse SystemExit(2)."""
+        """Calling main() with no --data-dir and no --generate-subset exits with code 1."""
         from scripts.backtest.cli import main
 
         with pytest.raises(SystemExit) as exc_info:
             main([])
-        assert exc_info.value.code == 2
+        assert exc_info.value.code == 1
 
 
 # ---------------------------------------------------------------------------
@@ -574,3 +574,39 @@ class TestCompare:
         assert "test_loc" in captured.out
         # JSON scorecard should also be saved
         assert (output_dir / "scorecards.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Test: --generate-subset creates a manifest from CSVs
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSubset:
+    def test_generate_subset_creates_manifest(self, tmp_path: Path, capsys) -> None:
+        """--generate-subset must read CSVs and write a manifest JSON."""
+        from scripts.backtest.cli import main
+
+        # Create a minimal CSV
+        csv_dir = tmp_path / "baseline"
+        csv_dir.mkdir()
+        csv_path = csv_dir / "test_loc.csv"
+        csv_path.write_text(
+            "location,window_end_ts,predicted_rain,actual_rain,predicted_arrival_minutes,actual_arrival_minutes\n"
+            "test_loc,1000,True,True,30,25\n"
+            "test_loc,2000,False,True,,10\n"
+            "test_loc,3000,True,False,45,\n"
+            "test_loc,4000,False,False,,\n"
+        )
+
+        manifest_path = tmp_path / "quick.json"
+
+        main(["--generate-subset", str(csv_dir),
+              "--n-per-category", "2",
+              "--manifest-output", str(manifest_path)])
+
+        assert manifest_path.exists(), "Manifest file not created"
+
+        import json
+        data = json.loads(manifest_path.read_text())
+        assert "windows" in data
+        assert len(data["windows"]) > 0

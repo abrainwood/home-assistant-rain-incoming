@@ -280,3 +280,63 @@ class ReplayEngine:
             predictions.append(_to_prediction(result, frames, window))
 
         return predictions
+
+    def replay_manifest(
+        self,
+        captures: list[CaptureRecord],
+        manifest_entries: list,
+    ) -> list[PredictionRecord]:
+        """Replay only specific windows listed in a manifest.
+
+        For each manifest entry, finds the window of captures ending at
+        the entry's window_end_ts and runs detect() on it.
+        """
+        from scripts.backtest.manifest import ManifestEntry
+
+        config = self._config
+        window_size = config.window_size
+
+        sorted_captures = sorted(captures, key=lambda r: r.frame_ts)
+
+        # Build frame cache and index captures by ts for fast lookup
+        frame_cache: dict[int, CapturedRadarFrame] = {
+            r.frame_ts: _frame_from_record(r) for r in sorted_captures
+        }
+        ts_list = [r.frame_ts for r in sorted_captures]
+        ts_to_idx = {ts: i for i, ts in enumerate(ts_list)}
+
+        # Collect target timestamps from manifest
+        target_ts = {e.window_end_ts for e in manifest_entries}
+
+        predictions: list[PredictionRecord] = []
+
+        for end_ts in sorted(target_ts):
+            end_idx = ts_to_idx.get(end_ts)
+            if end_idx is None or end_idx < window_size - 1:
+                continue  # can't build a full window
+
+            start_idx = end_idx - window_size + 1
+            window = sorted_captures[start_idx : end_idx + 1]
+
+            if _has_gap(window, config.max_gap_seconds):
+                continue
+
+            frames = [frame_cache[r.frame_ts] for r in window]
+            detector_config = _build_detector_config(window[0], config.lookahead_seconds)
+
+            confidence_maps: list[np.ndarray] | None = None
+            if config.qc_enabled:
+                confidence_maps = _compute_confidence_maps(
+                    frames, detector_config, None, 0.0
+                )
+
+            result = detect(
+                frames=frames,
+                location=(window[0].lat, window[0].lon),
+                config=detector_config,
+                confidence_maps=confidence_maps,
+            )
+
+            predictions.append(_to_prediction(result, frames, window))
+
+        return predictions
