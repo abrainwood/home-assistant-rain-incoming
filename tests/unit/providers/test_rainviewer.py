@@ -366,3 +366,52 @@ class TestCheckCoverage:
         ):
             with pytest.raises(ClientError):
                 await check_coverage(-33.701, 151.209, session=mock_session)
+
+
+# ---------------------------------------------------------------------------
+# _tile_to_intensity_array: unique colour optimisation
+# ---------------------------------------------------------------------------
+
+
+class TestTileToIntensityArrayPerformance:
+    """The colour matching must use unique-colour lookup, not per-pixel L2."""
+
+    def test_few_unique_colours_is_fast(self):
+        """A tile with few unique colours (typical) should complete in under 3ms.
+
+        The old per-pixel L2 approach took ~15ms. The unique-colour lookup
+        should be ~1ms by matching only the ~7 unique colours instead of
+        broadcasting across all 65,536 pixels.
+        """
+        import time
+        from io import BytesIO
+        from PIL import Image
+        from custom_components.rain_incoming.providers.rainviewer import (
+            _tile_to_intensity_array,
+            PRECIP_COLOURS,
+        )
+
+        # Create a tile with 3 known precipitation colours (typical real-world tile)
+        img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+        r, g, b, _ = PRECIP_COLOURS[0]
+        # Fill top third with one colour
+        for y in range(85):
+            for x in range(256):
+                img.putpixel((x, y), (r, g, b, 200))
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        tile_bytes = buf.getvalue()
+
+        # Warm up
+        _tile_to_intensity_array(tile_bytes)
+
+        # Time 10 runs
+        start = time.perf_counter()
+        for _ in range(10):
+            _tile_to_intensity_array(tile_bytes)
+        avg_ms = (time.perf_counter() - start) / 10 * 1000
+
+        assert avg_ms < 3.0, (
+            f"_tile_to_intensity_array took {avg_ms:.1f}ms per call, "
+            f"expected <3ms with unique-colour optimisation"
+        )

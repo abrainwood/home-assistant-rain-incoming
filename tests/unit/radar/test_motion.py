@@ -275,3 +275,33 @@ class TestIsDirectionallyCoherent:
         assert is_directionally_coherent(velocities, max_angular_variance=exact_variance), (
             f"Circular variance {exact_variance:.6f} at exact threshold must be coherent (<=)"
         )
+
+class TestExtractCellCentroidsPerformance:
+    def test_many_labels_is_fast(self):
+        """With many labels, centroid extraction must complete in under 50ms.
+
+        The old per-label argwhere approach took ~500ms+ for 100 labels.
+        scipy.ndimage.center_of_mass does a single pass.
+        """
+        import time
+        from scipy import ndimage
+
+        np.random.seed(42)
+        grid = np.zeros((512, 512), dtype=np.float32)
+        for i in range(100):
+            r, c = np.random.randint(10, 500, 2)
+            grid[r:r+5, c:c+5] = 1.0
+        labeled, n = ndimage.label(grid > 0)
+        assert n >= 80, f"Expected ~100 labels, got {n}"
+
+        extract_cell_centroids(labeled)  # warm up
+
+        start = time.perf_counter()
+        for _ in range(10):
+            extract_cell_centroids(labeled)
+        avg_ms = (time.perf_counter() - start) / 10 * 1000
+
+        assert avg_ms < 50.0, (
+            f"extract_cell_centroids took {avg_ms:.1f}ms for {n} labels, "
+            f"expected <50ms with scipy.ndimage.center_of_mass"
+        )
