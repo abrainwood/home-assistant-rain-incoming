@@ -475,3 +475,49 @@ class TestDumpErrors:
         captured = capsys.readouterr()
         # Should not crash, should not print error sections
         assert "MISSES" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Test: --output-dir writes CSV and markdown files
+# ---------------------------------------------------------------------------
+
+
+class TestOutputDir:
+    def test_output_dir_creates_csv_and_markdown(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--verify --output-dir must write CSV and markdown scorecard."""
+        from scripts.backtest.cli import main
+        from scripts.backtest.metrics import (
+            ContingencyTable, ScoreCard, VerificationRecord,
+        )
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "test_loc")
+
+        output_dir = tmp_path / "reports"
+
+        records = [
+            VerificationRecord(window_end_ts=1000, predicted_rain=True, actual_rain=True),
+        ]
+        scorecard = ScoreCard(
+            location="test_loc",
+            contingency=ContingencyTable(hits=1),
+            total_windows=1,
+            skipped_gaps=0,
+            lead_time_errors=[],
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.FutureRadarVerifier") as MockVerifier, \
+             patch("scripts.backtest.cli.compute_scorecard", return_value=scorecard):
+            instance = MockEngine.return_value
+            instance.replay.return_value = [MagicMock()]
+            verifier_instance = MockVerifier.return_value
+            verifier_instance.verify.return_value = records
+
+            main(["--data-dir", str(data_dir), "--verify", "--output-dir", str(output_dir)])
+
+        assert (output_dir / "test_loc.csv").exists(), "CSV file not created"
+        assert (output_dir / "scorecard.md").exists(), "Markdown scorecard not created"
