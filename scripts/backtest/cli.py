@@ -218,9 +218,21 @@ def main(argv: list[str] | None = None) -> None:
             predictions = engine.replay(captures)
 
         if args.verify:
-            total_possible_windows = max(0, len(captures) - config.window_size + 1)
+            if manifest_by_location is not None:
+                total_possible_windows = len(manifest_by_location.get(location_name, []))
+            else:
+                total_possible_windows = max(0, len(captures) - config.window_size + 1)
             skipped_gaps = total_possible_windows - len(predictions)
-            verifier = FutureRadarVerifier(captures)
+            # In manifest mode, only pass captures needed for verification
+            # (the windows themselves + lookahead period) to avoid loading
+            # all 1000+ captures into the verifier's frame cache
+            if manifest_by_location is not None and predictions:
+                min_ts = min(p.window_end_ts for p in predictions)
+                max_ts = max(p.window_end_ts for p in predictions) + config.lookahead_seconds
+                verify_captures = [c for c in captures if min_ts <= c.frame_ts <= max_ts]
+            else:
+                verify_captures = captures
+            verifier = FutureRadarVerifier(verify_captures)
             records = verifier.verify(predictions)
             scorecard = compute_scorecard(
                 location_name, records, total_possible_windows, skipped_gaps

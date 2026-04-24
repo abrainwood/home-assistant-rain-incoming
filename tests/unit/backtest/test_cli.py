@@ -610,3 +610,60 @@ class TestGenerateSubset:
         data = json.loads(manifest_path.read_text())
         assert "windows" in data
         assert len(data["windows"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Test: --subset reports manifest window count, not total captures
+# ---------------------------------------------------------------------------
+
+
+class TestSubsetWindowCount:
+    def test_subset_reports_manifest_count_not_total(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """With --subset, the scorecard must show manifest windows, not total captures."""
+        from scripts.backtest.cli import main
+        from scripts.backtest.metrics import ContingencyTable, ScoreCard
+        from scripts.backtest.manifest import ManifestEntry, save_manifest
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "test_loc")
+
+        # Create a manifest with 3 windows
+        manifest_path = tmp_path / "manifest.json"
+        entries = [
+            ManifestEntry(location="test_loc", window_end_ts=1000+i*600,
+                          category="hit", subcategory="strong")
+            for i in range(3)
+        ]
+        save_manifest(entries, "test", "test", "test", manifest_path)
+
+        scorecard = ScoreCard(
+            location="test_loc",
+            contingency=ContingencyTable(hits=3),
+            total_windows=3,
+            skipped_gaps=0,
+            lead_time_errors=[],
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.FutureRadarVerifier") as MockVerifier, \
+             patch("scripts.backtest.cli.compute_scorecard", return_value=scorecard) as mock_sc:
+            instance = MockEngine.return_value
+            instance.replay_manifest.return_value = [
+                _make_prediction(window_end_ts=1000+i*600) for i in range(3)
+            ]
+            verifier_instance = MockVerifier.return_value
+            verifier_instance.verify.return_value = []
+
+            main(["--data-dir", str(data_dir), "--verify",
+                  "--subset", str(manifest_path)])
+
+        # compute_scorecard should be called with total_windows=3 (manifest count)
+        # not the number of captures
+        call_args = mock_sc.call_args
+        assert call_args[1].get("total_windows", call_args[0][2] if len(call_args[0]) > 2 else None) == 3 or \
+               (len(call_args[0]) > 2 and call_args[0][2] == 3), (
+            f"total_windows should be 3 (manifest count), got {call_args}"
+        )

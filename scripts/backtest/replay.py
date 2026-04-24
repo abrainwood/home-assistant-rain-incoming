@@ -298,15 +298,24 @@ class ReplayEngine:
 
         sorted_captures = sorted(captures, key=lambda r: r.frame_ts)
 
-        # Build frame cache and index captures by ts for fast lookup
-        frame_cache: dict[int, CapturedRadarFrame] = {
-            r.frame_ts: _frame_from_record(r) for r in sorted_captures
-        }
         ts_list = [r.frame_ts for r in sorted_captures]
         ts_to_idx = {ts: i for i, ts in enumerate(ts_list)}
 
         # Collect target timestamps from manifest
         target_ts = {e.window_end_ts for e in manifest_entries}
+
+        # Only build frames for captures that are part of a manifest window
+        needed_indices: set[int] = set()
+        for end_ts in target_ts:
+            end_idx = ts_to_idx.get(end_ts)
+            if end_idx is not None and end_idx >= window_size - 1:
+                for i in range(end_idx - window_size + 1, end_idx + 1):
+                    needed_indices.add(i)
+
+        frame_cache: dict[int, CapturedRadarFrame] = {
+            sorted_captures[i].frame_ts: _frame_from_record(sorted_captures[i])
+            for i in needed_indices
+        }
 
         predictions: list[PredictionRecord] = []
 

@@ -462,3 +462,37 @@ class TestReplayManifest:
         pred_ts = {p.window_end_ts for p in predictions}
         assert _BASE_TS + 7 * 600 in pred_ts
         assert _BASE_TS + 9 * 600 in pred_ts
+
+
+class TestReplayManifestOnlyLoadNeededCaptures:
+    """replay_manifest must only build frames for captures that are part of
+    a manifest window, not all captures in the dataset."""
+
+    def test_frame_from_record_called_only_for_needed_captures(self):
+        """With 100 captures but a manifest selecting 2 windows (needing ~16 captures),
+        _frame_from_record should be called ~16 times, not 100."""
+        from scripts.backtest.manifest import ManifestEntry
+
+        captures = _make_records(100)
+        # Select 2 windows: one at index 7 (needs captures 0-7) and one at index 15 (needs 8-15)
+        manifest_entries = [
+            ManifestEntry(location="Melbourne_dry", window_end_ts=_BASE_TS + 7 * 600,
+                          category="hit", subcategory="strong"),
+            ManifestEntry(location="Melbourne_dry", window_end_ts=_BASE_TS + 15 * 600,
+                          category="miss", subcategory="popup"),
+        ]
+
+        engine = ReplayEngine(ReplayConfig(window_size=8, qc_enabled=False))
+
+        with patch("scripts.backtest.replay.detect", return_value=_mock_detect_result()):
+            with patch(
+                "scripts.backtest.replay._frame_from_record",
+                wraps=__import__("scripts.backtest.replay", fromlist=["_frame_from_record"])._frame_from_record,
+            ) as mock_frame:
+                engine.replay_manifest(captures, manifest_entries)
+
+        # 2 windows × 8 frames = 16 unique captures needed (no overlap in this case)
+        assert mock_frame.call_count <= 16, (
+            f"_frame_from_record called {mock_frame.call_count} times for "
+            f"2 manifest windows - should only build frames for needed captures, not all {len(captures)}"
+        )
