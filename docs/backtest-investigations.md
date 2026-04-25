@@ -88,8 +88,8 @@ Each item is a hypothesis to test via quick subset run then validate with full r
 
 ### Tier 2: Improve arrival time (Penrith mean error -5.6min)
 
-- **A2: Acceleration model** - constant velocity assumption fails near terrain. Cells decelerate crossing the Blue Mountains. Test a simple linear acceleration model.
-- **C3: Velocity estimation window** - uses consecutive frame pairs. Averaging over 3-4 frame pairs would smooth noisy velocity estimates but add lag.
+- **A2: Acceleration model** - TESTED, worsened results. Penrith CSI 0.425->0.411, +22 FAs for +2 hits, lead time error unchanged (-5.6 -> -5.7min). With only 2-7 velocity samples per track, acceleration estimates are too noisy and project cells incorrectly into the proximity radius. Would need much longer tracks to be useful.
+- **C3: Velocity estimation window** - ALREADY IMPLEMENTED. The detector already averages velocity over all frame pairs in the track (detector.py lines 287-302). With 8-frame windows, this means up to 7 velocity estimates are averaged. No additional smoothing needed.
 - **A1: Closing distance fallback** - currently enabled, helps detection. Test if it generates FAs in terrain where cells change direction near mountains.
 
 ### Tier 3: QC tuning (only after detection is better)

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from custom_components.rain_incoming.radar.motion import (
+    estimate_acceleration,
     estimate_velocity,
     extract_cell_centroids,
     is_directionally_coherent,
@@ -305,3 +306,48 @@ class TestExtractCellCentroidsPerformance:
             f"extract_cell_centroids took {avg_ms:.1f}ms for {n} labels, "
             f"expected <50ms with scipy.ndimage.center_of_mass"
         )
+
+
+class TestEstimateAcceleration:
+    """estimate_acceleration computes (ay, ax) in pixels/second^2 from a
+    sequence of velocities and their time deltas."""
+
+    def test_constant_velocity_gives_zero_acceleration(self):
+        """If velocity doesn't change, acceleration is zero."""
+        velocities = [(1.0, 2.0), (1.0, 2.0), (1.0, 2.0)]
+        time_deltas = [600.0, 600.0, 600.0]
+        ay, ax = estimate_acceleration(velocities, time_deltas)
+        assert ay == pytest.approx(0.0, abs=1e-9)
+        assert ax == pytest.approx(0.0, abs=1e-9)
+
+    def test_decelerating_cell_gives_negative_acceleration(self):
+        """A cell slowing down in the y direction has negative ay."""
+        # Velocity decreasing from 2.0 to 1.0 to 0.5 px/s over 600s intervals
+        velocities = [(2.0, 0.0), (1.0, 0.0), (0.5, 0.0)]
+        time_deltas = [600.0, 600.0, 600.0]
+        ay, ax = estimate_acceleration(velocities, time_deltas)
+        assert ay < 0.0, f"Expected negative ay for decelerating cell, got {ay}"
+        assert ax == pytest.approx(0.0, abs=1e-9)
+
+    def test_accelerating_cell_gives_positive_acceleration(self):
+        """A cell speeding up has positive acceleration in its direction."""
+        velocities = [(0.5, 0.0), (1.0, 0.0), (2.0, 0.0)]
+        time_deltas = [600.0, 600.0, 600.0]
+        ay, ax = estimate_acceleration(velocities, time_deltas)
+        assert ay > 0.0, f"Expected positive ay for accelerating cell, got {ay}"
+
+    def test_single_velocity_gives_zero_acceleration(self):
+        """Can't compute acceleration from a single velocity."""
+        velocities = [(1.0, 2.0)]
+        time_deltas = [600.0]
+        ay, ax = estimate_acceleration(velocities, time_deltas)
+        assert ay == pytest.approx(0.0, abs=1e-9)
+        assert ax == pytest.approx(0.0, abs=1e-9)
+
+    def test_two_velocities_gives_simple_difference(self):
+        """With two velocities, acceleration = (v1 - v0) / dt."""
+        velocities = [(1.0, 0.0), (3.0, 0.0)]
+        time_deltas = [600.0, 600.0]  # 600s between frame pairs
+        ay, ax = estimate_acceleration(velocities, time_deltas)
+        # dvy = 3.0 - 1.0 = 2.0 px/s change over 600s
+        assert ay == pytest.approx(2.0 / 600.0, abs=1e-9)

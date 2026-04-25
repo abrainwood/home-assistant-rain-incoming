@@ -11,6 +11,7 @@ from scipy import ndimage
 from ..providers.base import BoundingBox, RadarFrame
 from .filters import filter_by_area, threshold_intensity
 from .motion import (
+    estimate_acceleration,
     estimate_velocity,
     extract_cell_centroids,
     is_directionally_coherent,
@@ -47,6 +48,7 @@ class DetectorConfig:
     analysis_bounds: BoundingBox
     grid_width: int
     grid_height: int
+    use_acceleration: bool = False
 
 
 @dataclass
@@ -307,14 +309,26 @@ def _evaluate_approaching_cell(
     if speed_kmh_val > config.max_storm_speed_kmh:
         return None
 
+    # Compute acceleration if enabled
+    ay, ax = 0.0, 0.0
+    if config.use_acceleration:
+        time_deltas = []
+        for i in range(len(track) - 1):
+            fi, _, _ = track[i]
+            fj, _, _ = track[i + 1]
+            time_deltas.append(
+                (frames[fj].timestamp - frames[fi].timestamp).total_seconds()
+            )
+        ay, ax = estimate_acceleration(velocities, time_deltas)
+
     # Project cell forward in 60-second steps up to the lookahead limit
     step_s = 60.0
     t = 0.0
     arrival_seconds: float | None = None
 
     while t <= config.lookahead_seconds:
-        proj_row = cur_row + vy * t
-        proj_col = cur_col + vx * t
+        proj_row = cur_row + vy * t + 0.5 * ay * t * t
+        proj_col = cur_col + vx * t + 0.5 * ax * t * t
         d = math.sqrt((proj_row - loc_row) ** 2 + (proj_col - loc_col) ** 2)
         if d <= proximity_px:
             arrival_seconds = t

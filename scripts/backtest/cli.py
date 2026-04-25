@@ -160,6 +160,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Override the minimum cell area in pixels for detection (default: production value)",
     )
+    parser.add_argument(
+        "--use-acceleration",
+        action="store_true",
+        default=False,
+        help="Enable acceleration-aware cell projection (experimental)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -204,6 +210,8 @@ def main(argv: list[str] | None = None) -> None:
         replay_kwargs["intensity_threshold"] = args.intensity_threshold
     if args.min_cell_area is not None:
         replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
+    if args.use_acceleration:
+        replay_kwargs["use_acceleration"] = True
     config = ReplayConfig(**replay_kwargs)
     engine = ReplayEngine(config)
     all_scorecards: list[ScoreCard] = []

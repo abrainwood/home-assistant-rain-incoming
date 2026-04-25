@@ -73,6 +73,7 @@ class ReplayConfig:
     lookahead_seconds: int = 3600
     intensity_threshold: float = INTENSITY_THRESHOLD
     min_cell_area_pixels: int = MIN_CELL_AREA_PIXELS
+    use_acceleration: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +112,7 @@ def _build_detector_config(
         analysis_bounds=analysis_bounds,
         grid_width=grid_size,
         grid_height=grid_size,
+        use_acceleration=replay_config.use_acceleration,
     )
 
 
