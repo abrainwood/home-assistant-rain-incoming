@@ -71,6 +71,8 @@ class ReplayConfig:
     max_gap_seconds: int = 900    # skip windows with consecutive gap > this
     qc_enabled: bool = True       # compute QC confidence maps
     lookahead_seconds: int = 3600
+    intensity_threshold: float = INTENSITY_THRESHOLD
+    min_cell_area_pixels: int = MIN_CELL_AREA_PIXELS
 
 
 # ---------------------------------------------------------------------------
@@ -90,15 +92,18 @@ def _build_analysis_bounds(capture: CaptureRecord) -> BoundingBox:
     )
 
 
-def _build_detector_config(capture: CaptureRecord, lookahead_seconds: int) -> DetectorConfig:
+def _build_detector_config(
+    capture: CaptureRecord,
+    replay_config: ReplayConfig,
+) -> DetectorConfig:
     """Build a DetectorConfig from a representative capture in the window."""
     analysis_bounds = _build_analysis_bounds(capture)
     grid_size = RAINVIEWER_TILE_SIZE * 2  # 512 for a 2x2 tile block
 
     return DetectorConfig(
-        lookahead_seconds=lookahead_seconds,
-        intensity_threshold=INTENSITY_THRESHOLD,
-        min_cell_area_pixels=MIN_CELL_AREA_PIXELS,
+        lookahead_seconds=replay_config.lookahead_seconds,
+        intensity_threshold=replay_config.intensity_threshold,
+        min_cell_area_pixels=replay_config.min_cell_area_pixels,
         min_temporal_frames=MIN_TEMPORAL_FRAMES,
         max_angular_variance=MAX_ANGULAR_VARIANCE_RADIANS,
         max_storm_speed_kmh=MAX_STORM_SPEED_KMH,
@@ -259,7 +264,7 @@ class ReplayEngine:
                 continue
 
             frames = [frame_cache[r.frame_ts] for r in window]
-            detector_config = _build_detector_config(window[0], config.lookahead_seconds)
+            detector_config = _build_detector_config(window[0], config)
 
             confidence_maps: list[np.ndarray] | None = None
             if config.qc_enabled:
@@ -331,7 +336,7 @@ class ReplayEngine:
                 continue
 
             frames = [frame_cache[r.frame_ts] for r in window]
-            detector_config = _build_detector_config(window[0], config.lookahead_seconds)
+            detector_config = _build_detector_config(window[0], config)
 
             confidence_maps: list[np.ndarray] | None = None
             if config.qc_enabled:
