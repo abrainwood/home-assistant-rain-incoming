@@ -445,7 +445,7 @@ class TestVerifyWithRealDryTiles:
 
 
 class TestVerifyProximityCheck:
-    """Rain within proximity_pixels of location is detected; rain outside is not."""
+    """Rain within the proximity neighborhood of location is detected; rain outside is not."""
 
     def _make_sparse_rain_tile(
         self, pixel_row: int, pixel_col: int, tile_x: int, tile_y: int
@@ -542,9 +542,9 @@ class TestVerifyProximityCheck:
 
         captures = [_make_capture(future_ts, tile_paths)]
         prediction = _make_prediction(window_end_ts=_BASE_TS, rain_incoming=False)
-        # Use a small proximity window (5 pixels) to ensure far rain is ignored
+        # 2km proximity - far rain at grid corner is well outside
         verifier = FutureRadarVerifier(
-            captures, VerifierConfig(lookahead_seconds=3600, proximity_pixels=5)
+            captures, VerifierConfig(lookahead_seconds=3600, proximity_km=2.0)
         )
         result = verifier.verify([prediction])
 
@@ -553,15 +553,16 @@ class TestVerifyProximityCheck:
         )
 
     def test_rain_at_edge_of_neighborhood_detected(self, tmp_path):
-        """Rain at exactly proximity_pixels from the location is detected."""
+        """Rain at the edge of the km-based proximity neighborhood is detected."""
         from scripts.backtest.verifier import FutureRadarVerifier, VerifierConfig
 
-        proximity = 10
+        # 5km at Melbourne resolution (~0.95 km/px) -> half = int(5.0/0.95) = 5 pixels
+        proximity_km = 5.0
+        expected_half = 5
         loc_row, loc_col = self._location_pixel_in_grid()
 
-        # Place rain at location + (proximity//2, 0) - within the NxN box
-        half = proximity // 2
-        target_row = loc_row + half
+        # Place rain at exactly 'expected_half' pixels from location - at the boundary
+        target_row = loc_row + expected_half
         target_col = loc_col
 
         # Map back to which tile and intra-tile pixel
@@ -589,24 +590,25 @@ class TestVerifyProximityCheck:
         captures = [_make_capture(future_ts, tile_paths)]
         prediction = _make_prediction(window_end_ts=_BASE_TS, rain_incoming=True)
         verifier = FutureRadarVerifier(
-            captures, VerifierConfig(lookahead_seconds=3600, proximity_pixels=proximity)
+            captures, VerifierConfig(lookahead_seconds=3600, proximity_km=proximity_km)
         )
         result = verifier.verify([prediction])
 
         assert result[0].actual_rain is True, (
             f"Rain at ({target_row},{target_col}) should be detected within "
-            f"{proximity}px neighborhood of ({loc_row},{loc_col})"
+            f"{proximity_km}km neighborhood of ({loc_row},{loc_col})"
         )
 
     def test_rain_just_outside_neighborhood_not_detected(self, tmp_path):
         """Rain just beyond the proximity window is not detected."""
         from scripts.backtest.verifier import FutureRadarVerifier, VerifierConfig
 
-        proximity = 5
+        # 2km at Melbourne resolution (~0.95 km/px) -> half = int(2.0/0.95) = 2 pixels
+        proximity_km = 2.0
         loc_row, loc_col = self._location_pixel_in_grid()
 
-        # Place rain just outside the window: loc_col + proximity (exclusive edge)
-        outside_col = loc_col + proximity + 5
+        # Place rain well outside the 2-pixel half-width
+        outside_col = loc_col + 10
         outside_row = loc_row
 
         tile_col = outside_col // 256
@@ -633,13 +635,13 @@ class TestVerifyProximityCheck:
         captures = [_make_capture(future_ts, tile_paths)]
         prediction = _make_prediction(window_end_ts=_BASE_TS, rain_incoming=False)
         verifier = FutureRadarVerifier(
-            captures, VerifierConfig(lookahead_seconds=3600, proximity_pixels=proximity)
+            captures, VerifierConfig(lookahead_seconds=3600, proximity_km=proximity_km)
         )
         result = verifier.verify([prediction])
 
         assert result[0].actual_rain is False, (
             f"Rain at ({outside_row},{outside_col}) should NOT be detected "
-            f"with proximity={proximity} and location at ({loc_row},{loc_col})"
+            f"with proximity_km={proximity_km} and location at ({loc_row},{loc_col})"
         )
 
     def test_multiple_predictions_verified_independently(self, tmp_path):
@@ -673,6 +675,123 @@ class TestVerifyProximityCheck:
 
 # ---------------------------------------------------------------------------
 # Frame caching: verifier must not rebuild frames for the same capture
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# 11. Km-based proximity: verifier should use km, not fixed pixels
+# ---------------------------------------------------------------------------
+
+
+class TestProximityKmComputation:
+    """The verifier should compute proximity in pixels from a km radius,
+    matching how the detector converts PROXIMITY_RADIUS_KM to pixels."""
+
+    def test_proximity_half_pixels_penrith_bounds(self):
+        """15km at Penrith resolution (~1.0 km/px) gives ~14 pixels."""
+        from scripts.backtest.verifier import _proximity_half_pixels
+        from custom_components.rain_incoming.providers.base import BoundingBox
+
+        # Penrith-like bounds: 2x2 tiles at zoom 7, lat -33.75
+        bounds = BoundingBox(
+            lat_min=-36.60, lat_max=-31.95,
+            lon_min=149.06, lon_max=154.69,
+        )
+        result = _proximity_half_pixels(15.0, bounds, 512)
+        assert result == 14
+
+    def test_proximity_half_pixels_equatorial_bounds(self):
+        """15km at equatorial resolution (~1.2 km/px) gives ~12 pixels."""
+        from scripts.backtest.verifier import _proximity_half_pixels
+        from custom_components.rain_incoming.providers.base import BoundingBox
+
+        # Darwin-like bounds: 2x2 tiles at zoom 7, lat -12.46
+        bounds = BoundingBox(
+            lat_min=-15.28, lat_max=-9.62,
+            lon_min=128.67, lon_max=134.30,
+        )
+        result = _proximity_half_pixels(15.0, bounds, 512)
+        assert result == 12
+
+    def test_proximity_half_pixels_high_latitude_bounds(self):
+        """15km at high-latitude resolution (~0.7 km/px) gives more pixels."""
+        from scripts.backtest.verifier import _proximity_half_pixels
+        from custom_components.rain_incoming.providers.base import BoundingBox
+
+        # Ketchikan actual tile bounds: 2x2 tiles at zoom 7, lat ~55.7
+        bounds = BoundingBox(
+            lat_min=54.1624, lat_max=57.3265,
+            lon_min=-135.0000, lon_max=-129.3750,
+        )
+        result = _proximity_half_pixels(15.0, bounds, 512)
+        assert result == 21
+
+
+class TestVerifierUsesKmProximity:
+    """VerifierConfig.proximity_km replaces proximity_pixels for consistent
+    km-based proximity across all locations."""
+
+    def test_config_defaults_to_production_proximity(self):
+        """VerifierConfig.proximity_km should default to PROXIMITY_RADIUS_KM."""
+        from scripts.backtest.verifier import VerifierConfig
+        from custom_components.rain_incoming.const import PROXIMITY_RADIUS_KM
+
+        config = VerifierConfig()
+        assert config.proximity_km == PROXIMITY_RADIUS_KM
+
+    def test_rain_within_15km_detected(self, tmp_path):
+        """Rain at ~10km from location (10 pixels at ~1 km/px) is detected
+        with the new 15km proximity but would have been missed with old 5px half."""
+        from scripts.backtest.verifier import FutureRadarVerifier, VerifierConfig
+
+        loc_row, loc_col = TestVerifyProximityCheck._location_pixel_in_grid(
+            TestVerifyProximityCheck()
+        )
+
+        # Place rain 10 pixels from location (~10km at Melbourne resolution)
+        # Old verifier: half=5 -> misses at 10px offset
+        # New verifier: 15km -> half~14px -> catches at 10px offset
+        target_row = loc_row + 10
+        target_col = loc_col
+
+        tile_col = target_col // 256
+        tile_row = target_row // 256
+        tx = 115 + tile_col
+        ty = 78 + tile_row
+        within_tile_col = target_col % 256
+        within_tile_row = target_row % 256
+
+        future_ts = _BASE_TS + 600
+        tile_dir = tmp_path / str(future_ts)
+        tile_dir.mkdir(parents=True, exist_ok=True)
+        tile_paths = {}
+        for (ttx, tty) in _ANALYSIS_TILES:
+            path = tile_dir / f"7_{ttx}_{tty}_s2.png"
+            if ttx == tx and tty == ty:
+                r, g, b, _ = PRECIP_COLOURS[0]
+                img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+                img.putpixel((within_tile_col, within_tile_row), (r, g, b, 255))
+                buf = BytesIO()
+                img.save(buf, format="PNG")
+                path.write_bytes(buf.getvalue())
+            else:
+                path.write_bytes(_make_transparent_tile_png())
+            tile_paths[(ttx, tty)] = path
+
+        captures = [_make_capture(future_ts, tile_paths)]
+        prediction = _make_prediction(window_end_ts=_BASE_TS, rain_incoming=True)
+        # Use default proximity_km (15.0) - should detect rain at 10px offset
+        verifier = FutureRadarVerifier(captures, VerifierConfig(lookahead_seconds=3600))
+        result = verifier.verify([prediction])
+
+        assert result[0].actual_rain is True, (
+            f"Rain at ({target_row},{target_col}), 10px from location ({loc_row},{loc_col}), "
+            f"should be detected with 15km proximity (~14px half at Melbourne resolution)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 12. Frame caching
 # ---------------------------------------------------------------------------
 
 
