@@ -6,10 +6,11 @@ and checks whether any future capture shows rain at the location.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from custom_components.rain_incoming.const import INTENSITY_THRESHOLD
+from custom_components.rain_incoming.const import INTENSITY_THRESHOLD, PROXIMITY_RADIUS_KM
 from custom_components.rain_incoming.providers.base import BoundingBox
 from custom_components.rain_incoming.providers.rainviewer import _tile_bounds
 
@@ -23,11 +24,29 @@ _LOGGER = logging.getLogger(__name__)
 _GRID_SIZE = 512  # 2 tiles × 256 pixels per tile
 
 
+def _proximity_half_pixels(proximity_km: float, bounds: BoundingBox, grid_size: int) -> int:
+    """Convert a proximity radius in km to a half-width in pixels.
+
+    Uses the same formula as the detector's proximity_px calculation
+    (detector.py _pixel_size_km) so verification matches detection.
+    """
+    lat_span_km = (bounds.lat_max - bounds.lat_min) * 111.0
+    lon_span_km = (
+        (bounds.lon_max - bounds.lon_min)
+        * 111.0
+        * math.cos(math.radians((bounds.lat_min + bounds.lat_max) / 2))
+    )
+    km_per_row = lat_span_km / grid_size
+    km_per_col = lon_span_km / grid_size
+    avg_km_per_px = (km_per_row + km_per_col) / 2
+    return int(proximity_km / avg_km_per_px)
+
+
 @dataclass
 class VerifierConfig:
     lookahead_seconds: int = 3600
     intensity_threshold: float = INTENSITY_THRESHOLD
-    proximity_pixels: int = 10
+    proximity_km: float = PROXIMITY_RADIUS_KM
 
 
 class FutureRadarVerifier:
@@ -98,7 +117,7 @@ class FutureRadarVerifier:
         grid = frame.get_intensity_grid(bounds, _GRID_SIZE, _GRID_SIZE)
 
         loc_row, loc_col = _location_pixel(capture.lat, capture.lon, bounds, _GRID_SIZE)
-        half = config.proximity_pixels // 2
+        half = _proximity_half_pixels(config.proximity_km, bounds, _GRID_SIZE)
 
         row_min = max(0, loc_row - half)
         row_max = min(_GRID_SIZE, loc_row + half + 1)

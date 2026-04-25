@@ -4,23 +4,27 @@ Baseline run: 2026-04-24, 10 days of data, 8 locations, `--qc none`.
 
 ## Baseline Results
 
+Corrected baseline (V1: verifier aligned to 15km, matching detector proximity).
+Previous baseline used a ~5km verifier radius that inflated FAR and deflated miss counts.
+
 | Location | POD | FAR | CSI | Bias | Hits | Misses | FA | CN |
 |----------|-----|-----|-----|------|------|--------|----|----|
-| cairns_babinda | 0.972 | 0.052 | 0.923 | 1.02 | 827 | 24 | 45 | 361 |
-| lake_margaret | 0.916 | 0.130 | 0.806 | 1.05 | 241 | 22 | 36 | 958 |
-| quillayute | 0.939 | 0.388 | 0.588 | 1.53 | 413 | 27 | 262 | 555 |
-| hilo | 0.860 | 0.263 | 0.658 | 1.17 | 154 | 25 | 55 | 1023 |
-| mobile | 0.820 | 0.380 | 0.546 | 1.32 | 201 | 44 | 123 | 889 |
-| darwin | 0.810 | 0.571 | 0.390 | 1.89 | 149 | 35 | 198 | 875 |
-| penrith | 0.649 | 0.523 | 0.379 | 1.36 | 135 | 73 | 148 | 901 |
+| cairns_babinda | 0.956 | 0.025 | 0.933 | 0.98 | 850 | 39 | 22 | 346 |
+| lake_margaret | 0.895 | 0.076 | 0.834 | 0.97 | 256 | 30 | 21 | 950 |
+| quillayute | 0.830 | 0.135 | 0.735 | 0.96 | 584 | 120 | 91 | 462 |
+| hilo | 0.785 | 0.110 | 0.715 | 0.88 | 186 | 51 | 23 | 997 |
+| darwin | 0.772 | 0.297 | 0.582 | 1.10 | 244 | 72 | 103 | 838 |
+| mobile | 0.641 | 0.164 | 0.569 | 0.77 | 271 | 152 | 53 | 781 |
+| penrith | 0.502 | 0.265 | 0.425 | 0.68 | 208 | 206 | 75 | 768 |
 | ketchikan | - | - | 1.000 | 0.00 | 0 | 0 | 0 | 1257 |
 
 ## Key Findings
 
-- Detection is good (POD 0.65-0.97) but false alarms are the main problem (FAR 0.05-0.57)
-- Over-prediction everywhere (Bias > 1.0 at all rain locations)
-- Tropical/maritime locations (Cairns, Hilo) outperform terrain-affected locations (Penrith, Darwin)
-- Lead time errors consistently negative (late predictions, mean -4.6 to -12.0min)
+- Tropical/maritime locations (Cairns CSI 0.933, Lake Margaret 0.834) strongly outperform terrain-affected locations (Penrith 0.425, Mobile 0.569)
+- Penrith and Mobile are under-detecting (bias 0.68 and 0.77) - missing ~50% and ~36% of rain events
+- Darwin is the only remaining over-predictor (bias 1.10, FAR 0.297)
+- Lead time errors consistently negative (late predictions, mean -0.6 to -5.6min)
+- Penrith has the worst lead time accuracy (mean -5.6min) - terrain slows/kills approaching cells
 
 ## Investigation Queue
 
@@ -101,8 +105,57 @@ Each item is a hypothesis to test via quick subset run then validate with full r
 
 ### Verification alignment
 
-- **V1: Align detection and verification proximity** - detector uses 128km, verifier uses ~30km. Many "false alarms" may be correct detections of rain that passes nearby but not overhead. Test with verifier proximity matching detector proximity.
+- **V1: Align detection and verification proximity** - DONE. See V1 results below.
 - **V2: Extended verification window** - currently 60min. Some "false alarms" may be rain that arrived after 60min. Test 90min and 120min windows to reclassify.
+
+## V1 Results: Verifier Proximity Alignment
+
+**Problem**: The verifier used a fixed 10-pixel neighborhood (`proximity_pixels=10`, half=5) regardless of location. This translated to only ~5km radius at mid-latitudes and ~3.4km at high latitudes. Meanwhile the detector uses `PROXIMITY_RADIUS_KM=15.0` converted to pixels dynamically (~14px at mid-latitudes). Rain arriving within 15km (which the detector correctly flagged) was being classified as "no rain arrived" by the narrow verifier, creating phantom false alarms.
+
+The original V1 hypothesis incorrectly stated "128km vs 30km" - 128km is a radar display radius, and 30km overstated the verifier's actual reach. The real mismatch was 15km (detector) vs 3-6km (verifier), a 2.5-4.4x ratio depending on latitude.
+
+**Fix**: Replaced `VerifierConfig.proximity_pixels` with `proximity_km` (default `PROXIMITY_RADIUS_KM=15.0`). The verifier now computes pixel radius from km using the same formula as the detector, so detection and verification are geometrically consistent.
+
+**Mismatch by location** (old 10px half=5 vs new 15km):
+
+| Location | Latitude | Old radius (km) | New radius (km) | Ratio |
+|----------|----------|-----------------|-----------------|-------|
+| Ketchikan | 55.4 | 3.4 | 15.0 | 4.4x |
+| Quillayute | 47.9 | 4.2 | 15.0 | 3.6x |
+| Penrith | -33.8 | 5.0 | 15.0 | 3.0x |
+| Hilo | 19.7 | 5.8 | 15.0 | 2.6x |
+| Cairns | -17.4 | 5.8 | 15.0 | 2.6x |
+| Darwin | -12.5 | 6.0 | 15.0 | 2.5x |
+
+**Quick subset reclassification** (10 curated FAs per location):
+
+| Location | Phantom FAs | Old CNs now Misses | Net |
+|----------|-------------|--------------------|----|
+| Cairns | 8/10 (80%) | 1/10 | Strong - nearly all FAs were real rain just outside old radius |
+| Penrith | 7/10 (70%) | 0/10 | Strong - 70% of Penrith FAs were phantom |
+| Hilo | 7/10 (70%) | 0/10 | Strong |
+| Darwin | 6/10 (60%) | 0/10 | Good |
+| Mobile | 6/10 (60%) | 0/10 | Good |
+| Quillayute | 4/10 (40%) | 4/10 | Mixed - wider radius also catches more real rain events at high latitude |
+| Lake Margaret | 3/10 (30%) | 0/10 | Modest |
+
+**Full population results** (qc=none, 10 days, all windows):
+
+| Location | POD | FAR | CSI | Bias | FA→Hit | CN→Miss |
+|----------|-----|-----|-----|------|--------|---------|
+| cairns_babinda | 0.956 | 0.025 | 0.933 | 0.98 | +23 | +15 |
+| quillayute | 0.830 | 0.135 | 0.735 | 0.96 | +171 | +93 |
+| lake_margaret | 0.895 | 0.076 | 0.834 | 0.97 | +15 | +8 |
+| hilo | 0.785 | 0.110 | 0.715 | 0.88 | +32 | +26 |
+| darwin | 0.772 | 0.297 | 0.582 | 1.10 | +95 | +37 |
+| mobile | 0.641 | 0.164 | 0.569 | 0.77 | +70 | +108 |
+| penrith | 0.502 | 0.265 | 0.425 | 0.68 | +73 | +133 |
+
+**CSI improved at every location.** FAR dropped dramatically (Penrith 0.523→0.265, Darwin 0.571→0.297). Bias moved toward 1.0 everywhere - the detector is better calibrated than old scores suggested.
+
+**Critical insight - tuning direction has changed**: The old verifier made it look like the system was over-predicting (bias > 1.0 everywhere). The aligned verifier reveals the opposite at Penrith (bias=0.68) and Mobile (bias=0.77) - these locations are UNDER-detecting, not over-predicting. For Penrith, 133 old CNs became misses (rain within 15km we weren't detecting AND the old verifier didn't see). Tuning should focus on improving detection rate (T1: lower threshold, T4: fewer frames) rather than reducing false alarms (T2: higher min area, T3: tighter proximity).
+
+Full results in reports/full-v1-aligned/.
 
 ## Framework Improvements Done
 
