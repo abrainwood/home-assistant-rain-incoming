@@ -317,6 +317,14 @@ class TestRainAtLocation:
         assert result.rain_incoming is False
         assert result.rain_at_location is False
 
+    # NOTE: We investigated filtering single-frame transient rain at the
+    # location (6 of Penrith's 75 FAs). The filter also removes real
+    # "rain just arrived" events where rain appears in 1 frame with no
+    # cell tracking support. Net result: -2 FA but -4 hits. Not worth it.
+    # Real rain arriving looks identical to transient noise when isolated
+    # from cell tracking. A smarter approach (e.g., satellite cloud
+    # confirmation) is needed to distinguish them.
+
 
 class TestSpeedCap:
     def test_fast_cell_rejected_by_speed_cap(self):
