@@ -45,6 +45,9 @@ class TestIntegratedRainValidation:
         If previous_gif is provided, polls until the image differs from it
         (handles async_image returning stale cached data). Otherwise polls
         until the image has non-trivial content.
+
+        Raises AssertionError on timeout so the failure message is diagnostic
+        ("timed out waiting for render") rather than misleading ("images identical").
         """
         ha_client.set_mock_scenario(scenario)
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR, timeout=60)
@@ -55,7 +58,19 @@ class TestIntegratedRainValidation:
                 if previous_gif is None or gif != previous_gif:
                     return gif
             time.sleep(2)
-        return ha_client.get_image(entity_id)
+        gif = ha_client.get_image(entity_id)
+        if previous_gif is not None and gif == previous_gif:
+            raise AssertionError(
+                f"Timed out after {_IMAGE_POLL_TIMEOUT}s waiting for '{scenario}' "
+                f"image to differ from previous scenario. "
+                f"Image render may not have completed in time."
+            )
+        if not gif or len(gif) <= 1000:
+            raise AssertionError(
+                f"Timed out after {_IMAGE_POLL_TIMEOUT}s waiting for '{scenario}' "
+                f"image to have non-trivial content (got {len(gif) if gif else 0} bytes)."
+            )
+        return gif
 
     def test_rain_is_visible_on_radar_image(self, ha_client):
         """The radar image MUST look different with rain vs without rain."""
