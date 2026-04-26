@@ -611,3 +611,209 @@ class TestClosingDistanceFallback:
         frames = self._make_oblique_frames(cfg, positions)
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.rain_incoming is False
+
+
+class TestDetectDiagnostics:
+    """Tests for the diagnostic trace feature that exposes frame analysis details."""
+
+    def test_diagnostics_trace_records_cell_counts_per_frame(self):
+        """When detect() is called with diagnostics=DiagnosticTrace(), the trace
+        should record the cell count found in each frame.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+        )
+
+        cfg = default_config()
+        # Frame 0: empty grid (0 cells)
+        grid0 = np.zeros((64, 64), dtype=np.float32)
+        frame0 = make_frame(ts(-20), grid0, cfg.analysis_bounds)
+
+        # Frame 1: empty grid (0 cells)
+        grid1 = np.zeros((64, 64), dtype=np.float32)
+        frame1 = make_frame(ts(-10), grid1, cfg.analysis_bounds)
+
+        # Frame 2: one rain cell (2x2 patch at row 20, col 20 - away from location)
+        grid2 = np.zeros((64, 64), dtype=np.float32)
+        grid2[20:22, 20:22] = 0.5
+        frame2 = make_frame(ts(0), grid2, cfg.analysis_bounds)
+
+        frames = [frame0, frame1, frame2]
+        trace = DiagnosticTrace()
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        # Verify trace was populated
+        assert len(trace.frames) == 3
+        assert trace.frames[0].cell_count == 0
+        assert trace.frames[1].cell_count == 0
+        assert trace.frames[2].cell_count == 1
+
+    def test_diagnostics_trace_records_tracks_with_frame_indices(self):
+        """When detect() runs on frames containing a single rain cell moving across
+        3 frames, the trace's tracks list should contain one TrackDiagnostic whose
+        frame_indices is [0, 1, 2].
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+            TrackDiagnostic,
+        )
+
+        cfg = default_config()
+        # Build 3 frames with a single cell moving east by 2 pixels per frame
+        # Frame 0: cell at columns 20-21 (2x2 patch at row 20)
+        grid0 = np.zeros((64, 64), dtype=np.float32)
+        grid0[20:22, 20:22] = 0.5
+        frame0 = make_frame(ts(-20), grid0, cfg.analysis_bounds)
+
+        # Frame 1: cell at columns 22-23
+        grid1 = np.zeros((64, 64), dtype=np.float32)
+        grid1[20:22, 22:24] = 0.5
+        frame1 = make_frame(ts(-10), grid1, cfg.analysis_bounds)
+
+        # Frame 2: cell at columns 24-25
+        grid2 = np.zeros((64, 64), dtype=np.float32)
+        grid2[20:22, 24:26] = 0.5
+        frame2 = make_frame(ts(0), grid2, cfg.analysis_bounds)
+
+        frames = [frame0, frame1, frame2]
+        trace = DiagnosticTrace()
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        # Verify trace.tracks was populated with the cell track
+        assert len(trace.tracks) == 1
+        assert trace.tracks[0].frame_indices == [0, 1, 2]
+
+    def test_diagnostics_records_dropped_track_too_short(self):
+        """When a cell appears only in the last frame (single-frame track),
+        the trace should record that track with status='dropped' and reason='too_short'.
+
+        The detector requires min_temporal_frames=2. A single-frame track in the last
+        frame meets the 'ends on last frame' condition but fails the minimum duration check.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+        )
+
+        cfg = default_config()
+        # Frame 0: empty grid (no cells)
+        grid0 = np.zeros((64, 64), dtype=np.float32)
+        frame0 = make_frame(ts(-20), grid0, cfg.analysis_bounds)
+
+        # Frame 1: empty grid (no cells)
+        grid1 = np.zeros((64, 64), dtype=np.float32)
+        frame1 = make_frame(ts(-10), grid1, cfg.analysis_bounds)
+
+        # Frame 2: one rain cell (2x2 patch at row 20, col 20 - away from location)
+        grid2 = np.zeros((64, 64), dtype=np.float32)
+        grid2[20:22, 20:22] = 0.5
+        frame2 = make_frame(ts(0), grid2, cfg.analysis_bounds)
+
+        frames = [frame0, frame1, frame2]
+        trace = DiagnosticTrace()
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        # The detector builds one track from the single cell in the last frame
+        assert len(trace.tracks) == 1
+        # Track contains only frame 2
+        assert trace.tracks[0].frame_indices == [2]
+        # Track is dropped because it's too short (only 1 frame, requires min 2)
+        assert trace.tracks[0].status == "dropped"
+        assert trace.tracks[0].reason == "too_short"
+
+    def test_diagnostics_records_dropped_track_ended_early(self):
+        """When a cell appears in early frames but vanishes before the last frame,
+        the trace should record that track with status='dropped' and reason='ended_early'.
+
+        A track that meets the minimum temporal duration but ends before the last frame
+        is rejected because it doesn't span the observation window.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+        )
+
+        cfg = default_config()
+        # Frame 0: cell at row 20, columns 20-21
+        grid0 = np.zeros((64, 64), dtype=np.float32)
+        grid0[20:22, 20:22] = 0.5
+        frame0 = make_frame(ts(-20), grid0, cfg.analysis_bounds)
+
+        # Frame 1: cell at row 20, columns 22-23 (moved 2px east)
+        grid1 = np.zeros((64, 64), dtype=np.float32)
+        grid1[20:22, 22:24] = 0.5
+        frame1 = make_frame(ts(-10), grid1, cfg.analysis_bounds)
+
+        # Frame 2 (last): empty grid (cell vanished)
+        grid2 = np.zeros((64, 64), dtype=np.float32)
+        frame2 = make_frame(ts(0), grid2, cfg.analysis_bounds)
+
+        frames = [frame0, frame1, frame2]
+        trace = DiagnosticTrace()
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        # The detector builds one track from frames 0-1
+        assert len(trace.tracks) == 1
+        # Track spans frames 0-1 (len=2, meets min_temporal_frames=2)
+        assert trace.tracks[0].frame_indices == [0, 1]
+        # But it ends on frame 1, not frame 2 (last_frame_idx), so it's dropped
+        assert trace.tracks[0].status == "dropped"
+        assert trace.tracks[0].reason == "ended_early"
+
+    def test_diagnostics_records_decision_for_approaching_rain(self):
+        """When detect() predicts incoming rain from an approaching cell, the trace's
+        decision field should record rain_incoming=True and an arrival_minutes value
+        matching the result.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+        )
+
+        cfg = default_config()
+        # Build 3 frames with a single cell moving east toward the location.
+        # Location is at pixel (32, 32). Cell starts at col 20 and moves right by 2 px/frame.
+        # At ~52 km/h this stays under the 120 km/h speed cap.
+        # It will reach the location within the lookahead window.
+        # Frame 0: cell at row 20, columns 20-21 (intensity 0.5)
+        grid0 = np.zeros((64, 64), dtype=np.float32)
+        grid0[30:33, 20:23] = 0.5
+        frame0 = make_frame(ts(-20), grid0, cfg.analysis_bounds)
+
+        # Frame 1: cell at row 20, columns 22-23 (moved 2px east)
+        grid1 = np.zeros((64, 64), dtype=np.float32)
+        grid1[30:33, 22:25] = 0.5
+        frame1 = make_frame(ts(-10), grid1, cfg.analysis_bounds)
+
+        # Frame 2: cell at row 20, columns 24-25 (moved 2px east)
+        grid2 = np.zeros((64, 64), dtype=np.float32)
+        grid2[30:33, 24:27] = 0.5
+        frame2 = make_frame(ts(0), grid2, cfg.analysis_bounds)
+
+        frames = [frame0, frame1, frame2]
+        trace = DiagnosticTrace()
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        # Verify the detector predicted rain incoming (approaching cell detected)
+        assert result.rain_incoming is True
+        assert result.arrival_time is not None
+
+        # Verify trace.decision was populated
+        assert trace.decision is not None
+
+        # Mirror the result's rain_incoming status
+        assert trace.decision.rain_incoming == result.rain_incoming
+
+        # Verify arrival_minutes matches the calculation:
+        # (arrival_time - last_frame_timestamp).total_seconds() / 60.0
+        expected_arrival_minutes = (
+            result.arrival_time - frames[-1].timestamp
+        ).total_seconds() / 60.0
+        assert trace.decision.arrival_minutes == pytest.approx(
+            expected_arrival_minutes, abs=0.1
+        )
+
+        # Verify rain_at_location mirrors the result
+        assert trace.decision.rain_at_location == result.rain_at_location

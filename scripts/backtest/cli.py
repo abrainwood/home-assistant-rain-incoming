@@ -8,6 +8,8 @@ from the command line::
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import json
 import sys
 from pathlib import Path
 
@@ -166,6 +168,13 @@ def main(argv: list[str] | None = None) -> None:
         default=False,
         help="Enable acceleration-aware cell projection (experimental)",
     )
+    parser.add_argument(
+        "--inspect",
+        nargs=2,
+        metavar=("LOCATION", "TIMESTAMP"),
+        default=None,
+        help="Run detect() on a single window and print the diagnostic trace as JSON. Args: location_name, window_end_ts",
+    )
 
     args = parser.parse_args(argv)
 
@@ -189,6 +198,30 @@ def main(argv: list[str] | None = None) -> None:
     if not captures_dir.is_dir():
         print(f"Error: {captures_dir} not found", file=sys.stderr)
         sys.exit(1)
+
+    # Handle --inspect mode: run detect() on a single window and dump the trace as JSON
+    if args.inspect:
+        location_name, ts_str = args.inspect
+        window_end_ts = int(ts_str)
+        loc_dir = captures_dir / location_name
+        captures = load_captures(loc_dir)
+        replay_kwargs = dict(
+            window_size=args.window_size,
+            max_gap_seconds=args.max_gap_seconds,
+            qc_enabled=(args.qc == "full"),
+            lookahead_seconds=args.lookahead_minutes * 60,
+        )
+        if args.intensity_threshold is not None:
+            replay_kwargs["intensity_threshold"] = args.intensity_threshold
+        if args.min_cell_area is not None:
+            replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
+        if args.use_acceleration:
+            replay_kwargs["use_acceleration"] = True
+        config = ReplayConfig(**replay_kwargs)
+        engine = ReplayEngine(config)
+        _prediction, trace = engine.inspect_window(captures, window_end_ts=window_end_ts)
+        print(json.dumps(dataclasses.asdict(trace), indent=2, default=str))
+        return
 
     # Discover locations
     if args.locations == "all":

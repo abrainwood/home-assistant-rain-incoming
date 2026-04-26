@@ -736,3 +736,71 @@ class TestIntensityThresholdFlag:
         config = call_args[1].get("config") or (call_args[0][1] if len(call_args[0]) > 1 else None)
         assert config is not None, "VerifierConfig not passed to FutureRadarVerifier"
         assert config.intensity_threshold == 0.05
+
+
+# ---------------------------------------------------------------------------
+# Test: --inspect <location> <timestamp> prints diagnostic trace as JSON
+# ---------------------------------------------------------------------------
+
+
+class TestMainInspectMode:
+    def test_main_inspect_prints_trace_as_json(self, tmp_path: Path, capsys) -> None:
+        """--inspect LOCATION TIMESTAMP prints diagnostic JSON to stdout."""
+        from scripts.backtest.cli import main
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+            FrameDiagnostic,
+            TrackDiagnostic,
+            DecisionDiagnostic,
+        )
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "loc1")
+
+        prediction = _make_prediction(rain_incoming=True, arrival_minutes=15.0)
+        trace = DiagnosticTrace(
+            frames=[FrameDiagnostic(cell_count=1)],
+            tracks=[TrackDiagnostic(frame_indices=[0, 1, 2], status="accepted")],
+            decision=DecisionDiagnostic(
+                rain_incoming=True, arrival_minutes=15.0, rain_at_location=False
+            ),
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.inspect_window.return_value = (prediction, trace)
+
+            main([
+                "--data-dir", str(data_dir),
+                "--inspect", "loc1", "1776700000",
+            ])
+
+        captured = capsys.readouterr()
+        # Output should contain JSON with the trace structure
+        # The CLI should print a single JSON object that parses cleanly
+        # Look for a parseable JSON block in stdout
+        out = captured.out
+        # Find the first '{' and last '}' and parse the slice
+        start = out.find("{")
+        end = out.rfind("}")
+        assert start >= 0 and end > start, f"No JSON found in output:\n{out}"
+        parsed = json.loads(out[start : end + 1])
+
+        assert "frames" in parsed
+        assert len(parsed["frames"]) == 1
+        assert parsed["frames"][0]["cell_count"] == 1
+        assert "tracks" in parsed
+        assert parsed["tracks"][0]["status"] == "accepted"
+        assert "decision" in parsed
+        assert parsed["decision"]["rain_incoming"] is True
+        assert parsed["decision"]["arrival_minutes"] == 15.0
+
+        # Verify inspect_window was called with the right timestamp
+        instance.inspect_window.assert_called_once()
+        call_args = instance.inspect_window.call_args
+        # window_end_ts should be 1776700000
+        assert (
+            1776700000 in call_args.args
+            or call_args.kwargs.get("window_end_ts") == 1776700000
+        )
