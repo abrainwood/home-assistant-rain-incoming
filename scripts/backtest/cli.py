@@ -75,6 +75,27 @@ def _print_errors(records: list[VerificationRecord]) -> None:
         print("\n  No errors - perfect forecast!")
 
 
+def _build_replay_config(args: argparse.Namespace) -> ReplayConfig:
+    """Build a ReplayConfig from parsed CLI args, applying optional overrides."""
+    kwargs: dict = {
+        "window_size": args.window_size,
+        "max_gap_seconds": args.max_gap_seconds,
+        "qc_enabled": args.qc == "full",
+        "lookahead_seconds": args.lookahead_minutes * 60,
+    }
+    if args.intensity_threshold is not None:
+        kwargs["intensity_threshold"] = args.intensity_threshold
+    if args.min_cell_area is not None:
+        kwargs["min_cell_area_pixels"] = args.min_cell_area
+    if args.use_acceleration:
+        kwargs["use_acceleration"] = True
+    if args.use_intensity_trend:
+        kwargs["use_intensity_trend"] = True
+    if args.frame_scale_by_lookahead:
+        kwargs["frame_scale_by_lookahead"] = True
+    return ReplayConfig(**kwargs)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point for `python -m scripts.backtest`."""
     parser = argparse.ArgumentParser(
@@ -219,23 +240,7 @@ def main(argv: list[str] | None = None) -> None:
         for entry in manifest.entries:
             entries_by_location.setdefault(entry.location, []).append(entry)
 
-        replay_kwargs = dict(
-            window_size=args.window_size,
-            max_gap_seconds=args.max_gap_seconds,
-            qc_enabled=(args.qc == "full"),
-            lookahead_seconds=args.lookahead_minutes * 60,
-        )
-        if args.intensity_threshold is not None:
-            replay_kwargs["intensity_threshold"] = args.intensity_threshold
-        if args.min_cell_area is not None:
-            replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
-        if args.use_acceleration:
-            replay_kwargs["use_acceleration"] = True
-        if args.use_intensity_trend:
-            replay_kwargs["use_intensity_trend"] = True
-        if args.frame_scale_by_lookahead:
-            replay_kwargs["frame_scale_by_lookahead"] = True
-        config = ReplayConfig(**replay_kwargs)
+        config = _build_replay_config(args)
         engine = ReplayEngine(config)
 
         captures_dir = args.data_dir / "captures"
@@ -267,23 +272,7 @@ def main(argv: list[str] | None = None) -> None:
         window_end_ts = int(ts_str)
         loc_dir = captures_dir / location_name
         captures = load_captures(loc_dir)
-        replay_kwargs = dict(
-            window_size=args.window_size,
-            max_gap_seconds=args.max_gap_seconds,
-            qc_enabled=(args.qc == "full"),
-            lookahead_seconds=args.lookahead_minutes * 60,
-        )
-        if args.intensity_threshold is not None:
-            replay_kwargs["intensity_threshold"] = args.intensity_threshold
-        if args.min_cell_area is not None:
-            replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
-        if args.use_acceleration:
-            replay_kwargs["use_acceleration"] = True
-        if args.use_intensity_trend:
-            replay_kwargs["use_intensity_trend"] = True
-        if args.frame_scale_by_lookahead:
-            replay_kwargs["frame_scale_by_lookahead"] = True
-        config = ReplayConfig(**replay_kwargs)
+        config = _build_replay_config(args)
         engine = ReplayEngine(config)
         _prediction, trace = engine.inspect_window(captures, window_end_ts=window_end_ts)
         print(json.dumps(dataclasses.asdict(trace), indent=2, default=str))
@@ -299,23 +288,7 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"Error: location directory {d} not found", file=sys.stderr)
                 sys.exit(1)
 
-    replay_kwargs = dict(
-        window_size=args.window_size,
-        max_gap_seconds=args.max_gap_seconds,
-        qc_enabled=(args.qc == "full"),
-        lookahead_seconds=args.lookahead_minutes * 60,
-    )
-    if args.intensity_threshold is not None:
-        replay_kwargs["intensity_threshold"] = args.intensity_threshold
-    if args.min_cell_area is not None:
-        replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
-    if args.use_acceleration:
-        replay_kwargs["use_acceleration"] = True
-    if args.use_intensity_trend:
-        replay_kwargs["use_intensity_trend"] = True
-    if args.frame_scale_by_lookahead:
-        replay_kwargs["frame_scale_by_lookahead"] = True
-    config = ReplayConfig(**replay_kwargs)
+    config = _build_replay_config(args)
     engine = ReplayEngine(config)
     all_scorecards: list[ScoreCard] = []
     all_records: dict[str, list[VerificationRecord]] = {}
