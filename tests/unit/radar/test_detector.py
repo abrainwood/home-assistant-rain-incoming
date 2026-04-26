@@ -9,6 +9,7 @@ import pytest
 from custom_components.rain_incoming.providers.base import BoundingBox, RadarFrame
 from custom_components.rain_incoming.providers.open_meteo import max_pop_in_window
 from custom_components.rain_incoming.radar.confidence import pop_to_threshold_multiplier
+from custom_components.rain_incoming.const import STRONG_BYPASS_INTENSITY
 from custom_components.rain_incoming.radar.detector import (
     Confidence,
     DetectionResult,
@@ -140,12 +141,23 @@ class TestDetectRainApproaching:
 
 
 class TestDetectorPopMultiplier:
+    # Deliberately weak: must be above intensity_threshold (0.1) but below
+    # STRONG_BYPASS_INTENSITY (0.5) so S7b bypass never fires in this class.
+    _WEAK_INTENSITY = 0.3
+
     def _make_approaching_frames(self, cfg: DetectorConfig) -> list[RadarFrame]:
-        """Simulate a rain cell moving east toward Terry Hills (same as TestDetectRainApproaching)."""
+        """Simulate a weak rain cell moving east toward Terry Hills.
+
+        Intensity is deliberately < STRONG_BYPASS_INTENSITY so the S7b bypass
+        doesn't apply and the multiplier gate behavior is cleanly tested.
+        """
+        assert self._WEAK_INTENSITY < STRONG_BYPASS_INTENSITY, (
+            "Test cell intensity must be below STRONG_BYPASS_INTENSITY or S7b bypass will fire"
+        )
         frames = []
         for i, col_offset in enumerate([18, 22, 26]):
             grid = np.zeros((64, 64), dtype=np.float32)
-            grid[30:33, col_offset:col_offset + 3] = 0.8
+            grid[30:33, col_offset:col_offset + 3] = self._WEAK_INTENSITY
             frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
         return frames
 
@@ -925,3 +937,79 @@ class TestDetectDiagnostics:
         assert track.initial_intensity == pytest.approx(0.8, abs=0.01)
         assert track.final_intensity == pytest.approx(0.8, abs=0.01)
 
+
+
+class TestTrackPeakIntensity:
+    def test_returns_peak_intensity_across_track_frames(self):
+        """_track_peak_intensity finds the max pixel value in the cell region across all track frames.
+
+        Build a 2-frame scenario:
+        - Frame 0: cell labeled=1 at rows 0-1, cols 0-1 with intensity 0.4
+        - Frame 1: cell labeled=1 at rows 2-3, cols 2-3 with intensity 0.7 (the peak)
+        - Noise pixels in other regions should not be picked up
+
+        Expected result: 0.7
+        """
+        from custom_components.rain_incoming.radar.detector import _track_peak_intensity
+
+        size = 5
+
+        # Frame 0: label=1 occupies top-left 2x2; grid intensity 0.4 there
+        labeled_0 = np.zeros((size, size), dtype=np.int32)
+        labeled_0[0:2, 0:2] = 1
+        grid_0 = np.zeros((size, size), dtype=np.float32)
+        grid_0[0:2, 0:2] = 0.4
+        grid_0[3, 3] = 0.9  # noise pixel not in label=1 region
+
+        # Frame 1: label=1 occupies middle 2x2; grid intensity 0.7 there (the peak)
+        labeled_1 = np.zeros((size, size), dtype=np.int32)
+        labeled_1[2:4, 2:4] = 1
+        grid_1 = np.zeros((size, size), dtype=np.float32)
+        grid_1[2:4, 2:4] = 0.7
+
+        # track: (frame_idx, label, centroid)
+        track = [
+            (0, 1, (0.5, 0.5)),
+            (1, 1, (2.5, 2.5)),
+        ]
+        per_frame_labeled = [labeled_0, labeled_1]
+        effective_grids = [grid_0, grid_1]
+
+        result = _track_peak_intensity(track, per_frame_labeled, effective_grids)
+
+        assert result == pytest.approx(0.7, abs=1e-6), (
+            f"Expected peak intensity 0.7 (from frame 1 cell), got {result}"
+        )
+
+
+class TestStrongBypassGate:
+    def _make_2frame_strong_approaching(self, cfg: DetectorConfig) -> list[RadarFrame]:
+        """2-frame strong cell moving east toward location. Peak intensity 0.8."""
+        frames = []
+        for i, col_offset in enumerate([22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-10 + i * 10), grid, cfg.analysis_bounds))
+        return frames
+
+    def test_strong_cell_bypasses_multiplier_gate(self):
+        """S7b: a strong cell (peak >= 0.5) with pop_multiplier=2.0 still detects.
+
+        With pop_multiplier=2.0 and min_temporal_frames=2:
+        - effective_min_frames = ceil(2 * 2.0) = 4
+        - Without bypass: 2-frame track < 4 → no detection
+        - With S7b bypass (peak 0.8 >= STRONG_BYPASS_INTENSITY 0.5): min_required = 2 → detects
+
+        This test currently fails because the bypass doesn't exist yet.
+        """
+        cfg = default_config()
+        cfg.pop_multiplier = 2.0
+        frames = self._make_2frame_strong_approaching(cfg)
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+
+        assert result.rain_incoming is True, (
+            "Strong cell (peak=0.8) should bypass the pop_multiplier gate "
+            f"but got rain_incoming={result.rain_incoming}. "
+            "S7b bypass is not implemented yet."
+        )
