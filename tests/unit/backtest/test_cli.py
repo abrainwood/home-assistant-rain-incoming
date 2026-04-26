@@ -738,6 +738,87 @@ class TestIntensityThresholdFlag:
         assert config.intensity_threshold == 0.05
 
 
+
+# ---------------------------------------------------------------------------
+# Test: --inspect-set loads manifest and runs inspect_window for each entry
+# ---------------------------------------------------------------------------
+
+
+class TestMainInspectSetMode:
+    def test_main_inspect_set_runs_inspect_window_for_each_manifest_entry(
+        self, tmp_path, capsys
+    ):
+        """When --inspect-set MANIFEST.json is called, ReplayEngine.inspect_window is called for each manifest entry."""
+        from scripts.backtest.cli import main
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+            FrameDiagnostic,
+            DecisionDiagnostic,
+        )
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "loc1")
+
+        # Build a manifest with 2 entries
+        manifest_path = tmp_path / "manifest.json"
+        manifest_data = {
+            "name": "test",
+            "description": "test",
+            "created_from": "test",
+            "created_at": "2026-04-26T00:00:00Z",
+            "windows": [
+                {
+                    "location": "loc1",
+                    "window_end_ts": 1776700000,
+                    "category": "false_alarm",
+                    "subcategory": "dissipated",
+                },
+                {
+                    "location": "loc1",
+                    "window_end_ts": 1776700600,
+                    "category": "hit",
+                    "subcategory": "strong",
+                },
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest_data))
+
+        prediction = _make_prediction(rain_incoming=True, arrival_minutes=15.0)
+        trace = DiagnosticTrace(
+            frames=[FrameDiagnostic(cell_count=1)],
+            decision=DecisionDiagnostic(
+                rain_incoming=True, arrival_minutes=15.0, rain_at_location=False
+            ),
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.inspect_window.return_value = (prediction, trace)
+
+            main([
+                "--data-dir", str(data_dir),
+                "--inspect-set", str(manifest_path),
+            ])
+
+        # inspect_window called once per manifest entry
+        assert instance.inspect_window.call_count == 2
+
+        # Output should be a JSON list with 2 entries
+        captured = capsys.readouterr()
+        out = captured.out
+        start = out.find("[")
+        end = out.rfind("]")
+        assert start >= 0 and end > start, f"No JSON array found in output:\n{out}"
+        parsed = json.loads(out[start:end+1])
+        assert isinstance(parsed, list)
+        assert len(parsed) == 2
+        # Each entry should be a trace dict
+        for entry in parsed:
+            assert "frames" in entry
+            assert "decision" in entry
+
+
 # ---------------------------------------------------------------------------
 # Test: --inspect <location> <timestamp> prints diagnostic trace as JSON
 # ---------------------------------------------------------------------------

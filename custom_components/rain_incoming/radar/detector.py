@@ -77,6 +77,9 @@ class TrackDiagnostic:
     frame_indices: list[int]
     status: str
     reason: str | None = None
+    velocity_kmh: float | None = None
+    initial_intensity: float | None = None
+    final_intensity: float | None = None
 
 
 @dataclass
@@ -216,7 +219,6 @@ def _check_rain_at_location(
 # Minimum cell confidence to report rain_incoming
 _MIN_CELL_CONFIDENCE = 0.35
 
-
 def _cell_mean_confidence(
     label: int,
     last_labeled: np.ndarray,
@@ -292,6 +294,22 @@ def _evaluate_overhead_cell(
         confidence=cell_conf,
     )
     return tracked, arrival_dt, intensity_contribution
+
+
+def _intensity_at_track_entry(
+    track: list[_TrackEntry],
+    idx: int,
+    per_frame_grids: list[np.ndarray],
+    per_frame_labeled_all: list[np.ndarray],
+) -> float:
+    """Return the max pixel intensity of the cell at track[idx] in its frame."""
+    frame_idx, label, _ = track[idx]
+    grid = per_frame_grids[frame_idx]
+    labeled = per_frame_labeled_all[frame_idx]
+    cell_pixels = grid[labeled == label]
+    if cell_pixels.size == 0:
+        return 0.0
+    return float(cell_pixels.max())
 
 
 def _evaluate_approaching_cell(
@@ -703,11 +721,20 @@ def detect(
                 track_status, track_reason = "dropped", "ended_early"
             else:
                 track_status, track_reason = "accepted", None
+            diag_velocity: float | None = None
+            if len(track) >= 2:
+                speed, _ = _track_velocity_kmh_bearing(track, frames, km_per_row, km_per_col)
+                diag_velocity = speed
+            diag_initial = _intensity_at_track_entry(track, 0, analysis.grids, analysis.per_frame_labeled)
+            diag_final = _intensity_at_track_entry(track, -1, analysis.grids, analysis.per_frame_labeled)
             diagnostics.tracks.append(
                 TrackDiagnostic(
                     frame_indices=[entry[0] for entry in track],
                     status=track_status,
                     reason=track_reason,
+                    velocity_kmh=diag_velocity,
+                    initial_intensity=diag_initial,
+                    final_intensity=diag_final,
                 )
             )
 
