@@ -89,10 +89,6 @@ def _build_replay_config(args: argparse.Namespace) -> ReplayConfig:
         kwargs["min_cell_area_pixels"] = args.min_cell_area
     if args.use_acceleration:
         kwargs["use_acceleration"] = True
-    if args.use_intensity_trend:
-        kwargs["use_intensity_trend"] = True
-    if args.frame_scale_by_lookahead:
-        kwargs["frame_scale_by_lookahead"] = True
     return ReplayConfig(**kwargs)
 
 
@@ -188,18 +184,6 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         default=False,
         help="Enable acceleration-aware cell projection (experimental)",
-    )
-    parser.add_argument(
-        "--use-intensity-trend",
-        action="store_true",
-        default=False,
-        help="Suppress detection of cells whose intensity is sharply declining (experimental)",
-    )
-    parser.add_argument(
-        "--frame-scale-by-lookahead",
-        action="store_true",
-        default=False,
-        help="Scale min_temporal_frames by lookahead (2 frames at <=20min, 3 at <=40min, 4 at >40min)",
     )
     parser.add_argument(
         "--inspect",

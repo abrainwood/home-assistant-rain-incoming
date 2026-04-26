@@ -180,6 +180,12 @@ Mountains. If we suppress detection of cells with sharply declining intensity
 Total across all locations: 4 fewer hits, 5 fewer FAs. Max CSI delta ±0.008
 (Darwin loses 3 hits for 1 FA reduction - net negative).
 
+**Status: REMOVED**. The structural mismatch (~82% of Penrith FAs are overhead
+transients, not approaching cells that intensity trend can address) means more
+data won't change the conclusion at this threshold. Future investigation could
+sweep the threshold (0.6-0.8) but not at the cost of carrying dead config in
+the meantime.
+
 Why no effect:
 - Of 55 Penrith FAs, only ~10 are truly approaching cells (positive predicted
   arrival). The other 45 are overhead-transient FAs that intensity trend
@@ -216,6 +222,10 @@ by lookahead horizon: 2 frames at <=20min, 3 at <=40min, 4 at >40min.
 
 Max CSI delta ±0.003. Slight wins at Hilo/Lake Margaret, slight losses at
 Penrith/Darwin/Quillayute. Essentially noise.
+
+**Status: REMOVED**. The tradeoff (filter short tracks, lose some real hits with
+the noise) is structural; more data won't shift the direction. Could matter more
+at 60min lookahead where scaling jumps to 4 frames, but default is 30min.
 
 **Status**: kept as opt-in (`--frame-scale-by-lookahead`). Could matter more at
 longer lookaheads (60min would require 4 frames) but current default is 30min

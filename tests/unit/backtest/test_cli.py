@@ -738,36 +738,6 @@ class TestIntensityThresholdFlag:
         assert config.intensity_threshold == 0.05
 
 
-# ---------------------------------------------------------------------------
-# Test: --use-intensity-trend flag
-# ---------------------------------------------------------------------------
-
-
-class TestMainUseIntensityTrend:
-    def test_use_intensity_trend_flag_passed_to_replay_config(
-        self, tmp_path: Path, capsys
-    ) -> None:
-        """--use-intensity-trend sets use_intensity_trend=True in ReplayConfig."""
-        from scripts.backtest.cli import main
-
-        data_dir = tmp_path / "data"
-        captures_dir = data_dir / "captures"
-        _make_location_dir(captures_dir, "loc1")
-
-        predictions = [_make_prediction()]
-
-        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
-             patch("scripts.backtest.cli.ReplayConfig") as MockConfig:
-            MockConfig.return_value = MagicMock()
-            instance = MockEngine.return_value
-            instance.replay.return_value = predictions
-
-            main(["--data-dir", str(data_dir), "--use-intensity-trend"])
-
-        MockConfig.assert_called_once()
-        _, kwargs = MockConfig.call_args
-        assert kwargs.get("use_intensity_trend") is True
-
 
 # ---------------------------------------------------------------------------
 # Test: --inspect-set loads manifest and runs inspect_window for each entry
