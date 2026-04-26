@@ -169,6 +169,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Enable acceleration-aware cell projection (experimental)",
     )
     parser.add_argument(
+        "--use-intensity-trend",
+        action="store_true",
+        default=False,
+        help="Suppress detection of cells whose intensity is sharply declining (experimental)",
+    )
+    parser.add_argument(
         "--inspect",
         nargs=2,
         metavar=("LOCATION", "TIMESTAMP"),
@@ -245,6 +251,8 @@ def main(argv: list[str] | None = None) -> None:
         replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
     if args.use_acceleration:
         replay_kwargs["use_acceleration"] = True
+    if args.use_intensity_trend:
+        replay_kwargs["use_intensity_trend"] = True
     config = ReplayConfig(**replay_kwargs)
     engine = ReplayEngine(config)
     all_scorecards: list[ScoreCard] = []
