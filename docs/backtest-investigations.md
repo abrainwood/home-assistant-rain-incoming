@@ -158,16 +158,27 @@ The original V1 hypothesis incorrectly stated "128km vs 30km" - 128km is a radar
 
 Full results in reports/full-v1-aligned/.
 
-## Phase 6A: Intensity Trend Filter (NEUTRAL)
+## Phase 6A: Intensity Trend Filter (NEUTRAL across all 8 locations)
 
 Hypothesis: 73% of Penrith FAs are real cells that dissipate crossing the Blue
 Mountains. If we suppress detection of cells with sharply declining intensity
 (final/initial < 0.5), we should reduce these FAs.
 
-**Result: no measurable effect at threshold 0.5.** Penrith with intensity trend
-on at 30min lookahead: POD 0.588, FAR 0.234, CSI 0.499. Same Penrith with
-intensity trend off: POD 0.588, FAR 0.237, CSI 0.497. Difference: 1 FA
-suppressed out of 55, 1 hit unaffected.
+**Result: no measurable effect at threshold 0.5 across all 8 locations.**
+
+| Location | Δ POD | Δ FAR | Δ CSI | Δ Hits | Δ FAs |
+|----------|-------|-------|-------|--------|-------|
+| cairns_babinda | -0.001 | 0.000 | -0.001 | -1 | 0 |
+| darwin | -0.012 | -0.001 | -0.008 | -3 | -1 |
+| hilo | 0.000 | 0.000 | 0.000 | 0 | 0 |
+| ketchikan | 0.000 | 0.000 | 0.000 | 0 | 0 |
+| lake_margaret | 0.000 | 0.000 | 0.000 | 0 | 0 |
+| mobile | 0.000 | -0.003 | +0.002 | 0 | -1 |
+| penrith | 0.000 | -0.003 | +0.001 | 0 | -1 |
+| quillayute | 0.000 | -0.003 | +0.002 | 0 | -2 |
+
+Total across all locations: 4 fewer hits, 5 fewer FAs. Max CSI delta ±0.008
+(Darwin loses 3 hits for 1 FA reduction - net negative).
 
 Why no effect:
 - Of 55 Penrith FAs, only ~10 are truly approaching cells (positive predicted
@@ -185,17 +196,26 @@ explored. Currently does not provide a path to reducing Penrith FAs.
 **Next direction**: overhead transient FAs need a different approach -
 satellite cloud check, forecast PoP, or smarter clutter detection.
 
-## Phase 3B: Frame-Scaled min_temporal_frames (NEUTRAL)
+## Phase 3B: Frame-Scaled min_temporal_frames (NEUTRAL across all 8 locations)
 
 Hypothesis: longer-range predictions need more evidence. Scale `min_temporal_frames`
 by lookahead horizon: 2 frames at <=20min, 3 at <=40min, 4 at >40min.
 
-**Result on Penrith at 30min lookahead**: POD 0.581 vs control 0.588 (-0.007),
-FAR 0.232 vs 0.237 (-0.005), CSI 0.494 vs 0.497 (-0.003). Net 2 fewer hits, 2
-fewer FAs - essentially neutral.
+**Result across all 8 locations at 30min lookahead** (effective min becomes 3):
 
-At 30min lookahead, the flag scales to require 3 frames. Two short tracks were
-filtered: one was a true hit, one was an FA. Net wash.
+| Location | Δ POD | Δ FAR | Δ CSI |
+|----------|-------|-------|-------|
+| cairns_babinda | 0.000 | -0.001 | +0.001 |
+| darwin | -0.004 | +0.001 | -0.003 |
+| hilo | 0.000 | -0.005 | +0.003 |
+| ketchikan | 0.000 | 0.000 | 0.000 |
+| lake_margaret | -0.004 | -0.007 | +0.003 |
+| mobile | 0.000 | 0.000 | 0.000 |
+| penrith | -0.007 | -0.005 | -0.003 |
+| quillayute | -0.003 | -0.001 | -0.002 |
+
+Max CSI delta ±0.003. Slight wins at Hilo/Lake Margaret, slight losses at
+Penrith/Darwin/Quillayute. Essentially noise.
 
 **Status**: kept as opt-in (`--frame-scale-by-lookahead`). Could matter more at
 longer lookaheads (60min would require 4 frames) but current default is 30min
