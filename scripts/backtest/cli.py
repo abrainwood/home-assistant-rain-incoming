@@ -175,6 +175,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Suppress detection of cells whose intensity is sharply declining (experimental)",
     )
     parser.add_argument(
+        "--frame-scale-by-lookahead",
+        action="store_true",
+        default=False,
+        help="Scale min_temporal_frames by lookahead (2 frames at <=20min, 3 at <=40min, 4 at >40min)",
+    )
+    parser.add_argument(
         "--inspect",
         nargs=2,
         metavar=("LOCATION", "TIMESTAMP"),
@@ -227,6 +233,8 @@ def main(argv: list[str] | None = None) -> None:
             replay_kwargs["use_acceleration"] = True
         if args.use_intensity_trend:
             replay_kwargs["use_intensity_trend"] = True
+        if args.frame_scale_by_lookahead:
+            replay_kwargs["frame_scale_by_lookahead"] = True
         config = ReplayConfig(**replay_kwargs)
         engine = ReplayEngine(config)
 
@@ -271,6 +279,10 @@ def main(argv: list[str] | None = None) -> None:
             replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
         if args.use_acceleration:
             replay_kwargs["use_acceleration"] = True
+        if args.use_intensity_trend:
+            replay_kwargs["use_intensity_trend"] = True
+        if args.frame_scale_by_lookahead:
+            replay_kwargs["frame_scale_by_lookahead"] = True
         config = ReplayConfig(**replay_kwargs)
         engine = ReplayEngine(config)
         _prediction, trace = engine.inspect_window(captures, window_end_ts=window_end_ts)
@@ -301,6 +313,8 @@ def main(argv: list[str] | None = None) -> None:
         replay_kwargs["use_acceleration"] = True
     if args.use_intensity_trend:
         replay_kwargs["use_intensity_trend"] = True
+    if args.frame_scale_by_lookahead:
+        replay_kwargs["frame_scale_by_lookahead"] = True
     config = ReplayConfig(**replay_kwargs)
     engine = ReplayEngine(config)
     all_scorecards: list[ScoreCard] = []
