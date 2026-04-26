@@ -818,6 +818,41 @@ class TestDetectDiagnostics:
         # Verify rain_at_location mirrors the result
         assert trace.decision.rain_at_location == result.rain_at_location
 
+    def test_diagnostics_records_velocity_and_intensity_for_accepted_track(self):
+        """When detect() runs on an approaching cell with constant intensity 0.8,
+        the trace's accepted track records velocity_kmh > 0, initial_intensity and
+        final_intensity both close to 0.8.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+        )
+
+        cfg = default_config()
+        # Build 3 frames where a cell at row 30-32 moves east 4px/frame with constant intensity 0.8
+        frames = []
+        for i, col_offset in enumerate([18, 22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset : col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+
+        trace = DiagnosticTrace()
+        detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        # Find the accepted track (there should be one)
+        accepted_tracks = [t for t in trace.tracks if t.status == "accepted"]
+        assert len(accepted_tracks) == 1
+        track = accepted_tracks[0]
+
+        # Velocity should be > 0 (cell is moving)
+        assert track.velocity_kmh is not None
+        assert track.velocity_kmh > 0
+
+        # Intensity should be ~0.8 at both ends (constant intensity)
+        assert track.initial_intensity is not None
+        assert track.final_intensity is not None
+        assert track.initial_intensity == pytest.approx(0.8, abs=0.01)
+        assert track.final_intensity == pytest.approx(0.8, abs=0.01)
+
 
 class TestDetectIntensityTrend:
     def test_declining_intensity_suppresses_approaching_detection_when_enabled(self):
