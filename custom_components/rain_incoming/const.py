@@ -4,6 +4,11 @@ DOMAIN = "rain_incoming"
 CONF_LOCATION_NAME = "location_name"
 CONF_LOOKAHEAD_MINUTES = "lookahead_minutes"
 CONF_MAP_STYLE = "map_style"
+CONF_FORECAST_CONFIDENCE_ENABLED = "forecast_confidence_enabled"
+
+# Intensity threshold above which a cell bypasses the PoP multiplier gate.
+# Cells this strong are trusted regardless of forecast confidence.
+STRONG_BYPASS_INTENSITY = 0.5
 
 # Location name display limit (chars). Names longer than this overflow the
 # date/time field in the radar image header at all three zoom levels.

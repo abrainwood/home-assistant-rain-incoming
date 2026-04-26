@@ -38,6 +38,7 @@ from .const import (
     BACKOFF_BASE_SECONDS,
     BACKOFF_MAX_SECONDS,
     BACKOFF_MULTIPLIER,
+    CONF_FORECAST_CONFIDENCE_ENABLED,
     CONF_LOOKAHEAD_MINUTES,
     CONF_MAP_STYLE,
     DEFAULT_LOOKAHEAD_MINUTES,
@@ -53,7 +54,9 @@ from .const import (
 )
 from .http_retry import RateLimitBudget
 from .providers.base import BoundingBox
+from .providers.open_meteo import fetch_hourly_pop, max_pop_in_window
 from .providers.rainviewer import RainViewerProvider
+from .radar.confidence import pop_to_threshold_multiplier
 from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
 from .radar.qc import (
     ClutterMap,
@@ -179,7 +182,16 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
                     type(e).__name__, e,
                 )
 
-    def _build_config(self) -> DetectorConfig:
+    async def _compute_pop_multiplier(self, lat: float, lon: float, session) -> float:
+        """Compute forecast confidence threshold multiplier from PoP forecast."""
+        if not self._entry.data.get(CONF_FORECAST_CONFIDENCE_ENABLED, False):
+            return 1.0
+        forecast = await fetch_hourly_pop(lat, lon, session)
+        now = datetime.now(timezone.utc)
+        window_max = max_pop_in_window(forecast, now, now + timedelta(hours=1))
+        return pop_to_threshold_multiplier(window_max)
+
+    def _build_config(self, pop_multiplier: float = 1.0) -> DetectorConfig:
         data = self._entry.data
         lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
         lon = data.get(CONF_LONGITUDE, self.hass.config.longitude)
@@ -195,6 +207,7 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
             analysis_bounds=_build_analysis_bounds(lat, lon),
             grid_width=RAINVIEWER_TILE_SIZE * 2,
             grid_height=RAINVIEWER_TILE_SIZE * 2,
+            pop_multiplier=pop_multiplier,
         )
 
     async def _async_update_data(self) -> DetectionResult:
@@ -212,7 +225,8 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         except Exception as err:
             raise UpdateFailed(f"RainViewer fetch failed: {err}") from err
 
-        config = self._build_config()
+        multiplier = await self._compute_pop_multiplier(lat, lon, session)
+        config = self._build_config(pop_multiplier=multiplier)
 
         await self._ensure_clutter_map_loaded()
         frames = await self._resolve_frame_cache(frames, config, session)

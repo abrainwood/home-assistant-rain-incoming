@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from homeassistant.const import CONF_LATITUDE, CONF_LONGITUDE
 
 from custom_components.rain_incoming.const import (
+    CONF_FORECAST_CONFIDENCE_ENABLED,
     CONF_LOCATION_NAME,
     CONF_MAP_STYLE,
     DOMAIN,
@@ -920,3 +921,37 @@ async def test_config_flow_stores_flat_lat_lon_not_location_dict(hass: HomeAssis
     assert "location" not in result["data"]
     assert result["data"]["latitude"] == -37.814
     assert result["data"]["longitude"] == 144.963
+
+
+@pytest.mark.asyncio
+async def test_options_flow_persists_forecast_confidence_enabled(hass: HomeAssistant):
+    """W3: submitting enable_forecast_confidence=True via OptionsFlow persists it to entry.data."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            CONF_MAP_STYLE: "voyager",
+        },
+        version=2,
+    )
+    await setup_integration(hass, entry, _MOCK_RESULT)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            CONF_MAP_STYLE: "voyager",
+            CONF_FORECAST_CONFIDENCE_ENABLED: True,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert entry.data[CONF_FORECAST_CONFIDENCE_ENABLED] is True, (
+        f"Expected CONF_FORECAST_CONFIDENCE_ENABLED=True in entry.data, got {entry.data.get(CONF_FORECAST_CONFIDENCE_ENABLED)!r}"
+    )
