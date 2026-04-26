@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--window-size", type=int, default=8)
     parser.add_argument("--max-gap-seconds", type=int, default=900)
-    parser.add_argument("--lookahead-minutes", type=int, default=60)
+    parser.add_argument("--lookahead-minutes", type=int, default=30)
     parser.add_argument(
         "--verify",
         action="store_true",

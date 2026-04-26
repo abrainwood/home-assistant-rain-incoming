@@ -44,7 +44,7 @@ def _proximity_half_pixels(proximity_km: float, bounds: BoundingBox, grid_size: 
 
 @dataclass
 class VerifierConfig:
-    lookahead_seconds: int = 3600
+    lookahead_seconds: int = 1800
     intensity_threshold: float = INTENSITY_THRESHOLD
     proximity_km: float = PROXIMITY_RADIUS_KM
 

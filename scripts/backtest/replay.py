@@ -70,7 +70,7 @@ class ReplayConfig:
     window_size: int = 8          # number of frames per window
     max_gap_seconds: int = 900    # skip windows with consecutive gap > this
     qc_enabled: bool = True       # compute QC confidence maps
-    lookahead_seconds: int = 3600
+    lookahead_seconds: int = 1800
     intensity_threshold: float = INTENSITY_THRESHOLD
     min_cell_area_pixels: int = MIN_CELL_AREA_PIXELS
     use_acceleration: bool = False
