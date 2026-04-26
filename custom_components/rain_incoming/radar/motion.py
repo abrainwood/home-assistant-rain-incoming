@@ -76,6 +76,37 @@ def estimate_velocity(
     return dy / time_delta_seconds, dx / time_delta_seconds
 
 
+def estimate_acceleration(
+    velocities: list[tuple[float, float]],
+    time_deltas: list[float],
+) -> tuple[float, float]:
+    """Estimate acceleration (ay, ax) in pixels/second^2 from a velocity series.
+
+    Each velocity is (vy, vx) in pixels/second, and each time_delta is the
+    interval in seconds between the frame pairs that produced the velocity.
+    Acceleration is computed as the mean rate of velocity change across
+    consecutive velocity estimates.
+
+    Returns (0.0, 0.0) if fewer than 2 velocities are provided.
+    """
+    if len(velocities) < 2:
+        return 0.0, 0.0
+
+    ay_accum = 0.0
+    ax_accum = 0.0
+    count = 0
+    for i in range(len(velocities) - 1):
+        dt = time_deltas[i + 1]
+        if dt > 0:
+            ay_accum += (velocities[i + 1][0] - velocities[i][0]) / dt
+            ax_accum += (velocities[i + 1][1] - velocities[i][1]) / dt
+            count += 1
+
+    if count == 0:
+        return 0.0, 0.0
+    return ay_accum / count, ax_accum / count
+
+
 def is_directionally_coherent(
     velocities: list[tuple[float, float]],
     max_angular_variance: float,

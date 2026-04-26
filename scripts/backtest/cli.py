@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--window-size", type=int, default=8)
     parser.add_argument("--max-gap-seconds", type=int, default=900)
-    parser.add_argument("--lookahead-minutes", type=int, default=60)
+    parser.add_argument("--lookahead-minutes", type=int, default=30)
     parser.add_argument(
         "--verify",
         action="store_true",
@@ -147,6 +147,24 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         default=None,
         help="Compare against a previous run's output directory (requires scorecards.json)",
+    )
+    parser.add_argument(
+        "--intensity-threshold",
+        type=float,
+        default=None,
+        help="Override the intensity threshold for both detection and verification (default: production value)",
+    )
+    parser.add_argument(
+        "--min-cell-area",
+        type=int,
+        default=None,
+        help="Override the minimum cell area in pixels for detection (default: production value)",
+    )
+    parser.add_argument(
+        "--use-acceleration",
+        action="store_true",
+        default=False,
+        help="Enable acceleration-aware cell projection (experimental)",
     )
 
     args = parser.parse_args(argv)
@@ -182,12 +200,19 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"Error: location directory {d} not found", file=sys.stderr)
                 sys.exit(1)
 
-    config = ReplayConfig(
+    replay_kwargs = dict(
         window_size=args.window_size,
         max_gap_seconds=args.max_gap_seconds,
         qc_enabled=(args.qc == "full"),
         lookahead_seconds=args.lookahead_minutes * 60,
     )
+    if args.intensity_threshold is not None:
+        replay_kwargs["intensity_threshold"] = args.intensity_threshold
+    if args.min_cell_area is not None:
+        replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
+    if args.use_acceleration:
+        replay_kwargs["use_acceleration"] = True
+    config = ReplayConfig(**replay_kwargs)
     engine = ReplayEngine(config)
     all_scorecards: list[ScoreCard] = []
     all_records: dict[str, list[VerificationRecord]] = {}
@@ -232,7 +257,12 @@ def main(argv: list[str] | None = None) -> None:
                 verify_captures = [c for c in captures if min_ts <= c.frame_ts <= max_ts]
             else:
                 verify_captures = captures
-            verifier = FutureRadarVerifier(verify_captures)
+            from scripts.backtest.verifier import VerifierConfig
+            verifier_config = VerifierConfig(
+                lookahead_seconds=config.lookahead_seconds,
+                intensity_threshold=config.intensity_threshold,
+            )
+            verifier = FutureRadarVerifier(verify_captures, config=verifier_config)
             records = verifier.verify(predictions)
             scorecard = compute_scorecard(
                 location_name, records, total_possible_windows, skipped_gaps

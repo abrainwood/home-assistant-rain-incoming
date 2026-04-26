@@ -667,3 +667,72 @@ class TestSubsetWindowCount:
                (len(call_args[0]) > 2 and call_args[0][2] == 3), (
             f"total_windows should be 3 (manifest count), got {call_args}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: --intensity-threshold overrides detector and verifier thresholds
+# ---------------------------------------------------------------------------
+
+
+class TestIntensityThresholdFlag:
+    def test_intensity_threshold_passed_to_replay_config(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--intensity-threshold overrides the intensity threshold in ReplayConfig."""
+        from scripts.backtest.cli import main
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "loc1")
+
+        predictions = [_make_prediction()]
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.ReplayConfig") as MockConfig:
+            MockConfig.return_value = MagicMock()
+            instance = MockEngine.return_value
+            instance.replay.return_value = predictions
+
+            main(["--data-dir", str(data_dir), "--intensity-threshold", "0.05"])
+
+        MockConfig.assert_called_once()
+        _, kwargs = MockConfig.call_args
+        assert kwargs.get("intensity_threshold") == 0.05
+
+    def test_intensity_threshold_passed_to_verifier(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--intensity-threshold overrides the verifier's intensity threshold."""
+        from scripts.backtest.cli import main
+        from scripts.backtest.metrics import ContingencyTable, ScoreCard
+        from scripts.backtest.verifier import VerifierConfig
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "loc1")
+
+        predictions = [_make_prediction()]
+        scorecard = ScoreCard(
+            location="loc1",
+            contingency=ContingencyTable(hits=1),
+            total_windows=1,
+            skipped_gaps=0,
+            lead_time_errors=[],
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.FutureRadarVerifier") as MockVerifier, \
+             patch("scripts.backtest.cli.compute_scorecard", return_value=scorecard):
+            instance = MockEngine.return_value
+            instance.replay.return_value = predictions
+            verifier_instance = MockVerifier.return_value
+            verifier_instance.verify.return_value = []
+
+            main(["--data-dir", str(data_dir), "--verify",
+                  "--intensity-threshold", "0.05"])
+
+        MockVerifier.assert_called_once()
+        call_args = MockVerifier.call_args
+        config = call_args[1].get("config") or (call_args[0][1] if len(call_args[0]) > 1 else None)
+        assert config is not None, "VerifierConfig not passed to FutureRadarVerifier"
+        assert config.intensity_threshold == 0.05

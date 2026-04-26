@@ -34,7 +34,7 @@ HOME_LOCATION = {
 }
 INTEGRATION_CONFIG = {
     "location": {"latitude": -33.701, "longitude": 151.209},
-    "lookahead_minutes": 60,
+    "lookahead_minutes": 30,
     "location_name": "Sydney",
 }
 

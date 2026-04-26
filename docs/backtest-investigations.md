@@ -77,36 +77,37 @@ QC Bias dropped to 0.5-0.85 (under-forecasting). Need warmer clutter map or adju
 
 ## Tuning Backlog
 
+Prioritized for Penrith improvement (worst performer: POD 0.502, bias 0.68, under-detecting).
 Each item is a hypothesis to test via quick subset run then validate with full run.
 
-### Detection thresholds
+### Tier 1: Improve detection (Penrith's core problem - missing 50% of rain)
 
-- **T1: Intensity threshold** - currently 0.1. Lower catches more rain but increases noise. Test 0.05 and 0.15 to map the sensitivity curve.
-- **T2: Min cell area** - currently 5 pixels. Raising to 10-15 would filter small clutter blobs but might miss isolated cells. Test 10 and 20.
-- **T3: Proximity radius** - currently 128km. The verifier checks 10x10 pixels (~30km). Tightening detection proximity to 64km would reduce "near miss" false alarms but miss rain approaching from further out. Test 64km and 96km.
-- **T4: Min temporal frames** - currently 3 frames. Raising to 4-5 means a cell must be tracked for 30-50 minutes before triggering. Reduces pop-up false alarms but delays detection. Test 4 and 5.
+- **T1: Intensity threshold** - DEAD END. The RainViewer colour palette is quantized: minimum non-zero intensity is 0.10 (the lightest colour). Our threshold is already at 0.10 - lowering it has zero effect because no pixels exist between 0.0 and 0.10. Raising it would worsen under-detection at Penrith/Mobile. The threshold can't be tuned given the input data.
+- **V2: Verification window sensitivity** - DONE. Tested 20/40/60min windows for Penrith. CSI peaks at 20min (0.534, POD 0.646) and degrades to 0.425 at 60min (POD 0.502). The detector is decent at near-term (65% of rain within 20min) but misses most long-lead-time events. Each extra 20min of verification adds ~80 rain events that the detector mostly misses. The 60min window is right for the product (users want 60min warning), but the detection gap is 20-60min lead time rain.
+- **T2: Min cell area** - DEAD END. At 512x512 grid resolution (~1 km/px), all precipitation cells are >= 4 pixels. Zero cells below 4px in 20 sampled rain frames. The filter never triggers - lowering it changes nothing.
 
-### QC pipeline
+### Tier 2: Improve arrival time (Penrith mean error -5.6min)
 
-- **Q1: Clutter maturity period** - currently 2 weeks (2016 cycles). In backtesting the clutter map starts cold and never matures. Test with a pre-warmed clutter map from a separate warmup run.
-- **Q2: QC confidence threshold** - QC multiplies intensity by confidence (0-1). Low-confidence cells get dimmed below the detection threshold. The effective threshold is `intensity * confidence >= 0.1`. Test raising/lowering the confidence floor.
-- **Q3: Texture vs temporal weights** - texture analysis catches speckle noise, temporal catches inconsistent cells. Current weights may over-penalize real rain with speckle-like texture (convective rain is inherently noisy). Test reducing texture weight.
+- **A2: Acceleration model** - TESTED, worsened results. Penrith CSI 0.425->0.411, +22 FAs for +2 hits, lead time error unchanged (-5.6 -> -5.7min). With only 2-7 velocity samples per track, acceleration estimates are too noisy and project cells incorrectly into the proximity radius. Would need much longer tracks to be useful.
+- **C3: Velocity estimation window** - ALREADY IMPLEMENTED. The detector already averages velocity over all frame pairs in the track (detector.py lines 287-302). With 8-frame windows, this means up to 7 velocity estimates are averaged. No additional smoothing needed.
+- **A1: Closing distance fallback** - currently enabled, helps detection. Test if it generates FAs in terrain where cells change direction near mountains.
 
-### Cell tracking
+### Tier 3: QC tuning (only after detection is better)
 
-- **C1: Max storm speed** - currently 150 km/h. Cells moving faster are rejected. Rarely a factor but could filter bogus high-speed matches.
-- **C2: Max angular variance** - currently ~90 degrees (in radians). Cells with inconsistent motion direction are rejected. Tightening reduces false matches but misses cells that change direction.
-- **C3: Velocity estimation window** - uses consecutive frame pairs. Averaging over 3-4 frame pairs would smooth noisy velocity estimates but add lag.
+- **Q3: Texture vs temporal weights** - convective rain is inherently speckly. Current texture weights may over-penalize real rain. Test reducing texture weight.
+- **Q1: Clutter maturity period** - currently 2 weeks (2016 cycles). In backtesting the clutter map starts cold and never matures. Test with a pre-warmed clutter map.
+- **Q2: QC confidence threshold** - downstream of Q1. Test raising/lowering the confidence floor after clutter map is warm.
 
-### Arrival time
+### Tier 4: Low priority / wrong direction for Penrith
 
-- **A1: Closing distance fallback** - when cell velocity points away from location but distance is decreasing, we use a fallback arrival estimate. This catches "approaching but not pointed directly at us" scenarios. May be too generous - test disabling it.
-- **A2: Acceleration model** - constant velocity assumption fails near terrain. Test a simple linear acceleration model (velocity change between frame pairs).
+- **T4: Min temporal frames** - currently 2 frames. Already minimal. Going to 1 removes tracking entirely. Going to 3+ worsens under-detection.
+- **C1: Max storm speed** - currently 120 km/h. Rarely a factor.
+- **C2: Max angular variance** - currently 0.5 radians. Tightening would hurt Penrith where cells change direction near mountains.
+- **T3: Proximity radius** - currently 15km, aligned with verifier in V1. Further changes need paired analysis.
 
-### Verification alignment
+### Completed
 
 - **V1: Align detection and verification proximity** - DONE. See V1 results below.
-- **V2: Extended verification window** - currently 60min. Some "false alarms" may be rain that arrived after 60min. Test 90min and 120min windows to reclassify.
 
 ## V1 Results: Verifier Proximity Alignment
 
