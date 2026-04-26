@@ -158,6 +158,33 @@ The original V1 hypothesis incorrectly stated "128km vs 30km" - 128km is a radar
 
 Full results in reports/full-v1-aligned/.
 
+## Phase 6A: Intensity Trend Filter (NEUTRAL)
+
+Hypothesis: 73% of Penrith FAs are real cells that dissipate crossing the Blue
+Mountains. If we suppress detection of cells with sharply declining intensity
+(final/initial < 0.5), we should reduce these FAs.
+
+**Result: no measurable effect at threshold 0.5.** Penrith with intensity trend
+on at 30min lookahead: POD 0.588, FAR 0.234, CSI 0.499. Same Penrith with
+intensity trend off: POD 0.588, FAR 0.237, CSI 0.497. Difference: 1 FA
+suppressed out of 55, 1 hit unaffected.
+
+Why no effect:
+- Of 55 Penrith FAs, only ~10 are truly approaching cells (positive predicted
+  arrival). The other 45 are overhead-transient FAs that intensity trend
+  doesn't address.
+- The 0.5 threshold (intensity must halve across the track) may be too strict
+  for the actual dissipation pattern. Cells in the radar tile may break apart
+  rather than fade in peak intensity.
+- The original 73% number may have come from a different baseline configuration.
+
+**Status**: kept as opt-in (`use_intensity_trend=False` default,
+`--use-intensity-trend` to enable in backtest). Tunable threshold could be
+explored. Currently does not provide a path to reducing Penrith FAs.
+
+**Next direction**: overhead transient FAs need a different approach -
+satellite cloud check, forecast PoP, or smarter clutter detection.
+
 ## Framework Improvements Done
 
 - [x] Compare feature (`--compare`)
@@ -165,6 +192,10 @@ Full results in reports/full-v1-aligned/.
 - [x] Tile decode optimisation (15ms → 1.2ms)
 - [x] Centroid extraction optimisation (12.5s → 25ms)
 - [x] Frame caching in replay and verifier
+- [x] Tier 0 diagnostic trace (`--inspect LOCATION TIMESTAMP`)
+- [x] Tier 1 multi-window inspect (`--inspect-set MANIFEST`)
+- [x] `--use-intensity-trend` flag (Phase 6A, neutral effect)
+- [x] `--frame-scale-by-lookahead` flag (Phase 3B, unvalidated)
 
 ## Framework Improvements Remaining
 
