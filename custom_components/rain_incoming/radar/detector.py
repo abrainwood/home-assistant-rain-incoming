@@ -50,6 +50,7 @@ class DetectorConfig:
     grid_height: int
     use_acceleration: bool = False
     use_intensity_trend: bool = False
+    frame_scale_by_lookahead: bool = False
 
 
 @dataclass
@@ -673,6 +674,25 @@ def _merge_location_rain(
     return earliest_arrival, max(max_intensity, rain_intensity)
 
 
+def _effective_min_temporal_frames(config: DetectorConfig) -> int:
+    """Compute the effective min_temporal_frames, optionally scaled by lookahead.
+
+    Longer-range predictions need more evidence (more frames in the track) to
+    avoid false positives from transient signals. The user's explicit
+    config.min_temporal_frames is a floor.
+    """
+    if not config.frame_scale_by_lookahead:
+        return config.min_temporal_frames
+    lookahead_min = config.lookahead_seconds / 60.0
+    if lookahead_min <= 20:
+        scaled = 2
+    elif lookahead_min <= 40:
+        scaled = 3
+    else:
+        scaled = 4
+    return max(config.min_temporal_frames, scaled)
+
+
 def detect(
     frames: list[RadarFrame],
     location: tuple[float, float],
@@ -747,9 +767,10 @@ def detect(
             )
 
     last_frame_idx = frame_count - 1
+    effective_min = _effective_min_temporal_frames(config)
     valid_tracks = [
         t for t in all_tracks
-        if len(t) >= config.min_temporal_frames and t[-1][0] == last_frame_idx
+        if len(t) >= effective_min and t[-1][0] == last_frame_idx
     ]
 
     last_labeled = analysis.per_frame_labeled[-1]
