@@ -852,3 +852,45 @@ class TestDetectIntensityTrend:
         cfg_default = default_config()  # use_intensity_trend=False
         result_control = detect(frames, (LAT, LON), cfg_default)
         assert result_control.rain_incoming is True, "Same cell should be detected when use_intensity_trend=False"
+
+
+class TestDetectFrameScaling:
+    def test_frame_scale_by_lookahead_drops_short_tracks_at_long_lookahead(self):
+        """
+        When frame_scale_by_lookahead=True is set and lookahead is 30+ minutes,
+        a 2-frame track is dropped even though min_temporal_frames=2 would normally
+        accept it. The same 2-frame track is accepted when the flag is off (control).
+        """
+        from dataclasses import replace
+
+        # Build 3 frames where a cell appears only in the last 2 frames
+        # (creating a 2-frame track ending on the last frame).
+        grids = [
+            np.zeros((64, 64), dtype=np.float32),  # frame 0: empty
+            np.zeros((64, 64), dtype=np.float32),  # frame 1: cell starts
+            np.zeros((64, 64), dtype=np.float32),  # frame 2: cell moves east (near location)
+        ]
+        grids[1][30:33, 24:27] = 0.8  # cell starts here
+        grids[2][30:33, 28:31] = 0.8  # 4px east, centroid near location
+
+        frames = [
+            make_frame(ts(-20 + i * 10), grids[i], default_config().analysis_bounds)
+            for i in range(3)
+        ]
+
+        cfg_default = default_config()  # frame_scale_by_lookahead=False, lookahead=60min
+
+        # CONTROL: without flag, the 2-frame track IS valid (len >= min_temporal_frames=2)
+        # and should trigger detection
+        result_default = detect(frames, (LAT, LON), cfg_default)
+        assert (
+            result_default.rain_incoming is True
+        ), "Without frame scaling, 2-frame track should be detected"
+
+        # TREATMENT: with flag enabled at default 60min lookahead,
+        # effective min = max(2, 4) = 4. 2-frame track is dropped, no detection.
+        cfg_scaled = replace(cfg_default, frame_scale_by_lookahead=True)
+        result_scaled = detect(frames, (LAT, LON), cfg_scaled)
+        assert (
+            result_scaled.rain_incoming is False
+        ), "With frame scaling at 60min lookahead, 2-frame track should be dropped"
