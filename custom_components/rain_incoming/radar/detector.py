@@ -49,6 +49,7 @@ class DetectorConfig:
     grid_width: int
     grid_height: int
     use_acceleration: bool = False
+    pop_multiplier: float = 1.0
 
 
 @dataclass
@@ -693,11 +694,12 @@ def detect(
 
     max_match_dist = max(W, H) * 0.25  # allow up to 25% of grid size per frame
     all_tracks = _build_cell_tracks(analysis.per_frame_centroids, max_match_dist)
+    effective_min_frames = math.ceil(config.min_temporal_frames * config.pop_multiplier)
 
     if diagnostics is not None:
         _last_frame_idx = frame_count - 1
         for track in all_tracks:
-            if len(track) < config.min_temporal_frames:
+            if len(track) < effective_min_frames:
                 track_status, track_reason = "dropped", "too_short"
             elif track[-1][0] != _last_frame_idx:
                 track_status, track_reason = "dropped", "ended_early"
@@ -714,7 +716,7 @@ def detect(
     last_frame_idx = frame_count - 1
     valid_tracks = [
         t for t in all_tracks
-        if len(t) >= config.min_temporal_frames and t[-1][0] == last_frame_idx
+        if len(t) >= effective_min_frames and t[-1][0] == last_frame_idx
     ]
 
     last_labeled = analysis.per_frame_labeled[-1]

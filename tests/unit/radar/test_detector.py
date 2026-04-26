@@ -7,6 +7,8 @@ import numpy as np
 import pytest
 
 from custom_components.rain_incoming.providers.base import BoundingBox, RadarFrame
+from custom_components.rain_incoming.providers.open_meteo import max_pop_in_window
+from custom_components.rain_incoming.radar.confidence import pop_to_threshold_multiplier
 from custom_components.rain_incoming.radar.detector import (
     Confidence,
     DetectionResult,
@@ -135,6 +137,76 @@ class TestDetectRainApproaching:
         frames = self._make_approaching_frames(cfg)
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
         assert result.arrival_time > frames[-1].timestamp
+
+
+class TestDetectorPopMultiplier:
+    def _make_approaching_frames(self, cfg: DetectorConfig) -> list[RadarFrame]:
+        """Simulate a rain cell moving east toward Terry Hills (same as TestDetectRainApproaching)."""
+        frames = []
+        for i, col_offset in enumerate([18, 22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        return frames
+
+    def test_multiplier_raises_frame_requirement(self):
+        """PoP multiplier raises effective min_temporal_frames, blocking weak detections."""
+        frames = self._make_approaching_frames(default_config())
+
+        # With multiplier=1.0 (default): effective frames = ceil(2 * 1.0) = 2, we have 3 → detects
+        cfg_baseline = default_config()
+        result_baseline = detect(frames=frames, location=(LAT, LON), config=cfg_baseline)
+        assert result_baseline.rain_incoming is True
+
+        # With multiplier=2.0: effective frames = ceil(2 * 2.0) = 4, we have 3 → doesn't detect
+        cfg_multiplied = default_config()
+        cfg_multiplied.pop_multiplier = 2.0
+        result_multiplied = detect(frames=frames, location=(LAT, LON), config=cfg_multiplied)
+        assert result_multiplied.rain_incoming is False
+
+    def test_forecast_wiring_low_pop_suppresses_weak_detection(self):
+        """Integration: low-PoP forecast suppresses 2-frame detection via multiplier chain."""
+        frames = self._make_approaching_frames(default_config())
+
+        # Build hourly forecast: low PoP now, high PoP later
+        forecast = [
+            (ts(0), 3.0),    # now: 3% PoP
+            (ts(60), 60.0),  # +1h: 60% PoP
+        ]
+
+        # Window covering "now" → max PoP = 3.0 → multiplier = 3.0
+        window_max = max_pop_in_window(forecast, ts(0), ts(30))
+        assert window_max == 3.0
+        multiplier = pop_to_threshold_multiplier(window_max)
+        assert multiplier == 3.0
+
+        cfg_suppressed = default_config()
+        cfg_suppressed.pop_multiplier = multiplier
+        result = detect(frames=frames, location=(LAT, LON), config=cfg_suppressed)
+        # With multiplier=3.0: effective frames = ceil(2 * 3.0) = 6, we have 3 → suppressed
+        assert result.rain_incoming is False
+
+    def test_forecast_wiring_high_pop_allows_detection(self):
+        """Integration: high-PoP forecast allows weak detection via multiplier chain."""
+        frames = self._make_approaching_frames(default_config())
+
+        # Build hourly forecast: high PoP covering the window
+        forecast = [
+            (ts(0), 60.0),   # now: 60% PoP
+            (ts(60), 45.0),  # +1h: 45% PoP
+        ]
+
+        # Window covering "now" → max PoP = 60.0 → multiplier = 1.0
+        window_max = max_pop_in_window(forecast, ts(0), ts(30))
+        assert window_max == 60.0
+        multiplier = pop_to_threshold_multiplier(window_max)
+        assert multiplier == 1.0
+
+        cfg_allowed = default_config()
+        cfg_allowed.pop_multiplier = multiplier
+        result = detect(frames=frames, location=(LAT, LON), config=cfg_allowed)
+        # With multiplier=1.0: effective frames = ceil(2 * 1.0) = 2, we have 3 → detects
+        assert result.rain_incoming is True
 
 
 class TestDetectRainReceding:
