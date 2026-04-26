@@ -185,6 +185,38 @@ explored. Currently does not provide a path to reducing Penrith FAs.
 **Next direction**: overhead transient FAs need a different approach -
 satellite cloud check, forecast PoP, or smarter clutter detection.
 
+## Phase 3B: Frame-Scaled min_temporal_frames (NEUTRAL)
+
+Hypothesis: longer-range predictions need more evidence. Scale `min_temporal_frames`
+by lookahead horizon: 2 frames at <=20min, 3 at <=40min, 4 at >40min.
+
+**Result on Penrith at 30min lookahead**: POD 0.581 vs control 0.588 (-0.007),
+FAR 0.232 vs 0.237 (-0.005), CSI 0.494 vs 0.497 (-0.003). Net 2 fewer hits, 2
+fewer FAs - essentially neutral.
+
+At 30min lookahead, the flag scales to require 3 frames. Two short tracks were
+filtered: one was a true hit, one was an FA. Net wash.
+
+**Status**: kept as opt-in (`--frame-scale-by-lookahead`). Could matter more at
+longer lookaheads (60min would require 4 frames) but current default is 30min
+where the impact is tiny.
+
+## Tier 0 Diagnostic Findings (early)
+
+Inspecting Penrith FA window 1776388200 (predicted +11min, no rain arrived):
+- 49 tracks built across 8 frames
+- 8 marked "accepted" (passed structural checks)
+- BUT 2 of those have impossible velocities (212 km/h, 322 km/h) - way over the
+  120 km/h speed cap
+- These get rejected later by `_evaluate_approaching_cell`'s speed check, but
+  they were noise-matched cells the tracker linked across frames despite being
+  physically impossible
+
+**Implication**: noise tracking matches cells across frames creating phantom
+high-speed tracks. The downstream speed cap catches them but they consume
+detector cycles. Could pre-filter at the matching step or expose the
+post-evaluation rejection in Tier 0 to make the noise visible.
+
 ## Framework Improvements Done
 
 - [x] Compare feature (`--compare`)
