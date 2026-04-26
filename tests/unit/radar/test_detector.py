@@ -817,3 +817,38 @@ class TestDetectDiagnostics:
 
         # Verify rain_at_location mirrors the result
         assert trace.decision.rain_at_location == result.rain_at_location
+
+
+class TestDetectIntensityTrend:
+    def test_declining_intensity_suppresses_approaching_detection_when_enabled(self):
+        """
+        When use_intensity_trend=True, a cell whose intensity sharply declines
+        (final < 0.5 * initial) should NOT trigger rain_incoming.
+        The same cell with use_intensity_trend=False (default) SHOULD trigger detection.
+        This proves the feature is what controls the behavior, not the fixture.
+        """
+        from dataclasses import replace
+
+        cfg_base = default_config()
+
+        # Cell approaches from west at row 30-32 (near location at row 32),
+        # moves east 4 pixels/frame (matches TestDetectRainApproaching pattern)
+        # with sharply declining intensity (19% of initial)
+        intensities = [0.8, 0.4, 0.15]  # final = 15/80 = 19% of initial
+        cols = [18, 22, 26]
+
+        frames = []
+        for i, (col, intensity) in enumerate(zip(cols, intensities)):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col : col + 3] = intensity
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg_base.analysis_bounds))
+
+        # TREATMENT: use_intensity_trend=True should suppress the detection
+        cfg_with_trend = replace(cfg_base, use_intensity_trend=True)
+        result = detect(frames, (LAT, LON), cfg_with_trend)
+        assert result.rain_incoming is False, "Declining cell should be suppressed when use_intensity_trend=True"
+
+        # CONTROL: use_intensity_trend=False (default) should allow detection
+        cfg_default = default_config()  # use_intensity_trend=False
+        result_control = detect(frames, (LAT, LON), cfg_default)
+        assert result_control.rain_incoming is True, "Same cell should be detected when use_intensity_trend=False"

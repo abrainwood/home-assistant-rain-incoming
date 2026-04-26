@@ -49,6 +49,7 @@ class DetectorConfig:
     grid_width: int
     grid_height: int
     use_acceleration: bool = False
+    use_intensity_trend: bool = False
 
 
 @dataclass
@@ -216,6 +217,11 @@ def _check_rain_at_location(
 # Minimum cell confidence to report rain_incoming
 _MIN_CELL_CONFIDENCE = 0.35
 
+# Intensity ratio (final / initial frame in track) below which a cell is
+# considered to be dissipating and is suppressed when use_intensity_trend
+# is enabled. 0.5 means "intensity has at least halved across the track."
+_INTENSITY_DECLINE_THRESHOLD = 0.5
+
 
 def _cell_mean_confidence(
     label: int,
@@ -294,6 +300,22 @@ def _evaluate_overhead_cell(
     return tracked, arrival_dt, intensity_contribution
 
 
+def _intensity_at_track_entry(
+    track: list[_TrackEntry],
+    idx: int,
+    per_frame_grids: list[np.ndarray],
+    per_frame_labeled_all: list[np.ndarray],
+) -> float:
+    """Return the max pixel intensity of the cell at track[idx] in its frame."""
+    frame_idx, label, _ = track[idx]
+    grid = per_frame_grids[frame_idx]
+    labeled = per_frame_labeled_all[frame_idx]
+    cell_pixels = grid[labeled == label]
+    if cell_pixels.size == 0:
+        return 0.0
+    return float(cell_pixels.max())
+
+
 def _evaluate_approaching_cell(
     track: list[_TrackEntry],
     frames: list[RadarFrame],
@@ -307,6 +329,8 @@ def _evaluate_approaching_cell(
     last_labeled: np.ndarray,
     last_conf_map: np.ndarray | None,
     last_frame_time: datetime,
+    per_frame_grids: list[np.ndarray] | None = None,
+    per_frame_labeled_all: list[np.ndarray] | None = None,
 ) -> tuple[TrackedCell, datetime | None, float] | None:
     """Evaluate a tracked cell that is not yet overhead - approaching.
 
@@ -342,6 +366,13 @@ def _evaluate_approaching_cell(
     speed_kmh_val = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
     if speed_kmh_val > config.max_storm_speed_kmh:
         return None
+
+    # Suppress dissipating cells when intensity trend check is enabled
+    if config.use_intensity_trend and per_frame_grids is not None and per_frame_labeled_all is not None:
+        initial_intensity = _intensity_at_track_entry(track, 0, per_frame_grids, per_frame_labeled_all)
+        final_intensity = _intensity_at_track_entry(track, -1, per_frame_grids, per_frame_labeled_all)
+        if initial_intensity > 0 and final_intensity / initial_intensity < _INTENSITY_DECLINE_THRESHOLD:
+            return None
 
     # Compute acceleration if enabled
     ay, ax = 0.0, 0.0
@@ -585,6 +616,8 @@ def _process_tracks(
     last_grid: np.ndarray,
     last_labeled: np.ndarray,
     last_conf_map: np.ndarray | None,
+    per_frame_grids: list[np.ndarray] | None = None,
+    per_frame_labeled_all: list[np.ndarray] | None = None,
 ) -> tuple[list[TrackedCell], datetime | None, float]:
     """Evaluate each valid track and accumulate earliest arrival and max intensity."""
     last_frame_time = frames[-1].timestamp
@@ -607,6 +640,8 @@ def _process_tracks(
                 track, frames, config, loc_row, loc_col, proximity_px,
                 km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
                 last_frame_time,
+                per_frame_grids=per_frame_grids,
+                per_frame_labeled_all=per_frame_labeled_all,
             )
 
         if result is None:
@@ -748,6 +783,8 @@ def detect(
         loc_row, loc_col, proximity_px_f,
         km_per_row, km_per_col,
         analysis.grids[-1], last_labeled, last_conf_map,
+        per_frame_grids=analysis.grids,
+        per_frame_labeled_all=analysis.per_frame_labeled,
     )
 
     earliest_arrival, max_intensity = _merge_location_rain(
