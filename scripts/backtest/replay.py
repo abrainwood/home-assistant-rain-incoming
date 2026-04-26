@@ -76,6 +76,7 @@ class ReplayConfig:
     min_cell_area_pixels: int = MIN_CELL_AREA_PIXELS
     use_acceleration: bool = False
     use_intensity_trend: bool = False
+    frame_scale_by_lookahead: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +117,7 @@ def _build_detector_config(
         grid_height=grid_size,
         use_acceleration=replay_config.use_acceleration,
         use_intensity_trend=replay_config.use_intensity_trend,
+        frame_scale_by_lookahead=replay_config.frame_scale_by_lookahead,
     )
 
 
