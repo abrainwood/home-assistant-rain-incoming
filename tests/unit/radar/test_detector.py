@@ -817,3 +817,115 @@ class TestDetectDiagnostics:
 
         # Verify rain_at_location mirrors the result
         assert trace.decision.rain_at_location == result.rain_at_location
+
+    def test_diagnostics_records_velocity_and_intensity_for_accepted_track(self):
+        """When detect() runs on an approaching cell with constant intensity 0.8,
+        the trace's accepted track records velocity_kmh > 0, initial_intensity and
+        final_intensity both close to 0.8.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+        )
+
+        cfg = default_config()
+        # Build 3 frames where a cell at row 30-32 moves east 4px/frame with constant intensity 0.8
+        frames = []
+        for i, col_offset in enumerate([18, 22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset : col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+
+        trace = DiagnosticTrace()
+        detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        # Find the accepted track (there should be one)
+        accepted_tracks = [t for t in trace.tracks if t.status == "accepted"]
+        assert len(accepted_tracks) == 1
+        track = accepted_tracks[0]
+
+        # Velocity should be > 0 (cell is moving)
+        assert track.velocity_kmh is not None
+        assert track.velocity_kmh > 0
+
+        # Intensity should be ~0.8 at both ends (constant intensity)
+        assert track.initial_intensity is not None
+        assert track.final_intensity is not None
+        assert track.initial_intensity == pytest.approx(0.8, abs=0.01)
+        assert track.final_intensity == pytest.approx(0.8, abs=0.01)
+
+
+class TestDetectIntensityTrend:
+    def test_declining_intensity_suppresses_approaching_detection_when_enabled(self):
+        """
+        When use_intensity_trend=True, a cell whose intensity sharply declines
+        (final < 0.5 * initial) should NOT trigger rain_incoming.
+        The same cell with use_intensity_trend=False (default) SHOULD trigger detection.
+        This proves the feature is what controls the behavior, not the fixture.
+        """
+        from dataclasses import replace
+
+        cfg_base = default_config()
+
+        # Cell approaches from west at row 30-32 (near location at row 32),
+        # moves east 4 pixels/frame (matches TestDetectRainApproaching pattern)
+        # with sharply declining intensity (19% of initial)
+        intensities = [0.8, 0.4, 0.15]  # final = 15/80 = 19% of initial
+        cols = [18, 22, 26]
+
+        frames = []
+        for i, (col, intensity) in enumerate(zip(cols, intensities)):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col : col + 3] = intensity
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg_base.analysis_bounds))
+
+        # TREATMENT: use_intensity_trend=True should suppress the detection
+        cfg_with_trend = replace(cfg_base, use_intensity_trend=True)
+        result = detect(frames, (LAT, LON), cfg_with_trend)
+        assert result.rain_incoming is False, "Declining cell should be suppressed when use_intensity_trend=True"
+
+        # CONTROL: use_intensity_trend=False (default) should allow detection
+        cfg_default = default_config()  # use_intensity_trend=False
+        result_control = detect(frames, (LAT, LON), cfg_default)
+        assert result_control.rain_incoming is True, "Same cell should be detected when use_intensity_trend=False"
+
+
+class TestDetectFrameScaling:
+    def test_frame_scale_by_lookahead_drops_short_tracks_at_long_lookahead(self):
+        """
+        When frame_scale_by_lookahead=True is set and lookahead is 30+ minutes,
+        a 2-frame track is dropped even though min_temporal_frames=2 would normally
+        accept it. The same 2-frame track is accepted when the flag is off (control).
+        """
+        from dataclasses import replace
+
+        # Build 3 frames where a cell appears only in the last 2 frames
+        # (creating a 2-frame track ending on the last frame).
+        grids = [
+            np.zeros((64, 64), dtype=np.float32),  # frame 0: empty
+            np.zeros((64, 64), dtype=np.float32),  # frame 1: cell starts
+            np.zeros((64, 64), dtype=np.float32),  # frame 2: cell moves east (near location)
+        ]
+        grids[1][30:33, 24:27] = 0.8  # cell starts here
+        grids[2][30:33, 28:31] = 0.8  # 4px east, centroid near location
+
+        frames = [
+            make_frame(ts(-20 + i * 10), grids[i], default_config().analysis_bounds)
+            for i in range(3)
+        ]
+
+        cfg_default = default_config()  # frame_scale_by_lookahead=False, lookahead=60min
+
+        # CONTROL: without flag, the 2-frame track IS valid (len >= min_temporal_frames=2)
+        # and should trigger detection
+        result_default = detect(frames, (LAT, LON), cfg_default)
+        assert (
+            result_default.rain_incoming is True
+        ), "Without frame scaling, 2-frame track should be detected"
+
+        # TREATMENT: with flag enabled at default 60min lookahead,
+        # effective min = max(2, 4) = 4. 2-frame track is dropped, no detection.
+        cfg_scaled = replace(cfg_default, frame_scale_by_lookahead=True)
+        result_scaled = detect(frames, (LAT, LON), cfg_scaled)
+        assert (
+            result_scaled.rain_incoming is False
+        ), "With frame scaling at 60min lookahead, 2-frame track should be dropped"

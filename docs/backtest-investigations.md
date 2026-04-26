@@ -158,6 +158,65 @@ The original V1 hypothesis incorrectly stated "128km vs 30km" - 128km is a radar
 
 Full results in reports/full-v1-aligned/.
 
+## Phase 6A: Intensity Trend Filter (NEUTRAL)
+
+Hypothesis: 73% of Penrith FAs are real cells that dissipate crossing the Blue
+Mountains. If we suppress detection of cells with sharply declining intensity
+(final/initial < 0.5), we should reduce these FAs.
+
+**Result: no measurable effect at threshold 0.5.** Penrith with intensity trend
+on at 30min lookahead: POD 0.588, FAR 0.234, CSI 0.499. Same Penrith with
+intensity trend off: POD 0.588, FAR 0.237, CSI 0.497. Difference: 1 FA
+suppressed out of 55, 1 hit unaffected.
+
+Why no effect:
+- Of 55 Penrith FAs, only ~10 are truly approaching cells (positive predicted
+  arrival). The other 45 are overhead-transient FAs that intensity trend
+  doesn't address.
+- The 0.5 threshold (intensity must halve across the track) may be too strict
+  for the actual dissipation pattern. Cells in the radar tile may break apart
+  rather than fade in peak intensity.
+- The original 73% number may have come from a different baseline configuration.
+
+**Status**: kept as opt-in (`use_intensity_trend=False` default,
+`--use-intensity-trend` to enable in backtest). Tunable threshold could be
+explored. Currently does not provide a path to reducing Penrith FAs.
+
+**Next direction**: overhead transient FAs need a different approach -
+satellite cloud check, forecast PoP, or smarter clutter detection.
+
+## Phase 3B: Frame-Scaled min_temporal_frames (NEUTRAL)
+
+Hypothesis: longer-range predictions need more evidence. Scale `min_temporal_frames`
+by lookahead horizon: 2 frames at <=20min, 3 at <=40min, 4 at >40min.
+
+**Result on Penrith at 30min lookahead**: POD 0.581 vs control 0.588 (-0.007),
+FAR 0.232 vs 0.237 (-0.005), CSI 0.494 vs 0.497 (-0.003). Net 2 fewer hits, 2
+fewer FAs - essentially neutral.
+
+At 30min lookahead, the flag scales to require 3 frames. Two short tracks were
+filtered: one was a true hit, one was an FA. Net wash.
+
+**Status**: kept as opt-in (`--frame-scale-by-lookahead`). Could matter more at
+longer lookaheads (60min would require 4 frames) but current default is 30min
+where the impact is tiny.
+
+## Tier 0 Diagnostic Findings (early)
+
+Inspecting Penrith FA window 1776388200 (predicted +11min, no rain arrived):
+- 49 tracks built across 8 frames
+- 8 marked "accepted" (passed structural checks)
+- BUT 2 of those have impossible velocities (212 km/h, 322 km/h) - way over the
+  120 km/h speed cap
+- These get rejected later by `_evaluate_approaching_cell`'s speed check, but
+  they were noise-matched cells the tracker linked across frames despite being
+  physically impossible
+
+**Implication**: noise tracking matches cells across frames creating phantom
+high-speed tracks. The downstream speed cap catches them but they consume
+detector cycles. Could pre-filter at the matching step or expose the
+post-evaluation rejection in Tier 0 to make the noise visible.
+
 ## Framework Improvements Done
 
 - [x] Compare feature (`--compare`)
@@ -165,6 +224,10 @@ Full results in reports/full-v1-aligned/.
 - [x] Tile decode optimisation (15ms → 1.2ms)
 - [x] Centroid extraction optimisation (12.5s → 25ms)
 - [x] Frame caching in replay and verifier
+- [x] Tier 0 diagnostic trace (`--inspect LOCATION TIMESTAMP`)
+- [x] Tier 1 multi-window inspect (`--inspect-set MANIFEST`)
+- [x] `--use-intensity-trend` flag (Phase 6A, neutral effect)
+- [x] `--frame-scale-by-lookahead` flag (Phase 3B, unvalidated)
 
 ## Framework Improvements Remaining
 
