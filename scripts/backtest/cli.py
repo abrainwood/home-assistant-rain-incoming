@@ -181,6 +181,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Run detect() on a single window and print the diagnostic trace as JSON. Args: location_name, window_end_ts",
     )
+    parser.add_argument(
+        "--inspect-set",
+        type=Path,
+        default=None,
+        help="Run --inspect on each window in a manifest file. Outputs a JSON list of traces.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -194,6 +200,48 @@ def main(argv: list[str] | None = None) -> None:
         save_manifest(entries, "quick", "Auto-generated curated subset",
                       str(args.generate_subset), output_path)
         print(f"Generated manifest with {len(entries)} windows at {output_path}")
+        return
+
+    # Handle --inspect-set mode
+    if args.inspect_set is not None:
+        from scripts.backtest.manifest import load_manifest
+
+        manifest = load_manifest(args.inspect_set)
+
+        # Group entries by location (preserve manifest order)
+        entries_by_location: dict[str, list] = {}
+        for entry in manifest.entries:
+            entries_by_location.setdefault(entry.location, []).append(entry)
+
+        replay_kwargs = dict(
+            window_size=args.window_size,
+            max_gap_seconds=args.max_gap_seconds,
+            qc_enabled=(args.qc == "full"),
+            lookahead_seconds=args.lookahead_minutes * 60,
+        )
+        if args.intensity_threshold is not None:
+            replay_kwargs["intensity_threshold"] = args.intensity_threshold
+        if args.min_cell_area is not None:
+            replay_kwargs["min_cell_area_pixels"] = args.min_cell_area
+        if args.use_acceleration:
+            replay_kwargs["use_acceleration"] = True
+        if args.use_intensity_trend:
+            replay_kwargs["use_intensity_trend"] = True
+        config = ReplayConfig(**replay_kwargs)
+        engine = ReplayEngine(config)
+
+        captures_dir = args.data_dir / "captures"
+        traces_list: list[dict] = []
+        for location_name, loc_entries in entries_by_location.items():
+            loc_dir = captures_dir / location_name
+            captures = load_captures(loc_dir)
+            for entry in loc_entries:
+                _prediction, trace = engine.inspect_window(
+                    captures, window_end_ts=entry.window_end_ts
+                )
+                traces_list.append(dataclasses.asdict(trace))
+
+        print(json.dumps(traces_list, indent=2, default=str))
         return
 
     if args.data_dir is None:
