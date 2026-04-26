@@ -30,6 +30,7 @@ from custom_components.rain_incoming.providers.base import BoundingBox
 from custom_components.rain_incoming.providers.rainviewer import _tile_bounds
 from custom_components.rain_incoming.radar.detector import (
     DetectorConfig,
+    DiagnosticTrace,
     detect,
 )
 from custom_components.rain_incoming.radar.qc.clutter_map import (
@@ -356,3 +357,50 @@ class ReplayEngine:
             predictions.append(_to_prediction(result, frames, window))
 
         return predictions
+
+    def inspect_window(
+        self,
+        captures: list[CaptureRecord],
+        window_end_ts: int,
+    ) -> tuple[PredictionRecord, DiagnosticTrace]:
+        """Run detect() on the window ending at window_end_ts and return the trace.
+
+        Raises ValueError if the timestamp isn't found or there aren't enough captures.
+        """
+        config = self._config
+        window_size = config.window_size
+
+        sorted_captures = sorted(captures, key=lambda r: r.frame_ts)
+        ts_list = [r.frame_ts for r in sorted_captures]
+
+        try:
+            end_idx = ts_list.index(window_end_ts)
+        except ValueError:
+            raise ValueError(f"window_end_ts={window_end_ts} not found in captures")
+
+        if end_idx < window_size - 1:
+            raise ValueError(
+                f"Not enough captures before ts={window_end_ts} "
+                f"(need {window_size}, have {end_idx + 1})"
+            )
+
+        window = sorted_captures[end_idx - window_size + 1 : end_idx + 1]
+        frames = [_frame_from_record(r) for r in window]
+        detector_config = _build_detector_config(window[0], config)
+
+        confidence_maps: list[np.ndarray] | None = None
+        if config.qc_enabled:
+            confidence_maps = _compute_confidence_maps(
+                frames, detector_config, None, 0.0
+            )
+
+        trace = DiagnosticTrace()
+        result = detect(
+            frames=frames,
+            location=(window[0].lat, window[0].lon),
+            config=detector_config,
+            confidence_maps=confidence_maps,
+            diagnostics=trace,
+        )
+
+        return _to_prediction(result, frames, window), trace

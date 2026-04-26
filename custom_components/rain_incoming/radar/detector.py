@@ -63,6 +63,40 @@ class DetectionResult:
     last_labeled: np.ndarray | None = None  # labeled array of last frame's cells
 
 
+@dataclass
+class FrameDiagnostic:
+    """Diagnostic information for a single radar frame."""
+
+    cell_count: int
+
+
+@dataclass
+class TrackDiagnostic:
+    """Diagnostic information for a single tracked cell."""
+
+    frame_indices: list[int]
+    status: str
+    reason: str | None = None
+
+
+@dataclass
+class DecisionDiagnostic:
+    """The final decision made by detect()."""
+
+    rain_incoming: bool
+    arrival_minutes: float | None
+    rain_at_location: bool
+
+
+@dataclass
+class DiagnosticTrace:
+    """Accumulates per-frame diagnostic data during a detect() call."""
+
+    frames: list[FrameDiagnostic] = field(default_factory=list)
+    tracks: list[TrackDiagnostic] = field(default_factory=list)
+    decision: DecisionDiagnostic | None = None
+
+
 def _location_to_pixel(
     lat: float, lon: float, bounds: BoundingBox, width: int, height: int
 ) -> tuple[int, int]:
@@ -609,6 +643,7 @@ def detect(
     location: tuple[float, float],
     config: DetectorConfig,
     confidence_maps: list[np.ndarray] | None = None,
+    diagnostics: DiagnosticTrace | None = None,
 ) -> DetectionResult:
     """Run the full rain detection pipeline over a list of radar frames.
 
@@ -621,6 +656,12 @@ def detect(
     frame_count = len(frames)
 
     if frame_count < 2:
+        if diagnostics is not None:
+            diagnostics.decision = DecisionDiagnostic(
+                rain_incoming=False,
+                arrival_minutes=None,
+                rain_at_location=False,
+            )
         return DetectionResult(
             rain_incoming=False,
             arrival_time=None,
@@ -632,6 +673,11 @@ def detect(
     confidence = Confidence.DEGRADED if frame_count < 3 else Confidence.NORMAL
 
     analysis = _prepare_frame_analysis(frames, config, confidence_maps)
+
+    if diagnostics is not None:
+        for centroids in analysis.per_frame_centroids:
+            diagnostics.frames.append(FrameDiagnostic(cell_count=len(centroids)))
+
     bounds = config.analysis_bounds
     W, H = config.grid_width, config.grid_height
 
@@ -648,6 +694,23 @@ def detect(
     max_match_dist = max(W, H) * 0.25  # allow up to 25% of grid size per frame
     all_tracks = _build_cell_tracks(analysis.per_frame_centroids, max_match_dist)
 
+    if diagnostics is not None:
+        _last_frame_idx = frame_count - 1
+        for track in all_tracks:
+            if len(track) < config.min_temporal_frames:
+                track_status, track_reason = "dropped", "too_short"
+            elif track[-1][0] != _last_frame_idx:
+                track_status, track_reason = "dropped", "ended_early"
+            else:
+                track_status, track_reason = "accepted", None
+            diagnostics.tracks.append(
+                TrackDiagnostic(
+                    frame_indices=[entry[0] for entry in track],
+                    status=track_status,
+                    reason=track_reason,
+                )
+            )
+
     last_frame_idx = frame_count - 1
     valid_tracks = [
         t for t in all_tracks
@@ -657,6 +720,18 @@ def detect(
     last_labeled = analysis.per_frame_labeled[-1]
 
     if not valid_tracks:
+        if diagnostics is not None:
+            no_track_rain_incoming = rain_at_location is not None
+            no_track_arrival_minutes = (
+                (frames[rain_at_location[0]].timestamp - frames[-1].timestamp).total_seconds() / 60.0
+                if rain_at_location is not None
+                else None
+            )
+            diagnostics.decision = DecisionDiagnostic(
+                rain_incoming=no_track_rain_incoming,
+                arrival_minutes=no_track_arrival_minutes,
+                rain_at_location=rain_at_location is not None,
+            )
         return _no_tracks_result(
             rain_at_location, frames, confidence, frame_count, last_labeled,
         )
@@ -680,6 +755,15 @@ def detect(
     )
 
     rain_incoming = earliest_arrival is not None
+    if diagnostics is not None:
+        arrival_minutes = None
+        if earliest_arrival is not None:
+            arrival_minutes = (earliest_arrival - frames[-1].timestamp).total_seconds() / 60.0
+        diagnostics.decision = DecisionDiagnostic(
+            rain_incoming=rain_incoming,
+            arrival_minutes=arrival_minutes,
+            rain_at_location=rain_at_location is not None,
+        )
     return DetectionResult(
         rain_incoming=rain_incoming,
         arrival_time=earliest_arrival,

@@ -16,6 +16,9 @@ from scripts.backtest.replay import PredictionRecord, ReplayConfig, ReplayEngine
 from custom_components.rain_incoming.radar.detector import (
     Confidence,
     DetectionResult,
+    DiagnosticTrace,
+    FrameDiagnostic,
+    DecisionDiagnostic,
 )
 
 
@@ -496,3 +499,43 @@ class TestReplayManifestOnlyLoadNeededCaptures:
             f"_frame_from_record called {mock_frame.call_count} times for "
             f"2 manifest windows - should only build frames for needed captures, not all {len(captures)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 9. inspect_window: extract diagnostic trace for a target window
+# ---------------------------------------------------------------------------
+
+
+class TestInspectWindow:
+    def test_inspect_window_returns_prediction_and_trace_for_target_window(self) -> None:
+        """inspect_window runs detect() on the window ending at window_end_ts.
+
+        Returns both the PredictionRecord and the DiagnosticTrace that was
+        passed to detect()."""
+        captures = _make_records(8)
+        target_ts = captures[-1].frame_ts
+
+        def populate_trace(frames, location, config, confidence_maps=None, diagnostics=None):
+            """Mock detect() that populates the trace if provided."""
+            if diagnostics is not None:
+                for _ in frames:
+                    diagnostics.frames.append(FrameDiagnostic(cell_count=2))
+                diagnostics.decision = DecisionDiagnostic(
+                    rain_incoming=True,
+                    arrival_minutes=15.0,
+                    rain_at_location=False,
+                )
+            return _mock_detect_result(rain_incoming=True)
+
+        engine = ReplayEngine(ReplayConfig(qc_enabled=False))
+        with patch("scripts.backtest.replay.detect", side_effect=populate_trace):
+            prediction, trace = engine.inspect_window(captures, window_end_ts=target_ts)
+
+        assert isinstance(prediction, PredictionRecord)
+        assert prediction.rain_incoming is True
+        assert isinstance(trace, DiagnosticTrace)
+        assert len(trace.frames) == 8
+        assert trace.frames[0].cell_count == 2
+        assert trace.decision is not None
+        assert trace.decision.rain_incoming is True
+        assert trace.decision.arrival_minutes == 15.0
