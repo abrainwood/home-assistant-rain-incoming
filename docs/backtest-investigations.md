@@ -231,6 +231,58 @@ at 60min lookahead where scaling jumps to 4 frames, but default is 30min.
 longer lookaheads (60min would require 4 frames) but current default is 30min
 where the impact is tiny.
 
+## Perth False Negative 2026-04-27 14:20 AEST (Tier 0 investigation)
+
+**Context**: Live integration showed `Rain Incoming = Dry` at 14:20 AEST despite visible
+approaching rain on radar. Window: `1777263600` (last 8 frames, 13:10–14:20 AEST).
+
+**Finding: not a bug, a structural limitation.**
+
+Window 2 (14:20 AEST - the false negative):
+- 170 total tracks, 69 accepted (passed min_frames + ends-on-last-frame checks)
+- `rain_incoming=False`, `max_approaching_intensity=0.0000`
+
+### Root causes
+
+**1. Persistent static clutter dominates accepted tracks (61 of 69)**
+
+61 of 69 accepted tracks show exactly `intensity=0.376` (a fixed RainViewer palette step)
+throughout all 8 frames (80 minutes). Bearings are random across all quadrants:
+`N:16, E:24, S:18, W:10`. This is the signature of static ground/sea clutter - cells
+that appear at a fixed location and intensity and are never filtered because the clutter
+map is cold. None project to arrive at Perth within the lookahead window.
+
+**2. Approaching band in only 1 frame (too_short)**
+
+36 new cells appear in frame 7 only (last frame, 14:20 AEST). All are `too_short`
+(single-frame, `MIN_TEMPORAL_FRAMES=2`). These are likely the actual approaching rain
+band visible on radar. A single frame cannot be distinguished from noise.
+
+**3. Two span-2 tracks (frames 6-7) are speed-rejected**
+
+Two accepted tracks span frames 6-7 with velocities 156 km/h and 573 km/h. They pass
+the structural track filter (2 frames ≥ `MIN_TEMPORAL_FRAMES`) but are correctly
+rejected inside `_evaluate_approaching_cell`'s speed cap (`MAX_STORM_SPEED_KMH=120`).
+Both have `intensity=0.376` - likely clutter-matching artifacts from unrelated cells
+in adjacent frames.
+
+### What would fix it
+
+1. **Warm clutter map**: The 61 static-intensity cells would be filtered once the
+   clutter map has learned Perth's ground clutter pattern (needs ~2 weeks of data).
+   This is the most impactful fix - it eliminates the noise that's masking the signal.
+
+2. **Single-frame approaching band detection with confidence signals** (Phase 3C):
+   When a fresh batch of cells appears at the edge of the analysis window pointing
+   toward the location, detect with 1 frame IF satellite says there are clouds there
+   or forecast PoP is elevated. Without an external signal, single-frame = noise.
+
+### No algorithm change warranted
+
+The detector correctly rejected all accepted tracks (random bearings, fixed intensity,
+speed violations). The false negative is correct given the data and thresholds. Fixing
+it requires external confidence signals, not threshold tuning.
+
 ## Tier 0 Diagnostic Findings (early)
 
 Inspecting Penrith FA window 1776388200 (predicted +11min, no rain arrived):

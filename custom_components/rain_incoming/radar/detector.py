@@ -80,6 +80,7 @@ class TrackDiagnostic:
     status: str
     reason: str | None = None
     velocity_kmh: float | None = None
+    bearing_degrees: float | None = None
     initial_intensity: float | None = None
     final_intensity: float | None = None
 
@@ -741,9 +742,11 @@ def detect(
             else:
                 track_status, track_reason = "accepted", None
             diag_velocity: float | None = None
+            diag_bearing: float | None = None
             if len(track) >= 2:
-                speed, _ = _track_velocity_kmh_bearing(track, frames, km_per_row, km_per_col)
+                speed, bearing = _track_velocity_kmh_bearing(track, frames, km_per_row, km_per_col)
                 diag_velocity = speed
+                diag_bearing = bearing
             diag_initial = _intensity_at_track_entry(track, 0, analysis.grids, analysis.per_frame_labeled)
             diag_final = _intensity_at_track_entry(track, -1, analysis.grids, analysis.per_frame_labeled)
             diagnostics.tracks.append(
@@ -752,6 +755,7 @@ def detect(
                     status=track_status,
                     reason=track_reason,
                     velocity_kmh=diag_velocity,
+                    bearing_degrees=diag_bearing,
                     initial_intensity=diag_initial,
                     final_intensity=diag_final,
                 )
