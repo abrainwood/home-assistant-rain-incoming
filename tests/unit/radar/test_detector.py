@@ -697,6 +697,285 @@ class TestClosingDistanceFallback:
         assert result.rain_incoming is False
 
 
+class TestLeadingEdgeArrival:
+    """Tests for the leading-edge arrival fallback.
+
+    Large storm fronts (squall lines) can have incoherent centroid motion
+    even while their leading edge clearly approaches the location. The
+    leading-edge arrival path uses the minimum pixel distance from any
+    cell pixel to the target across the track, instead of centroid-to-
+    centroid velocity, so these systems are still detected.
+    """
+
+    def _leading_edge_config(self) -> DetectorConfig:
+        """Config tuned for ~1 km/pixel.
+
+        Bounds span 0.58 deg lat (~64 km) and 0.70 deg lon (~64 km at
+        the test latitude), giving a 64x64 grid with ~1 km/pixel. With
+        proximity_radius_km=15 this leaves room for a wide cell whose
+        centroid is much further from the location than its leading edge.
+        """
+        return DetectorConfig(
+            lookahead_seconds=3600,
+            intensity_threshold=0.1,
+            min_cell_area_pixels=1,
+            min_temporal_frames=2,
+            max_angular_variance=0.5,
+            max_storm_speed_kmh=120.0,
+            proximity_radius_km=15.0,
+            analysis_bounds=BoundingBox(
+                lat_min=LAT - 0.29,
+                lat_max=LAT + 0.29,
+                lon_min=LON - 0.35,
+                lon_max=LON + 0.35,
+            ),
+            grid_width=64,
+            grid_height=64,
+        )
+
+    def _make_band_frames(
+        self,
+        cfg: DetectorConfig,
+        bands: list[tuple[int, int, int, int]],
+        interval_minutes: int = 10,
+    ) -> list[RadarFrame]:
+        """Build frames each containing a single rectangular band.
+
+        ``bands`` is a list of (row_start, row_end_exclusive, col_start,
+        col_end_exclusive). Frames are spaced ``interval_minutes`` apart,
+        oldest first, with the final frame at t=0.
+        """
+        frames = []
+        n = len(bands)
+        for i, (r0, r1, c0, c1) in enumerate(bands):
+            grid = np.zeros((cfg.grid_height, cfg.grid_width), dtype=np.float32)
+            grid[r0:r1, c0:c1] = 0.8
+            frames.append(
+                make_frame(
+                    ts(-interval_minutes * (n - 1 - i)),
+                    grid,
+                    cfg.analysis_bounds,
+                )
+            )
+        return frames
+
+    def test_incoherent_centroid_with_approaching_edge_detected(self):
+        """Large band with zigzag centroid but a leading edge that closes
+        across the track should fire via the leading-edge fallback.
+
+        Frame layout (64x64 grid, ~1 km/pixel, location at pixel (32, 32),
+        proximity_radius_km=15.0). All cells stay above row 12 so the
+        rain-at-location proximity-box check (rows 17-47, cols 17-47)
+        does not fire and detection must come from the new fallback.
+
+          F0 (-30m): rows 0-2,  cols 0-15  -> centroid (1, 7.5)
+          F1 (-20m): rows 3-5,  cols 8-23  -> centroid (4, 15.5)
+          F2 (-10m): rows 6-8,  cols 0-15  -> centroid (7, 7.5)
+          F3   (0m): rows 9-11, cols 8-23  -> centroid (10, 15.5)
+
+        Centroid velocity zigzags east/west each frame. Circular variance
+        across the three velocities is ~0.53 > max_angular_variance=0.5,
+        so coherence fails and the centroid-projection path returns None.
+
+        Leading edge (closest cell pixel) to (32, 32):
+          F0 (2,15) ~34.5 km, F1 (5,23) ~28.5 km,
+          F2 (8,15) ~29.4 km, F3 (11,23) ~22.9 km.
+
+        Edge closes ~11.6 km over the track (>10 km noise floor) and
+        the most recent step (F2->F3) is closing. Closing rate ~23 km/h
+        is well under max_storm_speed_kmh=120. ETA ~20 min, within
+        lookahead_seconds=3600.
+        """
+        cfg = self._leading_edge_config()
+        frames = self._make_band_frames(
+            cfg,
+            [
+                (0, 3, 0, 16),
+                (3, 6, 8, 24),
+                (6, 9, 0, 16),
+                (9, 12, 8, 24),
+            ],
+        )
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is True
+        assert result.arrival_time is not None
+
+    def test_leading_edge_closing_faster_than_speed_cap_rejected(self):
+        """Edge closing implausibly fast (>max_storm_speed_kmh) is rejected.
+
+        A growing cell whose southern edge sweeps from ~34 km to ~24 km in
+        5 minutes implies an edge speed of ~125 km/h, above the 120 km/h
+        cap. Centroid motion is coherent and slow (~78 km/h) so the
+        centroid speed cap does not fire; the rejection must come from
+        the leading-edge fallback's own cap.
+
+        Frames spaced 2.5 minutes apart so the closing rate exceeds the
+        cap while the per-frame centroid drift stays within it.
+
+          F0 (-5m):   rows 0-2,  cols 5-15  centroid (1, 10),    edge (2, 15)
+          F1 (-2.5m): rows 0-7,  cols 5-15  centroid (3.5, 10),  edge (7, 15)
+          F2  (0m):   rows 0-15, cols 5-15  centroid (7.5, 10),  edge (15, 15)
+
+        With ~1 km/pixel edge dist goes 34.5 -> 30.2 -> 24.0 km. Total
+        closing 10.4 km in 5 min -> 125 km/h, just above the 120 cap.
+        """
+        cfg = self._leading_edge_config()
+        # Use half-minute precision via _make_band_frames is awkward; build
+        # the timestamps inline here.
+        from datetime import timedelta
+        bands = [
+            (0, 3, 5, 16),
+            (0, 8, 5, 16),
+            (0, 16, 5, 16),
+        ]
+        offsets_s = [-300, -150, 0]
+        frames = []
+        for (r0, r1, c0, c1), off in zip(bands, offsets_s):
+            grid = np.zeros((cfg.grid_height, cfg.grid_width), dtype=np.float32)
+            grid[r0:r1, c0:c1] = 0.8
+            frames.append(
+                make_frame(
+                    ts(0) + timedelta(seconds=off),
+                    grid,
+                    cfg.analysis_bounds,
+                )
+            )
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is False
+
+    def test_leading_edge_retreating_on_last_step_rejected(self):
+        """Edge that closed overall but is retreating on the most recent
+        step must NOT be reported as incoming.
+
+        Even if the first-vs-last edge distance shows >10 km of closing,
+        a cell that has just begun moving away should not be projected
+        as an arrival - it could be a passing front that missed.
+
+        Frame layout (incoherent centroid, leading edge in pixels):
+          F0 (-30m): row 0, cols 0-3        edge (0, 3)   dist ~42.5 km
+          F1 (-20m): rows 3-5, cols 0-15    edge (5, 15)  dist ~31.9 km
+          F2 (-10m): rows 6-8, cols 0-15    edge (8, 15)  dist ~29.4 km
+          F3   (0m): rows 3-5, cols 0-15    edge (5, 15)  dist ~31.9 km
+
+        Edge closes 42.5 -> 31.9 -> 29.4 (advancing) then 29.4 -> 31.9
+        (retreating). The most-recent-step guard rejects this.
+        """
+        cfg = self._leading_edge_config()
+        frames = self._make_band_frames(
+            cfg,
+            [
+                (0, 1, 0, 4),
+                (3, 6, 0, 16),
+                (6, 9, 0, 16),
+                (3, 6, 0, 16),
+            ],
+        )
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is False
+
+    def test_leading_edge_already_inside_proximity_returns_zero_eta(self):
+        """When the leading edge has already crossed inside the proximity
+        radius, the fallback returns ETA=0 (rain is here now).
+
+        Tested directly because the surrounding pipeline routes any cell
+        whose pixels fall in the proximity box through the rain-at-
+        location check first; this branch is reachable when a cell's
+        centroid is far but its edge is already in proximity.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            _leading_edge_arrival,
+        )
+        cfg = self._leading_edge_config()
+        from datetime import timedelta
+        base = ts(0)
+        zero = np.zeros((cfg.grid_height, cfg.grid_width), dtype=np.float32)
+        frames = [
+            make_frame(base + timedelta(minutes=-20), zero, cfg.analysis_bounds),
+            make_frame(base + timedelta(minutes=-10), zero, cfg.analysis_bounds),
+            make_frame(base, zero, cfg.analysis_bounds),
+        ]
+        # Pixel positions (r0, r1_excl, c0, c1_excl). Edge dists ~30, 25, ~13 km.
+        positions = [(2, 3, 12, 13), (7, 8, 13, 14), (22, 23, 22, 23)]
+        labeled_grids = []
+        for (r0, r1, c0, c1) in positions:
+            grid = np.zeros((cfg.grid_height, cfg.grid_width), dtype=np.int32)
+            grid[r0:r1, c0:c1] = 1
+            labeled_grids.append(grid)
+        track = [
+            (0, 1, (2.0, 13.0)),
+            (1, 1, (7.5, 13.0)),
+            (2, 1, (22.5, 22.5)),
+        ]
+        eta = _leading_edge_arrival(
+            track, frames, cfg, loc_row=32, loc_col=32,
+            per_frame_labeled=labeled_grids,
+            km_per_row=1.0, km_per_col=1.0,
+        )
+        assert eta == 0.0
+
+    def test_leading_edge_eta_beyond_lookahead_not_detected(self):
+        """When the projected ETA exceeds lookahead_seconds, the fallback
+        returns None.
+
+        Tested directly: a cell whose edge closes >10 km but very slowly
+        over a long track, leaving a large remaining distance, yields an
+        ETA outside the lookahead window.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            _leading_edge_arrival,
+        )
+        cfg = self._leading_edge_config()
+        from datetime import timedelta
+        base = ts(0)
+        zero = np.zeros((cfg.grid_height, cfg.grid_width), dtype=np.float32)
+        frames = [
+            make_frame(base + timedelta(hours=-2), zero, cfg.analysis_bounds),
+            make_frame(base + timedelta(hours=-1), zero, cfg.analysis_bounds),
+            make_frame(base, zero, cfg.analysis_bounds),
+        ]
+        # Single-pixel cells; edge dists 32 -> 28 -> 21 km (closing 11 km
+        # over 2 hours = 5.5 km/h). Remaining 21-15=6 km. ETA = 6/5.5*3600
+        # = 3927s, just over the 3600s lookahead.
+        positions = [(0, 1, 32, 33), (0, 1, 28, 29), (0, 1, 21, 22)]
+        labeled_grids = []
+        for (r0, r1, c0, c1) in positions:
+            grid = np.zeros((cfg.grid_height, cfg.grid_width), dtype=np.int32)
+            grid[r0:r1, c0:c1] = 1
+            labeled_grids.append(grid)
+        track = [
+            (0, 1, (0.0, 32.5)),
+            (1, 1, (0.0, 28.5)),
+            (2, 1, (0.0, 21.5)),
+        ]
+        eta = _leading_edge_arrival(
+            track, frames, cfg, loc_row=32, loc_col=32,
+            per_frame_labeled=labeled_grids,
+            km_per_row=1.0, km_per_col=1.0,
+        )
+        assert eta is None
+
+    def test_leading_edge_stationary_not_detected(self):
+        """A stationary cell whose leading edge does not advance must
+        not fire the leading-edge fallback.
+
+        All three frames contain the same band; centroid velocity is
+        zero so coherence fails (zero velocities are treated as
+        incoherent). The fallback engages but sees no closing motion
+        and returns None.
+        """
+        cfg = self._leading_edge_config()
+        frames = self._make_band_frames(
+            cfg,
+            [
+                (3, 6, 0, 16),
+                (3, 6, 0, 16),
+                (3, 6, 0, 16),
+            ],
+        )
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+        assert result.rain_incoming is False
+
+
 class TestDetectDiagnostics:
     """Tests for the diagnostic trace feature that exposes frame analysis details."""
 

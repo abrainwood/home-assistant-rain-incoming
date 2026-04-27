@@ -344,12 +344,16 @@ def _evaluate_approaching_cell(
     last_labeled: np.ndarray,
     last_conf_map: np.ndarray | None,
     last_frame_time: datetime,
+    per_frame_labeled: list[np.ndarray],
 ) -> tuple[TrackedCell, datetime | None, float] | None:
     """Evaluate a tracked cell that is not yet overhead - approaching.
 
     Computes velocity, checks coherence, does forward projection and
-    closing-distance fallback. Returns (TrackedCell, arrival_dt_or_None,
-    max_intensity_contribution) or None if the cell should be skipped.
+    closing-distance fallback. Falls back to leading-edge arrival when
+    centroid-based methods fail or the centroid motion is incoherent.
+
+    Returns (TrackedCell, arrival_dt_or_None, max_intensity_contribution)
+    or None if the cell should be skipped.
     """
     _, last_label, final_centroid = track[-1]
     cur_row, cur_col = final_centroid
@@ -368,51 +372,71 @@ def _evaluate_approaching_cell(
     if not velocities:
         return None
 
-    if not is_directionally_coherent(velocities, config.max_angular_variance):
-        return None
-
     vy = sum(v[0] for v in velocities) / len(velocities)
     vx = sum(v[1] for v in velocities) / len(velocities)
-
     vy_km_s = vy * km_per_row
     vx_km_s = vx * km_per_col
     speed_kmh_val = math.sqrt(vy_km_s**2 + vx_km_s**2) * 3600
-    if speed_kmh_val > config.max_storm_speed_kmh:
-        return None
 
-    # Compute acceleration if enabled
-    ay, ax = 0.0, 0.0
-    if config.use_acceleration:
-        time_deltas = []
-        for i in range(len(track) - 1):
-            fi, _, _ = track[i]
-            fj, _, _ = track[i + 1]
-            time_deltas.append(
-                (frames[fj].timestamp - frames[fi].timestamp).total_seconds()
-            )
-        ay, ax = estimate_acceleration(velocities, time_deltas)
-
-    # Project cell forward in 60-second steps up to the lookahead limit
-    step_s = 60.0
-    t = 0.0
     arrival_seconds: float | None = None
 
-    while t <= config.lookahead_seconds:
-        proj_row = cur_row + vy * t + 0.5 * ay * t * t
-        proj_col = cur_col + vx * t + 0.5 * ax * t * t
-        d = math.sqrt((proj_row - loc_row) ** 2 + (proj_col - loc_col) ** 2)
-        if d <= proximity_px:
-            arrival_seconds = t
-            break
-        t += step_s
-
-    # Fallback: if velocity projection didn't find arrival, check whether
-    # the cell has been consistently closing distance to the location across
-    # its track history.
-    if arrival_seconds is None:
-        arrival_seconds = _closing_distance_fallback(
-            track, frames, config, loc_row, loc_col, km_per_row, km_per_col,
+    # Incoherent centroid motion (large storm fronts with growing/zigzag
+    # centroids) - skip projection/closing-distance and go straight to the
+    # leading-edge fallback. The centroid speed cap is also skipped here
+    # because the centroid average is meaningless for an incoherent cell;
+    # _leading_edge_arrival applies its own cap on the edge closing rate.
+    if not is_directionally_coherent(velocities, config.max_angular_variance):
+        arrival_seconds = _leading_edge_arrival(
+            track, frames, config, loc_row, loc_col,
+            per_frame_labeled, km_per_row, km_per_col,
         )
+        if arrival_seconds is None:
+            return None
+    else:
+        if speed_kmh_val > config.max_storm_speed_kmh:
+            return None
+
+        # Compute acceleration if enabled
+        ay, ax = 0.0, 0.0
+        if config.use_acceleration:
+            time_deltas = []
+            for i in range(len(track) - 1):
+                fi, _, _ = track[i]
+                fj, _, _ = track[i + 1]
+                time_deltas.append(
+                    (frames[fj].timestamp - frames[fi].timestamp).total_seconds()
+                )
+            ay, ax = estimate_acceleration(velocities, time_deltas)
+
+        # Project cell forward in 60-second steps up to the lookahead limit
+        step_s = 60.0
+        t = 0.0
+
+        while t <= config.lookahead_seconds:
+            proj_row = cur_row + vy * t + 0.5 * ay * t * t
+            proj_col = cur_col + vx * t + 0.5 * ax * t * t
+            d = math.sqrt((proj_row - loc_row) ** 2 + (proj_col - loc_col) ** 2)
+            if d <= proximity_px:
+                arrival_seconds = t
+                break
+            t += step_s
+
+        # Fallback: if velocity projection didn't find arrival, check whether
+        # the cell has been consistently closing distance to the location across
+        # its track history.
+        if arrival_seconds is None:
+            arrival_seconds = _closing_distance_fallback(
+                track, frames, config, loc_row, loc_col, km_per_row, km_per_col,
+            )
+
+        # Final fallback: centroid passed coherence but its distance never
+        # closes (centroid is far while leading edge is close). Try the
+        # per-pixel leading edge.
+        if arrival_seconds is None:
+            arrival_seconds = _leading_edge_arrival(
+                track, frames, config, loc_row, loc_col,
+                per_frame_labeled, km_per_row, km_per_col,
+            )
 
     arrival_dt: datetime | None = None
     intensity_contribution = 0.0
@@ -430,6 +454,68 @@ def _evaluate_approaching_cell(
         confidence=cell_conf,
     )
     return tracked, arrival_dt, intensity_contribution
+
+
+# Minimum overall closing distance for the leading-edge fallback to fire.
+# Smaller closes are noise (one pixel of cell-shape jitter on a ~1 km grid
+# is enough to read as a few km of edge motion).
+_LEADING_EDGE_MIN_CLOSING_KM = 10.0
+
+
+def _leading_edge_arrival(
+    track: list[_TrackEntry],
+    frames: list[RadarFrame],
+    config: DetectorConfig,
+    loc_row: int,
+    loc_col: int,
+    per_frame_labeled: list[np.ndarray],
+    km_per_row: float,
+    km_per_col: float,
+) -> float | None:
+    """Estimate arrival from per-frame minimum cell-pixel distance.
+
+    For each track entry, find the closest pixel of that cell to the
+    target location and convert to km. If the leading edge is closing
+    overall and on the most recent step, project arrival from the
+    closing rate. Returns ETA in seconds, or None if not approaching.
+    """
+    km_per_px = (km_per_row + km_per_col) / 2
+
+    edge_dists_km: list[float] = []
+    for frame_idx, label, _ in track:
+        labeled = per_frame_labeled[frame_idx]
+        rows, cols = np.where(labeled == label)
+        d_px = np.sqrt((rows - loc_row) ** 2 + (cols - loc_col) ** 2).min()
+        edge_dists_km.append(float(d_px) * km_per_px)
+
+    first = edge_dists_km[0]
+    last = edge_dists_km[-1]
+    second_to_last = edge_dists_km[-2]
+
+    # Edge must be closing both overall and on the most recent step.
+    if last >= first or last >= second_to_last:
+        return None
+
+    closing_km = first - last
+    if closing_km < _LEADING_EDGE_MIN_CLOSING_KM:
+        return None
+
+    track_duration_s = (
+        frames[track[-1][0]].timestamp - frames[track[0][0]].timestamp
+    ).total_seconds()
+    closing_rate_kmh = (closing_km / track_duration_s) * 3600
+    if closing_rate_kmh > config.max_storm_speed_kmh:
+        return None
+
+    remaining_km = last - config.proximity_radius_km
+    if remaining_km <= 0:
+        return 0.0
+
+    eta_s = (remaining_km / closing_rate_kmh) * 3600
+    if eta_s <= config.lookahead_seconds:
+        return eta_s
+
+    return None
 
 
 def _closing_distance_fallback(
@@ -622,6 +708,7 @@ def _process_tracks(
     last_grid: np.ndarray,
     last_labeled: np.ndarray,
     last_conf_map: np.ndarray | None,
+    per_frame_labeled: list[np.ndarray],
 ) -> tuple[list[TrackedCell], datetime | None, float]:
     """Evaluate each valid track and accumulate earliest arrival and max intensity."""
     last_frame_time = frames[-1].timestamp
@@ -643,7 +730,7 @@ def _process_tracks(
             result = _evaluate_approaching_cell(
                 track, frames, config, loc_row, loc_col, proximity_px,
                 km_per_row, km_per_col, last_grid, last_labeled, last_conf_map,
-                last_frame_time,
+                last_frame_time, per_frame_labeled,
             )
 
         if result is None:
@@ -804,6 +891,7 @@ def detect(
         loc_row, loc_col, proximity_px_f,
         km_per_row, km_per_col,
         analysis.grids[-1], last_labeled, last_conf_map,
+        analysis.per_frame_labeled,
     )
 
     earliest_arrival, max_intensity = _merge_location_rain(
