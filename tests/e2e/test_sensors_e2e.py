@@ -42,9 +42,10 @@ class TestIntegratedRainValidation:
     def _download_gif(self, ha_client, scenario, entity_id=IMAGE_128, previous_gif=None):
         """Set scenario, wait for coordinator cycle, then download GIF.
 
-        If previous_gif is provided, polls until the image differs from it
-        (handles async_image returning stale cached data). Otherwise polls
-        until the image has non-trivial content.
+        If previous_gif is provided, polls until the image differs VISUALLY from
+        it (handles both stale cached data and re-renders with new timestamps but
+        identical tile content). Otherwise polls until the image has non-trivial
+        content.
 
         Raises AssertionError on timeout so the failure message is diagnostic
         ("timed out waiting for render") rather than misleading ("images identical").
@@ -55,16 +56,22 @@ class TestIntegratedRainValidation:
         while time.time() < deadline:
             gif = ha_client.get_image(entity_id)
             if gif and len(gif) > 1000:
-                if previous_gif is None or gif != previous_gif:
+                if previous_gif is None:
+                    return gif
+                differs, _ = images_differ_significantly(gif, previous_gif)
+                if differs:
                     return gif
             time.sleep(2)
         gif = ha_client.get_image(entity_id)
-        if previous_gif is not None and gif == previous_gif:
-            raise AssertionError(
-                f"Timed out after {_IMAGE_POLL_TIMEOUT}s waiting for '{scenario}' "
-                f"image to differ from previous scenario. "
-                f"Image render may not have completed in time."
-            )
+        if previous_gif is not None:
+            differs, fraction = images_differ_significantly(gif, previous_gif) if gif else (False, 0.0)
+            if not differs:
+                raise AssertionError(
+                    f"Timed out after {_IMAGE_POLL_TIMEOUT}s waiting for '{scenario}' "
+                    f"image to differ visually from previous scenario "
+                    f"(diff fraction: {fraction:.4f}). "
+                    f"Image render may not have completed in time."
+                )
         if not gif or len(gif) <= 1000:
             raise AssertionError(
                 f"Timed out after {_IMAGE_POLL_TIMEOUT}s waiting for '{scenario}' "

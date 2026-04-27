@@ -8,7 +8,11 @@ import numpy as np
 import pytest
 
 from custom_components.rain_incoming.coordinator import RainDetectorCoordinator
-from custom_components.rain_incoming.const import CONF_FORECAST_CONFIDENCE_ENABLED
+from custom_components.rain_incoming.const import (
+    CONF_FORECAST_CONFIDENCE_ENABLED,
+    CONF_SATELLITE_CONFIDENCE_ENABLED,
+)
+from custom_components.rain_incoming.providers.himawari import IRTile
 from custom_components.rain_incoming.providers.rainviewer import RainViewerFrame
 from custom_components.rain_incoming.radar.detector import Confidence, DetectionResult
 
@@ -82,6 +86,129 @@ class TestComputePopMultiplier:
 
         assert result == 1.0, f"Expected 1.0 when disabled, got {result}"
         mock_fetch.assert_not_called()
+
+
+class TestComputeSatelliteMultiplier:
+    @pytest.mark.asyncio
+    async def test_enabled_with_clear_sky_returns_3x_multiplier(self):
+        """Happy path: enabled=True + clear-sky tile → multiplier 3.0.
+
+        A dark IR tile (luminance below threshold everywhere) yields
+        cloud_fraction=0.0, which is below SATELLITE_CLOUD_PRESENCE_FRACTION,
+        so cloud_to_threshold_multiplier returns 3.0.
+        """
+        coordinator = _make_coordinator(extra_data={CONF_SATELLITE_CONFIDENCE_ENABLED: True})
+        mock_session = AsyncMock()
+
+        dark_tile = IRTile(
+            pixels=np.zeros((256, 256, 4), dtype=np.uint8),
+            tile_x=0,
+            tile_y=0,
+            zoom=6,
+        )
+
+        with (
+            patch(
+                "custom_components.rain_incoming.coordinator.fetch_himawari_ir_tile",
+                new=AsyncMock(return_value=dark_tile),
+            ),
+            patch(
+                "custom_components.rain_incoming.coordinator.cloud_fraction_in_window",
+                return_value=0.0,
+            ),
+        ):
+            result = await coordinator._compute_satellite_multiplier(-33.7, 151.2, mock_session)
+
+        assert result == 3.0, f"Expected multiplier 3.0 for clear sky (cloud_fraction=0.0), got {result}"
+
+    @pytest.mark.asyncio
+    async def test_disabled_returns_1_without_fetching(self):
+        """When CONF_SATELLITE_CONFIDENCE_ENABLED is False, return 1.0 and skip fetch."""
+        coordinator = _make_coordinator(extra_data={CONF_SATELLITE_CONFIDENCE_ENABLED: False})
+        mock_session = AsyncMock()
+
+        with patch(
+            "custom_components.rain_incoming.coordinator.fetch_himawari_ir_tile",
+            new=AsyncMock(),
+        ) as mock_fetch:
+            result = await coordinator._compute_satellite_multiplier(-33.7, 151.2, mock_session)
+
+        assert result == 1.0, f"Expected 1.0 when disabled, got {result}"
+        mock_fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tile_fetch_failure_returns_1_without_crash(self):
+        """Enabled but tile fetch returns None → fail open with multiplier 1.0, no exception.
+
+        `cloud_fraction_in_window` must NOT be called when tile is None - calling
+        it on None would crash. Verify both the return value and that the
+        guard short-circuits the cloud-fraction computation.
+        """
+        coordinator = _make_coordinator(extra_data={CONF_SATELLITE_CONFIDENCE_ENABLED: True})
+        mock_session = AsyncMock()
+
+        with (
+            patch(
+                "custom_components.rain_incoming.coordinator.fetch_himawari_ir_tile",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "custom_components.rain_incoming.coordinator.cloud_fraction_in_window",
+            ) as mock_cloud_fraction,
+        ):
+            result = await coordinator._compute_satellite_multiplier(-33.7, 151.2, mock_session)
+
+        assert result == 1.0, f"Expected 1.0 on tile fetch failure, got {result}"
+        mock_cloud_fraction.assert_not_called()
+
+
+class TestCombinedMultiplier:
+    @pytest.mark.asyncio
+    async def test_uses_max_of_pop_and_satellite_multipliers(self):
+        """_async_update_data must take max(pop_mult, sat_mult) and pass it to _build_config.
+
+        With pop_mult=2.0 and sat_mult=3.0, the DetectorConfig handed to detect()
+        must carry pop_multiplier=3.0 - the larger of the two. (The field is
+        called `pop_multiplier` historically; semantically it's now the combined
+        confidence multiplier.)
+        """
+        fixed_now = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        coordinator = _make_coordinator(
+            extra_data={
+                CONF_FORECAST_CONFIDENCE_ENABLED: True,
+                CONF_SATELLITE_CONFIDENCE_ENABLED: True,
+            }
+        )
+        frame = _make_frame(fixed_now)
+
+        captured_configs = []
+
+        def _capture_detect(**kwargs):
+            captured_configs.append(kwargs["config"])
+            return _EMPTY_RESULT
+
+        with (
+            patch.object(coordinator._provider, "get_frames", new=AsyncMock(return_value=[frame])),
+            patch.object(coordinator._provider, "prefetch_frames", new=AsyncMock()),
+            patch("custom_components.rain_incoming.coordinator.async_get_clientsession", return_value=MagicMock()),
+            patch.object(
+                coordinator, "_compute_pop_multiplier",
+                new=AsyncMock(return_value=2.0),
+            ),
+            patch.object(
+                coordinator, "_compute_satellite_multiplier",
+                new=AsyncMock(return_value=3.0),
+            ),
+            patch("custom_components.rain_incoming.coordinator.detect", side_effect=_capture_detect),
+        ):
+            await coordinator._async_update_data()
+
+        assert len(captured_configs) == 1, "detect() was not called"
+        assert captured_configs[0].pop_multiplier == 3.0, (
+            f"Expected combined multiplier 3.0 (max of pop=2.0 and sat=3.0), "
+            f"got {captured_configs[0].pop_multiplier}. "
+            "_async_update_data is not taking the max of the two multipliers."
+        )
 
 
 class TestBuildConfigUsesPopMultiplier:

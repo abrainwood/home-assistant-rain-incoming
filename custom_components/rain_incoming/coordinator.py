@@ -41,6 +41,7 @@ from .const import (
     CONF_FORECAST_CONFIDENCE_ENABLED,
     CONF_LOOKAHEAD_MINUTES,
     CONF_MAP_STYLE,
+    CONF_SATELLITE_CONFIDENCE_ENABLED,
     DEFAULT_LOOKAHEAD_MINUTES,
     INTENSITY_THRESHOLD,
     MAX_ANGULAR_VARIANCE_RADIANS,
@@ -51,12 +52,15 @@ from .const import (
     PROXIMITY_RADIUS_KM,
     RAINVIEWER_ZOOM,
     RAINVIEWER_TILE_SIZE,
+    SATELLITE_CHECK_RADIUS_KM,
+    SATELLITE_CLOUD_BRIGHTNESS_THRESHOLD,
 )
 from .http_retry import RateLimitBudget
 from .providers.base import BoundingBox
+from .providers.himawari import cloud_fraction_in_window, fetch_himawari_ir_tile
 from .providers.open_meteo import fetch_hourly_pop, max_pop_in_window
 from .providers.rainviewer import RainViewerProvider
-from .radar.confidence import pop_to_threshold_multiplier
+from .radar.confidence import cloud_to_threshold_multiplier, pop_to_threshold_multiplier
 from .radar.detector import Confidence, DetectionResult, DetectorConfig, TrackedCell, detect
 from .radar.qc import (
     ClutterMap,
@@ -191,6 +195,22 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         window_max = max_pop_in_window(forecast, now, now + timedelta(hours=1))
         return pop_to_threshold_multiplier(window_max)
 
+    async def _compute_satellite_multiplier(
+        self, lat: float, lon: float, session: aiohttp.ClientSession
+    ) -> float:
+        """Compute satellite confidence threshold multiplier from cloud presence."""
+        if not self._entry.data.get(CONF_SATELLITE_CONFIDENCE_ENABLED, False):
+            return 1.0
+        tile = await fetch_himawari_ir_tile(lat, lon, session)
+        if tile is None:
+            return 1.0
+        fraction = cloud_fraction_in_window(
+            tile, lat, lon,
+            SATELLITE_CHECK_RADIUS_KM,
+            SATELLITE_CLOUD_BRIGHTNESS_THRESHOLD,
+        )
+        return cloud_to_threshold_multiplier(fraction)
+
     def _build_config(self, pop_multiplier: float = 1.0) -> DetectorConfig:
         data = self._entry.data
         lat = data.get(CONF_LATITUDE, self.hass.config.latitude)
@@ -225,8 +245,9 @@ class RainDetectorCoordinator(DataUpdateCoordinator[DetectionResult]):
         except Exception as err:
             raise UpdateFailed(f"RainViewer fetch failed: {err}") from err
 
-        multiplier = await self._compute_pop_multiplier(lat, lon, session)
-        config = self._build_config(pop_multiplier=multiplier)
+        pop_mult = await self._compute_pop_multiplier(lat, lon, session)
+        sat_mult = await self._compute_satellite_multiplier(lat, lon, session)
+        config = self._build_config(pop_multiplier=max(pop_mult, sat_mult))
 
         await self._ensure_clutter_map_loaded()
         frames = await self._resolve_frame_cache(frames, config, session)
