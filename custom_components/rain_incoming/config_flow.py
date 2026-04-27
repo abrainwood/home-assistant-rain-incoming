@@ -18,6 +18,7 @@ from .const import (
     CONF_LOCATION_NAME,
     CONF_LOOKAHEAD_MINUTES,
     CONF_MAP_STYLE,
+    CONF_SATELLITE_CONFIDENCE_ENABLED,
     DEFAULT_LOOKAHEAD_MINUTES,
     DOMAIN,
     MAX_LOCATION_NAME_CHARS,
@@ -130,6 +131,7 @@ def _build_options_schema(
     default_location_name: str = "",
     default_map_style: str = _DEFAULT_MAP_STYLE,
     default_forecast_confidence: bool = False,
+    default_satellite_confidence: bool = False,
 ) -> vol.Schema:
     return vol.Schema(
         {
@@ -145,6 +147,7 @@ def _build_options_schema(
                 )
             ),
             vol.Optional(CONF_FORECAST_CONFIDENCE_ENABLED, default=default_forecast_confidence): bool,
+            vol.Optional(CONF_SATELLITE_CONFIDENCE_ENABLED, default=default_satellite_confidence): bool,
         }
     )
 
@@ -248,6 +251,7 @@ def _merge_options_into_data(existing_data: dict, user_input: dict) -> dict:
         CONF_LOOKAHEAD_MINUTES,
         CONF_MAP_STYLE,
         CONF_FORECAST_CONFIDENCE_ENABLED,
+        CONF_SATELLITE_CONFIDENCE_ENABLED,
     )
     merged = dict(existing_data)
     for key in _EDITABLE_OPTION_KEYS:
@@ -273,6 +277,7 @@ def _resolve_options_schema_defaults(
             default_location_name=user_input.get(CONF_LOCATION_NAME, ""),
             default_map_style=user_input.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
             default_forecast_confidence=user_input.get(CONF_FORECAST_CONFIDENCE_ENABLED, current_data.get(CONF_FORECAST_CONFIDENCE_ENABLED, False)),
+            default_satellite_confidence=user_input.get(CONF_SATELLITE_CONFIDENCE_ENABLED, current_data.get(CONF_SATELLITE_CONFIDENCE_ENABLED, False)),
         )
     # First render: use persisted values from entry.data.
     return _build_options_schema(
@@ -282,6 +287,7 @@ def _resolve_options_schema_defaults(
         default_location_name=current_data.get(CONF_LOCATION_NAME, ""),
         default_map_style=current_data.get(CONF_MAP_STYLE, _DEFAULT_MAP_STYLE),
         default_forecast_confidence=current_data.get(CONF_FORECAST_CONFIDENCE_ENABLED, False),
+        default_satellite_confidence=current_data.get(CONF_SATELLITE_CONFIDENCE_ENABLED, False),
     )
 
 

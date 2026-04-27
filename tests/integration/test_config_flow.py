@@ -13,6 +13,7 @@ from custom_components.rain_incoming.const import (
     CONF_FORECAST_CONFIDENCE_ENABLED,
     CONF_LOCATION_NAME,
     CONF_MAP_STYLE,
+    CONF_SATELLITE_CONFIDENCE_ENABLED,
     DOMAIN,
 )
 from .conftest import setup_integration
@@ -954,4 +955,38 @@ async def test_options_flow_persists_forecast_confidence_enabled(hass: HomeAssis
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert entry.data[CONF_FORECAST_CONFIDENCE_ENABLED] is True, (
         f"Expected CONF_FORECAST_CONFIDENCE_ENABLED=True in entry.data, got {entry.data.get(CONF_FORECAST_CONFIDENCE_ENABLED)!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_options_flow_satellite_confidence_toggle(hass: HomeAssistant):
+    """Submitting CONF_SATELLITE_CONFIDENCE_ENABLED=True via OptionsFlow persists it to entry.data."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            CONF_MAP_STYLE: "voyager",
+        },
+        version=2,
+    )
+    await setup_integration(hass, entry, _MOCK_RESULT)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "latitude": -33.701,
+            "longitude": 151.209,
+            "lookahead_minutes": 60,
+            CONF_MAP_STYLE: "voyager",
+            CONF_SATELLITE_CONFIDENCE_ENABLED: True,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert entry.data[CONF_SATELLITE_CONFIDENCE_ENABLED] is True, (
+        f"Expected CONF_SATELLITE_CONFIDENCE_ENABLED=True in entry.data, got {entry.data.get(CONF_SATELLITE_CONFIDENCE_ENABLED)!r}"
     )

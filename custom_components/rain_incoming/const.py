@@ -5,6 +5,7 @@ CONF_LOCATION_NAME = "location_name"
 CONF_LOOKAHEAD_MINUTES = "lookahead_minutes"
 CONF_MAP_STYLE = "map_style"
 CONF_FORECAST_CONFIDENCE_ENABLED = "forecast_confidence_enabled"
+CONF_SATELLITE_CONFIDENCE_ENABLED = "satellite_confidence_enabled"
 
 # Bypass criteria for the PoP multiplier gate. Both must be met:
 # - intensity at or above STRONG_BYPASS_INTENSITY (well above the 0.1 noise floor)
@@ -64,3 +65,26 @@ RAINVIEWER_ANALYSIS_GRID = 2  # fetch (2*N+1)^2 tiles centred on location
 # as a source of the data on your website with a link: https://www.rainviewer.com/"
 # We can't render hyperlinks in a baked GIF, so we include the domain in the text.
 RAINVIEWER_ATTRIBUTION = "rainviewer.com"
+
+# NASA GIBS Himawari Band 13 Clean Infrared - cloud presence at zoom 6 (max).
+# Used as a confidence signal: no clouds nearby means radar returns are noise.
+GIBS_HIMAWARI_URL = (
+    "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"
+    "Himawari_AHI_Band13_Clean_Infrared/default/default/"
+    "GoogleMapsCompatible_Level6/{z}/{y}/{x}.png"
+)
+GIBS_HIMAWARI_ZOOM = 6
+
+# Satellite IR cloud-presence detection parameters (POC-validated).
+# Pixels with luminance >= threshold are treated as cloudy. Threshold ~120
+# matches the colormap rendering for cold-cloud tops in Band 13. The 50km
+# window around a location is wide enough to capture nearby clouds that
+# could plausibly produce radar returns at the location itself.
+SATELLITE_CHECK_RADIUS_KM = 50
+SATELLITE_CLOUD_BRIGHTNESS_THRESHOLD = 120
+
+# A cloud-presence fraction at or above this value within the check window
+# means clouds are present and radar returns can be trusted normally. Below
+# this, the sky is treated as clear and any radar return is presumed noise -
+# the detection threshold is raised to compensate.
+SATELLITE_CLOUD_PRESENCE_FRACTION = 0.1
