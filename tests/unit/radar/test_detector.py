@@ -937,6 +937,32 @@ class TestDetectDiagnostics:
         assert track.initial_intensity == pytest.approx(0.8, abs=0.01)
         assert track.final_intensity == pytest.approx(0.8, abs=0.01)
 
+    def test_diagnostics_records_bearing_for_accepted_track(self):
+        """A cell moving east (increasing column) should have bearing_degrees ~90.
+
+        Bearing is compass convention: 0=N, 90=E, 180=S, 270=W.
+        An east-moving cell (constant row, increasing col) should report ~90°.
+        """
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+        )
+
+        cfg = default_config()
+        # Cell moves east: same row, increasing column
+        frames = []
+        for i, col_offset in enumerate([18, 22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset : col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+
+        trace = DiagnosticTrace()
+        detect(frames=frames, location=(LAT, LON), config=cfg, diagnostics=trace)
+
+        accepted = [t for t in trace.tracks if t.status == "accepted"]
+        assert len(accepted) == 1
+        assert accepted[0].bearing_degrees is not None
+        # East-moving cell: bearing should be 90° ±20° (grid is lat/lon not perfect square)
+        assert accepted[0].bearing_degrees == pytest.approx(90.0, abs=20.0)
 
 
 class TestTrackPeakIntensity:
