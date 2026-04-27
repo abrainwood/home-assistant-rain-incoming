@@ -8,7 +8,7 @@ from enum import Enum
 import numpy as np
 from scipy import ndimage
 
-from ..const import STRONG_BYPASS_INTENSITY
+from ..const import STRONG_BYPASS_INTENSITY, STRONG_BYPASS_MIN_FRAMES
 from ..providers.base import BoundingBox, RadarFrame
 from .filters import filter_by_area, threshold_intensity
 from .motion import (
@@ -762,7 +762,10 @@ def detect(
         t for t in all_tracks
         if t[-1][0] == last_frame_idx and (
             len(t) >= effective_min_frames
-            or _track_peak_intensity(t, analysis.per_frame_labeled, analysis.grids) >= STRONG_BYPASS_INTENSITY
+            or (
+                len(t) >= STRONG_BYPASS_MIN_FRAMES
+                and _track_peak_intensity(t, analysis.per_frame_labeled, analysis.grids) >= STRONG_BYPASS_INTENSITY
+            )
         )
     ]
 

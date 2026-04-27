@@ -142,8 +142,8 @@ class TestDetectRainApproaching:
 
 class TestDetectorPopMultiplier:
     # Deliberately weak: must be above intensity_threshold (0.1) but below
-    # STRONG_BYPASS_INTENSITY (0.5) so S7b bypass never fires in this class.
-    _WEAK_INTENSITY = 0.3
+    # STRONG_BYPASS_INTENSITY (0.2) so S7b bypass never fires in this class.
+    _WEAK_INTENSITY = 0.15
 
     def _make_approaching_frames(self, cfg: DetectorConfig) -> list[RadarFrame]:
         """Simulate a weak rain cell moving east toward Terry Hills.
@@ -992,15 +992,45 @@ class TestStrongBypassGate:
             frames.append(make_frame(ts(-10 + i * 10), grid, cfg.analysis_bounds))
         return frames
 
-    def test_strong_cell_bypasses_multiplier_gate(self):
-        """S7b: a strong cell (peak >= 0.5) with pop_multiplier=2.0 still detects.
+    def _make_3frame_strong_approaching(self, cfg: DetectorConfig) -> list[RadarFrame]:
+        """3-frame strong cell moving east toward location. Peak intensity 0.8."""
+        frames = []
+        for i, col_offset in enumerate([18, 22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.8
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        return frames
 
-        With pop_multiplier=2.0 and min_temporal_frames=2:
-        - effective_min_frames = ceil(2 * 2.0) = 4
-        - Without bypass: 2-frame track < 4 → no detection
-        - With S7b bypass (peak 0.8 >= STRONG_BYPASS_INTENSITY 0.5): min_required = 2 → detects
+    def _make_3frame_moderate_approaching(self, cfg: DetectorConfig) -> list[RadarFrame]:
+        """3-frame moderate cell. Intensity 0.3 - above STRONG_BYPASS_INTENSITY (0.2)."""
+        frames = []
+        for i, col_offset in enumerate([18, 22, 26]):
+            grid = np.zeros((64, 64), dtype=np.float32)
+            grid[30:33, col_offset:col_offset + 3] = 0.3
+            frames.append(make_frame(ts(-20 + i * 10), grid, cfg.analysis_bounds))
+        return frames
 
-        This test currently fails because the bypass doesn't exist yet.
+    def test_strong_persistent_cell_bypasses_multiplier_gate(self):
+        """S7b: a strong cell with persistence bypasses even high multipliers.
+
+        Bypass requires BOTH high confidence in real rain (intensity above noise
+        floor) AND persistence (more than the bare minimum frames). A 3-frame
+        cell at peak 0.8 meets both - clearly real, clearly tracked.
+        """
+        cfg = default_config()
+        cfg.pop_multiplier = 2.0
+        frames = self._make_3frame_strong_approaching(cfg)
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+
+        assert result.rain_incoming is True
+
+    def test_two_frame_strong_cell_does_not_bypass(self):
+        """Persistence criterion: a 2-frame track does not bypass even with high intensity.
+
+        QC pipeline still leaves noise in - high intensity alone is not enough
+        to overrule a low forecast PoP. The track must also have persisted
+        beyond the bare minimum (min_temporal_frames).
         """
         cfg = default_config()
         cfg.pop_multiplier = 2.0
@@ -1008,8 +1038,25 @@ class TestStrongBypassGate:
 
         result = detect(frames=frames, location=(LAT, LON), config=cfg)
 
+        assert result.rain_incoming is False, (
+            "2-frame track should not bypass the multiplier gate even at high intensity - "
+            "persistence criterion (>= STRONG_BYPASS_MIN_FRAMES) is required"
+        )
+
+    def test_moderate_persistent_cell_bypasses(self):
+        """Intensity criterion lowered to noise-floor margin, not heavy-rain threshold.
+
+        A 3-frame cell at intensity 0.3 (3x the 0.1 detection floor) is high-confidence
+        rain - the multiplier should not suppress it just because rain is light.
+        """
+        cfg = default_config()
+        cfg.pop_multiplier = 2.0
+        frames = self._make_3frame_moderate_approaching(cfg)
+
+        result = detect(frames=frames, location=(LAT, LON), config=cfg)
+
         assert result.rain_incoming is True, (
-            "Strong cell (peak=0.8) should bypass the pop_multiplier gate "
-            f"but got rain_incoming={result.rain_incoming}. "
-            "S7b bypass is not implemented yet."
+            "3-frame cell at moderate intensity (0.3 >= STRONG_BYPASS_INTENSITY 0.2) "
+            "should bypass even with high multiplier - confidence comes from "
+            "above-noise + persistent, not from heavy intensity"
         )
