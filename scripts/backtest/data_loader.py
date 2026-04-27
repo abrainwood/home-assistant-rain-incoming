@@ -84,14 +84,18 @@ def _parse_capture(meta_path: Path) -> CaptureRecord:
 
 
 def load_captures(location_dir: Path) -> list[CaptureRecord]:
-    """Scan a location directory, parse meta.json files, return sorted records.
+    """Scan a location directory and return sorted CaptureRecord list.
 
-    Scans all date subdirectories, finds *_meta.json files, parses each, and
-    builds tile_paths by resolving tile filenames relative to the meta.json's
-    directory.  Returns records sorted by frame_ts ascending.
+    Auto-detects format: if a bronze/capture_info.json exists inside
+    location_dir, delegates to load_captures_v2(location_dir / "bronze").
+    Otherwise scans *_meta.json files (backtest format).
 
+    Returns records sorted by frame_ts ascending.
     Skips duplicate frame_ts values (keeps the first seen, in filesystem order).
     """
+    if (location_dir / "bronze" / "capture_info.json").exists():
+        return load_captures_v2(location_dir / "bronze")
+
     records: list[CaptureRecord] = []
     seen_frame_ts: set[int] = set()
 
@@ -105,6 +109,48 @@ def load_captures(location_dir: Path) -> list[CaptureRecord]:
             continue
         seen_frame_ts.add(record.frame_ts)
         records.append(record)
+
+    records.sort(key=lambda r: r.frame_ts)
+    return records
+
+
+def load_captures_v2(bronze_dir: Path) -> list[CaptureRecord]:
+    """Load captures from a golden_v2 bronze/ directory.
+
+    Reads `bronze_dir/capture_info.json` for location/zoom/tile_coords and
+    `bronze_dir/manifest.json` for the list of past radar frame timestamps.
+    Builds tile_paths as `bronze_dir/tiles/{frame_ts}/{zoom}_{x}_{y}_s{scheme}.png`.
+    Returns CaptureRecord list sorted by frame_ts ascending.
+    """
+    info = json.loads((bronze_dir / "capture_info.json").read_text())
+    manifest = json.loads((bronze_dir / "manifest.json").read_text())
+
+    location = info["location"]
+    zoom = info["zoom"]
+    scheme = info["detection_colour_scheme"]
+    tile_coords: list[dict] = info["tile_coords"]
+    capture_utc = _parse_utc(info["capture_time_utc"])
+
+    tiles_root = bronze_dir / "tiles"
+    records: list[CaptureRecord] = []
+    for frame in manifest["radar"]["past"]:
+        frame_ts = frame["time"]
+        frame_dir = tiles_root / str(frame_ts)
+        tile_paths = {
+            (t["x"], t["y"]): frame_dir / f"{zoom}_{t['x']}_{t['y']}_s{scheme}.png"
+            for t in tile_coords
+        }
+        records.append(
+            CaptureRecord(
+                capture_utc=capture_utc,
+                frame_ts=frame_ts,
+                tile_paths=tile_paths,
+                location_name=location["name"],
+                lat=location["lat"],
+                lon=location["lon"],
+                zoom=zoom,
+            )
+        )
 
     records.sort(key=lambda r: r.frame_ts)
     return records

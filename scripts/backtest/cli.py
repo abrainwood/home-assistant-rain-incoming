@@ -198,6 +198,13 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Run --inspect on each window in a manifest file. Outputs a JSON list of traces.",
     )
+    parser.add_argument(
+        "--inspect-session",
+        type=Path,
+        default=None,
+        metavar="SESSION_DIR",
+        help="Run detect() on a golden_v2 session directory (contains bronze/). Uses the last frame as window_end_ts. Prints diagnostic trace as JSON.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -239,6 +246,19 @@ def main(argv: list[str] | None = None) -> None:
                 traces_list.append(dataclasses.asdict(trace))
 
         print(json.dumps(traces_list, indent=2, default=str))
+        return
+
+    # Handle --inspect-session mode: load a golden_v2 session dir and inspect the last frame
+    if args.inspect_session is not None:
+        captures = load_captures(args.inspect_session)
+        if not captures:
+            print(f"Error: no captures found in {args.inspect_session}", file=sys.stderr)
+            sys.exit(1)
+        window_end_ts = max(r.frame_ts for r in captures)
+        config = _build_replay_config(args)
+        engine = ReplayEngine(config)
+        _prediction, trace = engine.inspect_window(captures, window_end_ts=window_end_ts)
+        print(json.dumps(dataclasses.asdict(trace), indent=2, default=str))
         return
 
     if args.data_dir is None:

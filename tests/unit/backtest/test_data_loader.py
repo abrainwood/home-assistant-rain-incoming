@@ -11,6 +11,7 @@ from scripts.backtest.data_loader import (
     CaptureRecord,
     ObservationRecord,
     load_captures,
+    load_captures_v2,
     load_observations,
 )
 
@@ -353,3 +354,167 @@ class TestLoadObservationsCorruptJsonl:
 
         assert records == [], "Unreadable file should be skipped"
         assert any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# load_captures_v2 (golden_v2 bronze format)
+# ---------------------------------------------------------------------------
+
+
+def _write_v2_bronze(
+    bronze_dir: Path,
+    *,
+    location_name: str = "Perth_false_negative_20260427",
+    lat: float = -31.95,
+    lon: float = 115.86,
+    zoom: int = 7,
+    detection_colour_scheme: int = 6,
+    render_colour_scheme: int = 2,
+    capture_utc: str = "2026-04-27T04:34:15.558606+00:00",
+    center_tile: tuple[int, int] = (105, 75),
+    grid_half: int = 1,
+    frames: list[tuple[int, str]] | None = None,
+    create_tile_files: bool = True,
+) -> Path:
+    """Write a synthetic golden_v2 bronze/ directory with capture_info, manifest, and tile stubs.
+
+    `frames` is a list of (frame_ts, path) tuples. Defaults to two frames.
+    Returns the bronze directory.
+    """
+    if frames is None:
+        frames = [
+            (1777257000, "/v2/radar/b1a106dd76d3"),
+            (1777257600, "/v2/radar/5a338ef5fafc"),
+        ]
+
+    cx, cy = center_tile
+    tile_coords = [
+        {"x": x, "y": y}
+        for x in range(cx - grid_half, cx + grid_half + 1)
+        for y in range(cy - grid_half, cy + grid_half + 1)
+    ]
+
+    bronze_dir.mkdir(parents=True, exist_ok=True)
+    capture_info = {
+        "location": {"lat": lat, "lon": lon, "name": location_name},
+        "capture_time_utc": capture_utc,
+        "zoom": zoom,
+        "center_tile": {"x": cx, "y": cy},
+        "grid_half": grid_half,
+        "tile_coords": tile_coords,
+        "detection_colour_scheme": detection_colour_scheme,
+        "render_colour_scheme": render_colour_scheme,
+        "frame_count": len(frames),
+    }
+    (bronze_dir / "capture_info.json").write_text(json.dumps(capture_info))
+
+    manifest = {
+        "version": "2.0",
+        "radar": {
+            "past": [{"time": ts, "path": path} for ts, path in frames],
+        },
+    }
+    (bronze_dir / "manifest.json").write_text(json.dumps(manifest))
+
+    if create_tile_files:
+        tiles_root = bronze_dir / "tiles"
+        for ts, _path in frames:
+            frame_dir = tiles_root / str(ts)
+            frame_dir.mkdir(parents=True, exist_ok=True)
+            for t in tile_coords:
+                tile_file = frame_dir / f"{zoom}_{t['x']}_{t['y']}_s{detection_colour_scheme}.png"
+                tile_file.write_bytes(b"")
+
+    return bronze_dir
+
+
+class TestLoadCapturesV2HappyPath:
+    def test_load_captures_v2_returns_records_with_correct_fields(
+        self, tmp_path: Path
+    ) -> None:
+        """`load_captures_v2` reads bronze/{capture_info,manifest}.json and returns
+        CaptureRecord list sorted by frame_ts ascending with correct fields."""
+        bronze = tmp_path / "bronze"
+        _write_v2_bronze(
+            bronze,
+            location_name="Perth_false_negative_20260427",
+            lat=-31.95,
+            lon=115.86,
+            zoom=7,
+            capture_utc="2026-04-27T04:34:15.558606+00:00",
+            frames=[
+                (1777257000, "/v2/radar/b1a106dd76d3"),
+                (1777257600, "/v2/radar/5a338ef5fafc"),
+            ],
+        )
+
+        records = load_captures_v2(bronze)
+
+        assert len(records) == 2
+        assert all(isinstance(r, CaptureRecord) for r in records)
+        assert [r.frame_ts for r in records] == [1777257000, 1777257600]
+        for rec in records:
+            assert rec.location_name == "Perth_false_negative_20260427"
+            assert rec.lat == pytest.approx(-31.95)
+            assert rec.lon == pytest.approx(115.86)
+            assert rec.zoom == 7
+            expected_utc = datetime(
+                2026, 4, 27, 4, 34, 15, 558606, tzinfo=timezone.utc
+            )
+            assert rec.capture_utc == expected_utc
+
+    def test_tile_paths_have_correct_format(self, tmp_path: Path) -> None:
+        """tile_paths keys are (x, y) tuples; values point to the right filename."""
+        bronze = tmp_path / "bronze"
+        _write_v2_bronze(bronze, zoom=7, detection_colour_scheme=6, grid_half=1, center_tile=(105, 75))
+
+        records = load_captures_v2(bronze)
+
+        rec = records[0]  # frame_ts=1777257000
+        assert (105, 75) in rec.tile_paths
+        expected = bronze / "tiles" / "1777257000" / "7_105_75_s6.png"
+        assert rec.tile_paths[(105, 75)] == expected
+
+    def test_out_of_order_manifest_sorted_by_frame_ts(self, tmp_path: Path) -> None:
+        """Records are sorted ascending by frame_ts even if manifest lists them out of order."""
+        bronze = tmp_path / "bronze"
+        _write_v2_bronze(bronze, frames=[
+            (1777257600, "/v2/radar/second"),
+            (1777257000, "/v2/radar/first"),
+        ])
+
+        records = load_captures_v2(bronze)
+
+        assert [r.frame_ts for r in records] == [1777257000, 1777257600]
+
+    def test_missing_capture_info_raises(self, tmp_path: Path) -> None:
+        """Raises FileNotFoundError when capture_info.json is absent."""
+        bronze = tmp_path / "bronze"
+        bronze.mkdir()
+        (bronze / "manifest.json").write_text('{"version":"2.0","radar":{"past":[]}}')
+
+        with pytest.raises((FileNotFoundError, OSError)):
+            load_captures_v2(bronze)
+
+    def test_missing_manifest_raises(self, tmp_path: Path) -> None:
+        """Raises FileNotFoundError when manifest.json is absent."""
+        bronze = tmp_path / "bronze"
+        _write_v2_bronze(bronze, create_tile_files=False)
+        (bronze / "manifest.json").unlink()
+
+        with pytest.raises((FileNotFoundError, OSError)):
+            load_captures_v2(bronze)
+
+
+class TestLoadCapturesAutoDetect:
+    def test_auto_detects_v2_format(self, tmp_path: Path) -> None:
+        """load_captures delegates to load_captures_v2 when bronze/capture_info.json exists."""
+        session_dir = tmp_path / "Perth_false_negative_20260427"
+        bronze = session_dir / "bronze"
+        _write_v2_bronze(bronze, frames=[(1777257000, "/v2/radar/x")])
+
+        records = load_captures(session_dir)
+
+        assert len(records) == 1
+        assert records[0].frame_ts == 1777257000
+        assert records[0].location_name == "Perth_false_negative_20260427"
