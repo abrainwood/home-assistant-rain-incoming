@@ -4,6 +4,15 @@ DOMAIN = "rain_incoming"
 CONF_LOCATION_NAME = "location_name"
 CONF_LOOKAHEAD_MINUTES = "lookahead_minutes"
 CONF_MAP_STYLE = "map_style"
+CONF_FORECAST_CONFIDENCE_ENABLED = "forecast_confidence_enabled"
+
+# Bypass criteria for the PoP multiplier gate. Both must be met:
+# - intensity at or above STRONG_BYPASS_INTENSITY (well above the 0.1 noise floor)
+# - track length at or above STRONG_BYPASS_MIN_FRAMES (more than the bare minimum)
+# QC still leaves some noise in, so high intensity alone is not enough -
+# persistence across frames is the second confidence signal.
+STRONG_BYPASS_INTENSITY = 0.2
+STRONG_BYPASS_MIN_FRAMES = 3
 
 # Location name display limit (chars). Names longer than this overflow the
 # date/time field in the radar image header at all three zoom levels.

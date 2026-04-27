@@ -8,6 +8,7 @@ from enum import Enum
 import numpy as np
 from scipy import ndimage
 
+from ..const import STRONG_BYPASS_INTENSITY, STRONG_BYPASS_MIN_FRAMES
 from ..providers.base import BoundingBox, RadarFrame
 from .filters import filter_by_area, threshold_intensity
 from .motion import (
@@ -311,6 +312,22 @@ def _intensity_at_track_entry(
     if cell_pixels.size == 0:
         return 0.0
     return float(cell_pixels.max())
+
+
+def _track_peak_intensity(
+    track: list[_TrackEntry],
+    per_frame_labeled: list[np.ndarray],
+    effective_grids: list[np.ndarray],
+) -> float:
+    """Return max pixel intensity of a cell across all frames in its track."""
+    peak = 0.0
+    for frame_idx, label, _ in track:
+        labeled = per_frame_labeled[frame_idx]
+        grid = effective_grids[frame_idx]
+        cell_pixels = grid[labeled == label]
+        if cell_pixels.size > 0:
+            peak = max(peak, float(cell_pixels.max()))
+    return peak
 
 
 def _evaluate_approaching_cell(
@@ -743,7 +760,13 @@ def detect(
     last_frame_idx = frame_count - 1
     valid_tracks = [
         t for t in all_tracks
-        if len(t) >= effective_min_frames and t[-1][0] == last_frame_idx
+        if t[-1][0] == last_frame_idx and (
+            len(t) >= effective_min_frames
+            or (
+                len(t) >= STRONG_BYPASS_MIN_FRAMES
+                and _track_peak_intensity(t, analysis.per_frame_labeled, analysis.grids) >= STRONG_BYPASS_INTENSITY
+            )
+        )
     ]
 
     last_labeled = analysis.per_frame_labeled[-1]
