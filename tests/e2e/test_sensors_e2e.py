@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import time
 
-from tests.e2e.image_helpers import images_differ_significantly
+from tests.e2e.image_helpers import gif_has_precipitation_pixels, images_differ_significantly
 
 
 BINARY_SENSOR = "binary_sensor.rain_incoming_imminent"
@@ -116,15 +116,18 @@ class TestIntegratedRainValidation:
         assert intensity["state"] != "none", f"Rain active but intensity is {intensity['state']}"
 
         # Wait for the image render to reflect the new scenario.
-        # async_image() returns from cache immediately when warm, so the
-        # render may still be in flight when the sensor has already updated.
+        # Poll until the image has actual precipitation pixels - byte-level
+        # inequality isn't sufficient because the placeholder GIF satisfies
+        # it while having zero precipitation content.
         rain_gif = None
         deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             candidate = ha_client.get_image(IMAGE_128)
-            if candidate and candidate != no_rain_gif:
-                rain_gif = candidate
-                break
+            if candidate and len(candidate) > 1000:
+                has_precip, _ = gif_has_precipitation_pixels(candidate)
+                if has_precip:
+                    rain_gif = candidate
+                    break
             time.sleep(2)
 
         assert rain_gif is not None, "Rain image never changed from baseline after poll timeout"
@@ -182,14 +185,18 @@ class TestValidationCanFail:
         """rain_everywhere and no_rain MUST produce visually different GIFs."""
         ha_client.set_mock_scenario("rain_everywhere")
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR)
-        # Poll until image has non-trivial content (render may lag coordinator)
+        # Poll until image has actual precipitation pixels (placeholder satisfies
+        # len > 1000 but has no precipitation content, which would fool the later
+        # images_differ_significantly check).
         rain_gif = None
         deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             candidate = ha_client.get_image(IMAGE_128)
             if candidate and len(candidate) > 1000:
-                rain_gif = candidate
-                break
+                has_precip, _ = gif_has_precipitation_pixels(candidate)
+                if has_precip:
+                    rain_gif = candidate
+                    break
             time.sleep(2)
         if rain_gif is None:
             rain_gif = ha_client.get_image(IMAGE_128)
