@@ -45,6 +45,18 @@ RADIUS_KM = 128
 OUTPUT_SIZE = 640
 
 
+def output_base_dir(name: str, output_dir: Path | None = None) -> Path:
+    """Return the base directory for a capture session.
+
+    Defaults to tests/fixtures/golden_v2/<name> (for golden test fixtures).
+    Pass output_dir to write anywhere else (e.g. a temp dir for field captures).
+    """
+    if output_dir is not None:
+        return output_dir / name
+    project_root = Path(__file__).resolve().parent.parent
+    return project_root / "tests" / "fixtures" / "golden_v2" / name
+
+
 def _tile_coords(lat: float, lon: float) -> list[tuple[int, int]]:
     """Return the (2*GRID_HALF+1)^2 tile coordinates centered on the location."""
     cx, cy = lat_lon_to_tile(lat, lon, ZOOM)
@@ -70,9 +82,8 @@ async def _fetch_tile_bytes(
         return await resp.read()
 
 
-async def capture(lat: float, lon: float, name: str) -> None:
-    project_root = Path(__file__).resolve().parent.parent
-    base_dir = project_root / "tests" / "fixtures" / "golden_v2" / name
+async def capture(lat: float, lon: float, name: str, output_dir: Path | None = None) -> None:
+    base_dir = output_base_dir(name, output_dir=output_dir)
     bronze_dir = base_dir / "bronze"
     silver_dir = base_dir / "silver"
 
@@ -215,9 +226,15 @@ def main() -> None:
     parser.add_argument("lat", type=float, help="Latitude")
     parser.add_argument("lon", type=float, help="Longitude")
     parser.add_argument("name", type=str, help="Location name (used as directory name)")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Write session to OUTPUT_DIR/<name>/ instead of tests/fixtures/golden_v2/<name>/",
+    )
 
     args = parser.parse_args()
-    asyncio.run(capture(args.lat, args.lon, args.name))
+    asyncio.run(capture(args.lat, args.lon, args.name, output_dir=args.output_dir))
 
 
 if __name__ == "__main__":

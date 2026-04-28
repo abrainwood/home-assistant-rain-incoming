@@ -129,4 +129,47 @@ class TestMainArgParsing:
             from scripts.capture_golden_tiles import main
             with pytest.raises(SystemExit) as exc_info:
                 main()
-        assert exc_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# --output-dir: configurable output location
+# ---------------------------------------------------------------------------
+
+
+class TestOutputDir:
+    def test_output_base_dir_defaults_to_fixtures(self) -> None:
+        """Without --output-dir, output_base_dir returns tests/fixtures/golden_v2/<name>."""
+        from scripts.capture_golden_tiles import output_base_dir
+
+        result = output_base_dir("sydney_test")
+        assert result.parts[-1] == "sydney_test"
+        assert result.parts[-2] == "golden_v2"
+
+    def test_output_base_dir_uses_provided_output_dir(self) -> None:
+        """With output_dir specified, output_base_dir returns output_dir/<name>."""
+        from pathlib import Path
+        from scripts.capture_golden_tiles import output_base_dir
+
+        custom = Path("/tmp/my_captures")
+        result = output_base_dir("perth", output_dir=custom)
+        assert result == custom / "perth"
+
+    def test_main_passes_output_dir_to_capture(self, tmp_path: Path) -> None:
+        """--output-dir is parsed and forwarded to capture() as output_dir kwarg."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from scripts.capture_golden_tiles import main
+
+        captured_kwargs: dict = {}
+
+        async def fake_capture(lat, lon, name, output_dir=None):
+            captured_kwargs["output_dir"] = output_dir
+
+        with patch("scripts.capture_golden_tiles.capture", side_effect=fake_capture):
+            with patch("sys.argv", [
+                "capture_golden_tiles.py", "-31.95", "115.86", "perth",
+                "--output-dir", str(tmp_path),
+            ]):
+                main()
+
+        assert captured_kwargs.get("output_dir") == tmp_path

@@ -885,3 +885,139 @@ class TestMainInspectMode:
             1776700000 in call_args.args
             or call_args.kwargs.get("window_end_ts") == 1776700000
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: --inspect-session <path> loads golden_v2 session and prints JSON trace
+# ---------------------------------------------------------------------------
+
+
+def _make_v2_session(session_dir: Path, frames: list[tuple[int, str]]) -> None:
+    """Write a minimal golden_v2 session dir for CLI tests."""
+    bronze = session_dir / "bronze"
+    bronze.mkdir(parents=True, exist_ok=True)
+    (bronze / "capture_info.json").write_text(json.dumps({
+        "location": {"lat": -31.95, "lon": 115.86, "name": session_dir.name},
+        "capture_time_utc": "2026-04-27T04:34:15+00:00",
+        "zoom": 7,
+        "center_tile": {"x": 105, "y": 75},
+        "grid_half": 1,
+        "tile_coords": [{"x": 105, "y": 75}],
+        "detection_colour_scheme": 6,
+        "render_colour_scheme": 2,
+        "frame_count": len(frames),
+    }))
+    (bronze / "manifest.json").write_text(json.dumps({
+        "version": "2.0",
+        "radar": {"past": [{"time": ts, "path": p} for ts, p in frames]},
+    }))
+    tiles_root = bronze / "tiles"
+    for ts, _ in frames:
+        frame_dir = tiles_root / str(ts)
+        frame_dir.mkdir(parents=True, exist_ok=True)
+        (frame_dir / "7_105_75_s6.png").write_bytes(b"")
+
+
+class TestInspectSession:
+    def test_inspect_session_prints_trace_for_last_frame(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--inspect-session <session_dir> loads the golden_v2 dir, inspects the last frame, and prints JSON."""
+        from scripts.backtest.cli import main
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+            FrameDiagnostic,
+            DecisionDiagnostic,
+        )
+
+        session_dir = tmp_path / "Perth_false_negative_20260427"
+        _make_v2_session(session_dir, frames=[
+            (1777257000, "/v2/radar/first"),
+            (1777257600, "/v2/radar/last"),
+        ])
+
+        prediction = _make_prediction(rain_incoming=True, arrival_minutes=20.0)
+        trace = DiagnosticTrace(
+            frames=[FrameDiagnostic(cell_count=2)],
+            decision=DecisionDiagnostic(
+                rain_incoming=True, arrival_minutes=20.0, rain_at_location=False
+            ),
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.inspect_window.return_value = (prediction, trace)
+
+            main(["--inspect-session", str(session_dir)])
+
+        captured = capsys.readouterr()
+        out = captured.out
+        start = out.find("{")
+        end = out.rfind("}")
+        assert start >= 0 and end > start, f"No JSON in output:\n{out}"
+        parsed = json.loads(out[start : end + 1])
+        assert parsed["decision"]["rain_incoming"] is True
+
+        # inspect_window should use the last (highest) frame_ts as window_end_ts
+        instance.inspect_window.assert_called_once()
+        call_args = instance.inspect_window.call_args
+        assert (
+            1777257600 in call_args.args
+            or call_args.kwargs.get("window_end_ts") == 1777257600
+        )
+
+    def test_inspect_session_does_not_require_data_dir(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--inspect-session works without --data-dir."""
+        from scripts.backtest.cli import main
+        from custom_components.rain_incoming.radar.detector import (
+            DiagnosticTrace,
+            DecisionDiagnostic,
+        )
+
+        session_dir = tmp_path / "session"
+        _make_v2_session(session_dir, frames=[(1777257000, "/v2/radar/x")])
+
+        prediction = _make_prediction()
+        trace = DiagnosticTrace(
+            decision=DecisionDiagnostic(
+                rain_incoming=False, arrival_minutes=None, rain_at_location=False
+            )
+        )
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.inspect_window.return_value = (prediction, trace)
+
+            main(["--inspect-session", str(session_dir)])
+
+        captured = capsys.readouterr()
+        assert captured.out.strip()  # something was printed
+
+    def test_inspect_session_empty_dir_exits_nonzero(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--inspect-session exits with error when session dir has no captures."""
+        from scripts.backtest.cli import main
+
+        empty_session = tmp_path / "empty"
+        bronze = empty_session / "bronze"
+        bronze.mkdir(parents=True)
+        (bronze / "capture_info.json").write_text(json.dumps({
+            "location": {"lat": 0.0, "lon": 0.0, "name": "empty"},
+            "capture_time_utc": "2026-04-27T00:00:00+00:00",
+            "zoom": 7, "center_tile": {"x": 0, "y": 0}, "grid_half": 0,
+            "tile_coords": [], "detection_colour_scheme": 6,
+            "render_colour_scheme": 2, "frame_count": 0,
+        }))
+        (bronze / "manifest.json").write_text(json.dumps({
+            "version": "2.0", "radar": {"past": []},
+        }))
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--inspect-session", str(empty_session)])
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "no captures" in captured.err.lower() or "error" in captured.err.lower()
