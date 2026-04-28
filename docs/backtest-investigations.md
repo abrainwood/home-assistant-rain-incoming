@@ -299,8 +299,23 @@ high-speed tracks. The downstream speed cap catches them but they consume
 detector cycles. Could pre-filter at the matching step or expose the
 post-evaluation rejection in Tier 0 to make the noise visible.
 
-## Framework Improvements Done
+## What's Actually Shipped (as of 2026-04-28)
 
+All items below are in production on `main`. The plan doc was stale.
+
+**Detection algorithm:**
+- [x] 3A: Default lookahead reduced 60→30min (PR #158)
+- [x] 3B: Frame-scaled min_frames - tested, NEUTRAL, kept as opt-in `--frame-scale-by-lookahead`
+- [x] 3C: Overhead immediate detection - already implemented via `_check_rain_at_location`. Fires `rain_incoming=True` in a single frame when rain pixels are within the proximity radius. Gated by QC confidence (warm clutter map suppresses false positives). No further work needed.
+- [x] 6A: Intensity trend filter - tested, NEUTRAL, REMOVED (opt-in `--use-intensity-trend` kept in backtest only)
+- [x] Leading-edge arrival fallback (PR #169) - for large incoherent storm fronts whose centroid zigzags while edge approaches. Fixes Perth false negative 2026-04-27 class of events.
+
+**Confidence signals:**
+- [x] 5A: Forecast PoP (Open-Meteo, hourly, no API key). Multiplier: PoP<5% → 3x, PoP<30% → 2x, PoP≥30% → 1.0, missing → 1.0 (fail open).
+  - **Open question**: the 3x multiplier at PoP<5% may be too aggressive for live use given hourly forecast lag. A stale "dry" forecast could suppress a real detection. Investigation: add `--pop-multiplier` to backtest CLI and run at 1.0/2.0/3.0 to bound the effect. Likely fix: soften to 1.5x/1.0x, or restrict gating to cells >50km away (hourly forecast has time to update before a distant cell arrives).
+- [x] 5B: Satellite IR cloud confidence (PR #165). Himawari/GOES via RealEarth tiles. Clear sky → 3x multiplier. Missing satellite → 1.0 (fail open).
+
+**Tooling:**
 - [x] Compare feature (`--compare`)
 - [x] Curated subset selection (`--generate-subset`, `--subset`)
 - [x] Tile decode optimisation (15ms → 1.2ms)
@@ -308,10 +323,13 @@ post-evaluation rejection in Tier 0 to make the noise visible.
 - [x] Frame caching in replay and verifier
 - [x] Tier 0 diagnostic trace (`--inspect LOCATION TIMESTAMP`)
 - [x] Tier 1 multi-window inspect (`--inspect-set MANIFEST`)
-- [x] `--use-intensity-trend` flag (Phase 6A, neutral effect)
-- [x] `--frame-scale-by-lookahead` flag (Phase 3B, unvalidated)
+- [x] `--inspect-session SESSION_DIR` for golden_v2 fixtures (PR #170, GH #164)
+- [x] `capture_golden_tiles.py --output-dir` for field captures (PR #170)
 
 ## Framework Improvements Remaining
+
+### `--pop-multiplier` flag for backtest
+Needed to run PoP sensitivity analysis. Add float flag (default 1.0) to the backtest CLI, thread into `_build_detector_config`. Run at 1.0/2.0/3.0 and compare scorecards to bound the live-cadence risk.
 
 ### Dry window skip
 Consecutive dry windows with unchanged latest frame produce identical detection results. Skip detection when the new frame is also dry - major speedup for locations with long dry periods.
