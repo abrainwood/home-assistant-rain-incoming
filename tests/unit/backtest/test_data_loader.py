@@ -518,3 +518,45 @@ class TestLoadCapturesAutoDetect:
         assert len(records) == 1
         assert records[0].frame_ts == 1777257000
         assert records[0].location_name == "Perth_false_negative_20260427"
+
+
+# ---------------------------------------------------------------------------
+# pop_pct field
+# ---------------------------------------------------------------------------
+
+
+class TestCaptureRecordPopPct:
+    """CaptureRecord must expose pop_pct read from meta JSON."""
+
+    def test_pop_pct_loaded_when_present(self, tmp_path: Path) -> None:
+        """pop_pct in meta JSON must appear on CaptureRecord."""
+        date_dir = tmp_path / "2026-04-21"
+        _touch_tile(date_dir, "1025_127_89.png")
+        meta = {
+            "capture_utc": "2026-04-21T10:25:00Z",
+            "frame_ts": 1771573200,
+            "frame_path": "/nowcast/x",
+            "location": {"name": "cairns_babinda", "lat": -17.35, "lon": 145.92},
+            "zoom": 7,
+            "tiles": [{"x": 127, "y": 89, "file": "1025_127_89.png"}],
+            "bytes_total": 100,
+            "pop_pct": 65.0,
+        }
+        (date_dir / "1025_meta.json").write_text(json.dumps(meta))
+
+        records = load_captures(tmp_path)
+
+        assert len(records) == 1
+        assert records[0].pop_pct == pytest.approx(65.0)
+
+    def test_pop_pct_is_none_when_absent(self, tmp_path: Path) -> None:
+        """Older meta files without pop_pct must default to None (backward compat)."""
+        date_dir = tmp_path / "2026-04-21"
+        _touch_tile(date_dir, "1025_127_89.png")
+        _write_meta(date_dir, "1025", frame_ts=1771573200,
+                    tiles=[{"x": 127, "y": 89, "file": "1025_127_89.png"}])
+
+        records = load_captures(tmp_path)
+
+        assert len(records) == 1
+        assert records[0].pop_pct is None

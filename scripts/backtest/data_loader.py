@@ -29,6 +29,7 @@ class CaptureRecord:
     lat: float
     lon: float
     zoom: int
+    pop_pct: float | None = None             # probability of precipitation 0-100, or None if not collected
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ def _parse_capture(meta_path: Path) -> CaptureRecord:
         lat=location["lat"],
         lon=location["lon"],
         zoom=raw["zoom"],
+        pop_pct=raw.get("pop_pct"),
     )
 
 
