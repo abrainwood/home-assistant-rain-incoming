@@ -42,40 +42,37 @@ class TestIntegratedRainValidation:
     def _download_gif(self, ha_client, scenario, entity_id=IMAGE_128, previous_gif=None):
         """Set scenario, wait for coordinator cycle, then download GIF.
 
-        If previous_gif is provided, polls until the image differs VISUALLY from
-        it (handles both stale cached data and re-renders with new timestamps but
-        identical tile content). Otherwise polls until the image has non-trivial
-        content.
+        Always captures the pre-switch image as the baseline to poll against.
+        This ensures that when called without previous_gif (first call in a test),
+        we still wait for a genuine new render rather than returning the old
+        cached image from a prior test's scenario.
 
-        Raises AssertionError on timeout so the failure message is diagnostic
-        ("timed out waiting for render") rather than misleading ("images identical").
+        Raises AssertionError on timeout so the failure message is diagnostic.
         """
+        # Capture current image BEFORE switching scenario so we can detect a
+        # real render update, not just return whatever is in the HA image cache.
+        baseline = previous_gif if previous_gif is not None else ha_client.get_image(entity_id)
+
         ha_client.set_mock_scenario(scenario)
         ha_client.wait_for_coordinator_cycle(BINARY_SENSOR, timeout=60)
         deadline = time.time() + _IMAGE_POLL_TIMEOUT
         while time.time() < deadline:
             gif = ha_client.get_image(entity_id)
             if gif and len(gif) > 1000:
-                if previous_gif is None:
+                if baseline is None:
                     return gif
-                differs, _ = images_differ_significantly(gif, previous_gif)
+                differs, _ = images_differ_significantly(gif, baseline)
                 if differs:
                     return gif
             time.sleep(2)
         gif = ha_client.get_image(entity_id)
-        if previous_gif is not None:
-            differs, fraction = images_differ_significantly(gif, previous_gif) if gif else (False, 0.0)
-            if not differs:
-                raise AssertionError(
-                    f"Timed out after {_IMAGE_POLL_TIMEOUT}s waiting for '{scenario}' "
-                    f"image to differ visually from previous scenario "
-                    f"(diff fraction: {fraction:.4f}). "
-                    f"Image render may not have completed in time."
-                )
-        if not gif or len(gif) <= 1000:
+        differs, fraction = images_differ_significantly(gif, baseline) if (gif and baseline) else (False, 0.0)
+        if not differs:
             raise AssertionError(
                 f"Timed out after {_IMAGE_POLL_TIMEOUT}s waiting for '{scenario}' "
-                f"image to have non-trivial content (got {len(gif) if gif else 0} bytes)."
+                f"image to differ visually from pre-switch baseline "
+                f"(diff fraction: {fraction:.4f}). "
+                f"Image render may not have completed in time."
             )
         return gif
 
