@@ -27,8 +27,11 @@ other's assertion can fail.
 from __future__ import annotations
 
 import os
+import time
 
 from tests.e2e.image_helpers import gif_has_precipitation_pixels, images_differ_significantly
+
+_IMAGE_POLL_TIMEOUT = 90
 
 
 def _save_gif(data: bytes, path: str) -> None:
@@ -36,6 +39,29 @@ def _save_gif(data: bytes, path: str) -> None:
     if os.environ.get("RAIN_TEST_DEBUG_DUMP"):
         with open(path, "wb") as f:
             f.write(data)
+
+
+def _poll_until_precipitation(ha_client, entity_id: str, timeout: float = _IMAGE_POLL_TIMEOUT) -> bytes:
+    """Poll image entity until it contains precipitation pixels or timeout.
+
+    A single get_image call after wait_for_coordinator_cycle is not reliable
+    because the background render task may not have completed yet. The
+    placeholder GIF (dark background, >1000 bytes) satisfies naive size checks
+    but has zero precipitation pixels. Poll until we see real precipitation
+    content or raise AssertionError with a diagnostic message.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        candidate = ha_client.get_image(entity_id)
+        if candidate and len(candidate) > 1000:
+            has_precip, _ = gif_has_precipitation_pixels(candidate)
+            if has_precip:
+                return candidate
+        time.sleep(2)
+    raise AssertionError(
+        f"Timed out after {timeout}s waiting for {entity_id!r} "
+        f"to show precipitation pixels (render may not have completed)"
+    )
 
 
 # --- Canberra ---
@@ -75,10 +101,7 @@ class TestCanberraGoldenV2:
         sensor_id = "binary_sensor.rain_incoming_canberra_v2_imminent"
         ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        rain_gif = ha_client.get_image("image.rain_incoming_canberra_v2_radar_128km")
-        assert rain_gif and len(rain_gif) > 1000, (
-            f"Rain GIF is missing or too small ({len(rain_gif) if rain_gif else 0} bytes)"
-        )
+        rain_gif = _poll_until_precipitation(ha_client, "image.rain_incoming_canberra_v2_radar_128km")
         _save_gif(rain_gif, "/tmp/golden_v2_canberra_rain_vis.gif")
 
         has_precip, fraction = gif_has_precipitation_pixels(rain_gif)
@@ -147,10 +170,7 @@ class TestDarwinGoldenV2:
         sensor_id = "binary_sensor.rain_incoming_darwin_v2_imminent"
         ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        rain_gif = ha_client.get_image("image.rain_incoming_darwin_v2_radar_128km")
-        assert rain_gif and len(rain_gif) > 1000, (
-            f"Rain GIF is missing or too small ({len(rain_gif) if rain_gif else 0} bytes)"
-        )
+        rain_gif = _poll_until_precipitation(ha_client, "image.rain_incoming_darwin_v2_radar_128km")
         _save_gif(rain_gif, "/tmp/golden_v2_darwin_rain_vis.gif")
 
         has_precip, fraction = gif_has_precipitation_pixels(rain_gif)
@@ -218,10 +238,7 @@ class TestMelbourneGoldenV2:
         sensor_id = "binary_sensor.rain_incoming_melbourne_v2_imminent"
         ha_client.wait_for_coordinator_cycle(sensor_id, timeout=60)
 
-        rain_gif = ha_client.get_image("image.rain_incoming_melbourne_v2_radar_128km")
-        assert rain_gif and len(rain_gif) > 1000, (
-            f"Rain GIF is missing or too small ({len(rain_gif) if rain_gif else 0} bytes)"
-        )
+        rain_gif = _poll_until_precipitation(ha_client, "image.rain_incoming_melbourne_v2_radar_128km")
         _save_gif(rain_gif, "/tmp/golden_v2_melbourne_rain_vis.gif")
 
         has_precip, fraction = gif_has_precipitation_pixels(rain_gif)

@@ -568,27 +568,23 @@ class TestRenderSerialization:
 
 
 # ---------------------------------------------------------------------------
-# Fix 4: async_image must not await the render task when cache is already warm
+# Fix 4: async_image must never await the render task (always non-blocking)
 # ---------------------------------------------------------------------------
 
-class TestAsyncImageNonBlockingWhenCacheWarm:
-    """When _cached_image is populated, async_image() must return immediately
-    without awaiting the in-flight render task.
+class TestAsyncImageNeverBlocks:
+    """async_image() must return immediately in ALL cases — warm cache, cold
+    cache, or render in flight.
 
-    With the global render lock, the 2nd/3rd radius task can spend a full
-    render-cycle (≤55s) waiting for the lock before even starting. If
-    async_image() awaits that task unconditionally, a frontend request that
-    arrives mid-wait will also block for lock_wait + render_time, easily
-    exceeding HA's ~60s image_proxy timeout and producing a broken-image icon.
+    HA's image_proxy handler has a ~60s timeout. Awaiting the render task
+    (which can take up to 55s and shares a global lock with two other radius
+    entities) easily exceeds that and causes HA to return HTTP 500. The fix:
+    always return from cache if warm, otherwise return the placeholder and let
+    the background render task populate the cache.
 
-    Fix: only await the render task when _cached_image is None (cold start).
-    Once the cache is warm, return from cache immediately and let the render
-    update it in the background.
-
-    RED → GREEN note: before the fix, async_image() always awaits _render_task.
-    The test detects this by attaching a never-resolving task and wrapping
-    async_image() in a 0.1s wait_for — if the task is awaited the test raises
-    TimeoutError (fails fast, not by sleeping).
+    The test detects blocking by attaching a never-resolving task and wrapping
+    async_image() in asyncio.wait_for(timeout=0.1). If the task is awaited,
+    wait_for raises TimeoutError (RED). If the function returns immediately,
+    the test passes (GREEN).
     """
 
     @pytest.mark.asyncio
@@ -596,8 +592,6 @@ class TestAsyncImageNonBlockingWhenCacheWarm:
         entity = _make_entity()
         entity._cached_image = b"GIF89a_cached"
 
-        # A task that would block forever if awaited — represents a render
-        # queued behind the global lock (e.g. 256km waiting behind 64km).
         never_done: asyncio.Future = asyncio.get_event_loop().create_future()
 
         async def blocking_coro():
@@ -607,9 +601,6 @@ class TestAsyncImageNonBlockingWhenCacheWarm:
         entity._render_task = task
 
         try:
-            # If async_image() awaits the blocking task this raises TimeoutError,
-            # making the test fail clearly. 0.1s is a safety net, not a timing
-            # assertion — the fixed path returns in microseconds.
             result = await asyncio.wait_for(entity.async_image(), timeout=0.1)
         finally:
             task.cancel()
@@ -619,33 +610,77 @@ class TestAsyncImageNonBlockingWhenCacheWarm:
                 pass
 
         assert result == b"GIF89a_cached", (
-            "async_image must return cached bytes immediately when cache is warm, "
-            "without waiting for the in-flight render task"
+            "async_image must return cached bytes immediately when cache is warm"
         )
 
     @pytest.mark.asyncio
-    async def test_inverse_blocking_task_does_not_block_stale_cache_return(self):
-        """Inverse validation: confirm that WITHOUT the fix (cache empty), the
-        task IS awaited and the result reflects the task's output, not a
-        placeholder. This proves the non-blocking path is selective, not broken."""
+    async def test_async_image_returns_placeholder_on_cold_start_without_blocking(self):
+        """Cold start with a running render task: must return placeholder immediately.
+
+        OLD behavior: await self._render_task (blocks up to 55s → HA returns 500).
+        NEW behavior: return placeholder immediately; real image available after
+        the next request once the background render completes.
+        """
         entity = _make_entity()
-        entity._cached_image = None  # cold start — no cache yet
+        entity._cached_image = None  # cold start
 
-        populated = asyncio.Event()
+        never_done: asyncio.Future = asyncio.get_event_loop().create_future()
 
-        async def quick_render_coro():
-            # Simulates _render_to_cache populating the cache
-            entity._cached_image = b"GIF89a_from_render"
-            populated.set()
+        async def blocking_coro():
+            await never_done
 
-        task = asyncio.create_task(quick_render_coro())
+        task = asyncio.create_task(blocking_coro())
         entity._render_task = task
 
-        result = await entity.async_image()
+        try:
+            result = await asyncio.wait_for(entity.async_image(), timeout=0.1)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
 
-        assert result == b"GIF89a_from_render", (
-            "On first load (no cache), async_image must await the render task "
-            "so the caller gets real data instead of a placeholder"
+        assert result is not None, "Must return placeholder bytes, not None"
+        assert result[:3] == b"GIF", (
+            "Cold start must return placeholder GIF immediately, not block on render"
+        )
+
+    @pytest.mark.asyncio
+    async def test_real_image_served_after_render_completes(self):
+        """Inverse: after the render task populates the cache, the next call
+        to async_image() returns the real image.
+
+        Proves that returning a placeholder on cold start is temporary — the
+        real radar image IS served once the background render finishes.
+        """
+        entity = _make_entity()
+        entity._cached_image = None
+
+        real_image = b"GIF89a_real_radar_data"
+        render_done = asyncio.Event()
+
+        async def render_and_populate():
+            await asyncio.sleep(0.02)
+            entity._cached_image = real_image
+            render_done.set()
+
+        task = asyncio.create_task(render_and_populate())
+        entity._render_task = task
+
+        # First call (cold start): returns placeholder
+        first = await entity.async_image()
+        assert first[:3] == b"GIF"
+        assert first != real_image, "Cold start must return placeholder, not real image"
+
+        # Wait for render to complete
+        await render_done.wait()
+        await task
+
+        # Second call (cache warm): returns real image
+        second = await entity.async_image()
+        assert second == real_image, (
+            "After render completes, async_image must serve the real radar image"
         )
 
 

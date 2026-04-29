@@ -264,30 +264,16 @@ class RadarImageEntity(CoordinatorEntity[RainDetectorCoordinator], ImageEntity):
         """Return the pre-rendered GIF bytes from cache.
 
         The cache is populated by _render_to_cache() which runs as a background
-        task after every coordinator update (greedy rendering).
-
-        We only await the render task when the cache is empty (cold start). Once
-        the cache is warm, return immediately so we never block on a task that
-        may itself be waiting for the global render lock — with three radius
-        entities serialized behind one lock, awaiting unconditionally could add
-        up to two full render cycles (110s+) to a frontend request, easily
-        exceeding HA's ~60s image_proxy timeout.
+        task after every coordinator update (greedy rendering). Always return
+        immediately - never await the render task here. HA's image_proxy handler
+        has a ~60s timeout, and awaiting a render (which itself can take up to
+        55s and shares a lock with two other radius entities) easily exceeds it,
+        returning HTTP 500. On cold start the placeholder is returned; the next
+        request after the render completes returns the real image.
         """
-        if self._cached_image is None and self._render_task is not None and not self._render_task.done():
-            _LOGGER.debug(
-                "Radar %dkm: cache empty, awaiting in-flight render task",
-                self._radius_km,
-            )
-            try:
-                await self._render_task
-            except Exception:
-                _LOGGER.warning(
-                    "Radar %dkm: render task failed while async_image was waiting",
-                    self._radius_km, exc_info=True,
-                )
         if self._cached_image is not None:
             return self._cached_image
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Radar %dkm: serving placeholder - no cached image available "
             "(coordinator.latest_frame_path=%s, render_task=%s)",
             self._radius_km,
