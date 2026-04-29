@@ -162,13 +162,26 @@ class TestDashboardRadarRendering:
                 browser.close()
 
         # --- REST side: prove the image proxy serves a real animated GIF ---
-        image_bytes = ha_client.get_image(ENTITY_ID)
-        assert image_bytes is not None, f"No image data for {ENTITY_ID}"
-        assert image_bytes[:3] == b"GIF", (
-            f"Image is not a GIF (magic: {image_bytes[:6]!r}) - "
-            f"placeholder or error response"
-        )
+        # Poll until animated: the greedy render runs as a background task after
+        # each coordinator update. The first request after a cold start returns the
+        # placeholder (single-frame GIF). Poll until the real multi-frame render
+        # has been cached and is being served.
+        import time as _time
+        _deadline = _time.time() + 90
+        image_bytes = None
+        while _time.time() < _deadline:
+            candidate = ha_client.get_image(ENTITY_ID)
+            if candidate and len(candidate) > 1000 and candidate[:3] == b"GIF":
+                _gif = Image.open(BytesIO(candidate))
+                if getattr(_gif, "is_animated", False) and _gif.n_frames > 1:
+                    image_bytes = candidate
+                    break
+            _time.sleep(2)
 
+        assert image_bytes is not None, (
+            f"Timed out after 90s waiting for {ENTITY_ID} to serve an animated GIF "
+            f"(background render may not have completed)"
+        )
         gif = Image.open(BytesIO(image_bytes))
         assert gif.format == "GIF", f"Expected GIF, got {gif.format}"
         assert getattr(gif, "is_animated", False), (
