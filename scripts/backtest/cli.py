@@ -89,6 +89,8 @@ def _build_replay_config(args: argparse.Namespace) -> ReplayConfig:
         kwargs["min_cell_area_pixels"] = args.min_cell_area
     if args.use_acceleration:
         kwargs["use_acceleration"] = True
+    if args.pop_multiplier is not None:
+        kwargs["pop_multiplier"] = args.pop_multiplier
     return ReplayConfig(**kwargs)
 
 
@@ -178,6 +180,12 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         default=None,
         help="Override the minimum cell area in pixels for detection (default: production value)",
+    )
+    parser.add_argument(
+        "--pop-multiplier",
+        type=float,
+        default=None,
+        help="Override the PoP threshold multiplier (1.0=no effect, 2.0=moderate skepticism, 3.0=aggressive). Default: 1.0.",
     )
     parser.add_argument(
         "--use-acceleration",

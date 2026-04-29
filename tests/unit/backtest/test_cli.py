@@ -1021,3 +1021,58 @@ class TestInspectSession:
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "no captures" in captured.err.lower() or "error" in captured.err.lower()
+
+
+# ---------------------------------------------------------------------------
+# Test: --pop-multiplier overrides the pop_multiplier in ReplayConfig
+# ---------------------------------------------------------------------------
+
+
+class TestPopMultiplierFlag:
+    def test_pop_multiplier_passed_to_replay_config(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--pop-multiplier passes the value into ReplayConfig.pop_multiplier."""
+        from scripts.backtest.cli import main
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "loc1")
+
+        predictions = [_make_prediction()]
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.ReplayConfig") as MockConfig:
+            MockConfig.return_value = MagicMock()
+            instance = MockEngine.return_value
+            instance.replay.return_value = predictions
+
+            main(["--data-dir", str(data_dir), "--pop-multiplier", "2.0"])
+
+        MockConfig.assert_called_once()
+        _, kwargs = MockConfig.call_args
+        assert kwargs.get("pop_multiplier") == pytest.approx(2.0)
+
+    def test_pop_multiplier_default_is_one(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """Without --pop-multiplier, pop_multiplier defaults to 1.0 (no effect)."""
+        from scripts.backtest.cli import main
+
+        data_dir = tmp_path / "data"
+        captures_dir = data_dir / "captures"
+        _make_location_dir(captures_dir, "loc1")
+
+        predictions = [_make_prediction()]
+
+        with patch("scripts.backtest.cli.ReplayEngine") as MockEngine, \
+             patch("scripts.backtest.cli.ReplayConfig") as MockConfig:
+            MockConfig.return_value = MagicMock()
+            instance = MockEngine.return_value
+            instance.replay.return_value = predictions
+
+            main(["--data-dir", str(data_dir)])
+
+        MockConfig.assert_called_once()
+        _, kwargs = MockConfig.call_args
+        assert kwargs.get("pop_multiplier", 1.0) == pytest.approx(1.0)
