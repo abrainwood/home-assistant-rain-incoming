@@ -38,7 +38,7 @@ pythonpath = ["."]
 # with fully-qualified filenames like "custom_components/rain_incoming/foo.py".
 # SonarCloud needs this to map coverage to sonar.sources.
 source = ["."]
-include = ["custom_components/rain_incoming/*", "scripts/*"]
+include = ["custom_components/rain_incoming/*", "scripts/*.py"]
 relative_files = true
 omit = ["tests/*"]
 
