@@ -183,3 +183,17 @@ Assume external dependencies will break. Code must be resilient and observable.
 ## Handling unknowns
 
 LLMs are naturally optimistic - bias toward pessimism. If you're unsure about something, say so. If you can verify quickly, do it. If you can't, stop and ask rather than silently assume.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues at `abrainwood/home-assistant-rain-incoming` (public). Cross-routing with the private `abrainwood/rain-incoming-backtester` is documented inline. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) — labels exist on the repo with the same names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the root, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
