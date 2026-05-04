@@ -35,7 +35,13 @@
           "longitude": "Longitude",
           "lookahead_minutes": "Lookahead (minutes, 20-60)",
           "location_name": "Location name (optional, max 30 characters)",
-          "map_style": "Map style"
+          "map_style": "Map style",
+          "forecast_confidence_enabled": "Use forecast confidence (Open-Meteo PoP)",
+          "satellite_confidence_enabled": "Use satellite IR confidence (Himawari)"
+        },
+        "data_description": {
+          "forecast_confidence_enabled": "Experimental: gates radar detections by hourly probability-of-precipitation from Open-Meteo. Reduces false alarms when forecasts say it should be dry. Off by default.",
+          "satellite_confidence_enabled": "Experimental: uses satellite IR cloud presence as a confidence signal alongside radar. Off by default."
         }
       }
     },

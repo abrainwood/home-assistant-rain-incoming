@@ -74,6 +74,21 @@ The map defaults to your Home Assistant home location, so for most people you ju
 
 Changes take effect immediately on the next poll.
 
+### Optional confidence signals (experimental)
+
+The Configure dialog also exposes two opt-in confidence signals that
+augment radar detection. Both are off by default - try them if you're
+seeing too many false alarms in your area.
+
+| Option | Default | Description |
+|---|---|---|
+| Use forecast confidence (Open-Meteo PoP) | off | Gates radar detections by hourly probability-of-precipitation. Reduces false alarms when forecasts say it should be dry. Source: Open-Meteo (free, no API key). |
+| Use satellite IR confidence (Himawari) | off | Uses satellite IR cloud presence as a confidence signal alongside radar. Source: RainViewer satellite tiles. |
+
+These are experimental - if either causes problems, turn it back off and
+the integration falls back to radar-only detection. Feedback welcome
+on [Discussions](https://github.com/abrainwood/home-assistant-rain-incoming/discussions).
+
 ### Maximum number of locations
 
 You can configure up to 4 separate rain_incoming locations per Home Assistant
