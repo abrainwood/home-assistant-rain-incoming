@@ -44,7 +44,12 @@ MIN_FRAMES_DEGRADED = 2
 
 # Detection thresholds
 INTENSITY_THRESHOLD = 0.1
-MIN_CELL_AREA_PIXELS = 4
+# Lowered from 4 to 1 (2026-05-04) after rain-incoming-backtester sweep on
+# 19-day full set: POD +3.6% mean across 7 active locations, with biggest
+# gains at coastal/METAR locations (hilo +8.4%, quillayute +7.3%, mobile
+# +4.8%) where sea-breeze convection produces small isolated cells. FAR
+# rose +24% mean - accepted per user preference of POD over FAR.
+MIN_CELL_AREA_PIXELS = 1
 MIN_TEMPORAL_FRAMES = 2
 MAX_ANGULAR_VARIANCE_RADIANS = 0.5
 MAX_STORM_SPEED_KMH = 120.0
