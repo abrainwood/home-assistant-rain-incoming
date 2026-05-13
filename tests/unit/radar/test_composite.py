@@ -77,12 +77,14 @@ class TestFilterPrecipitationPixels:
         result = filter_precipitation_pixels(img)
         assert result[5, 5, 3] == 255
 
-    def test_khaki_land_mask_removed(self):
-        """Khaki/beige land-mask pixels (not in documented colour table) become transparent."""
+    def test_outermost_trace_khaki_preserved(self):
+        """(170, 158, 121) is the outermost trace tier of RainViewer scheme 2's khaki
+        sub-palette - faint precipitation, not land mask. The filter must preserve it.
+        Replaces test_khaki_land_mask_removed which encoded the prior (incorrect) assumption."""
         img = np.zeros((10, 10, 4), dtype=np.uint8)
-        img[5, 5] = [170, 158, 121, 255]  # khaki land mask colour
+        img[5, 5] = [170, 158, 121, 255]
         result = filter_precipitation_pixels(img)
-        assert result[5, 5, 3] == 0
+        assert result[5, 5, 3] == 255
 
     def test_low_alpha_pixel_removed(self):
         img = np.zeros((10, 10, 4), dtype=np.uint8)

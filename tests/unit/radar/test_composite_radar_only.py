@@ -204,9 +204,12 @@ class TestComposableRenderingPipeline:
         )
         from tests.e2e.image_helpers import gif_has_precipitation_pixels
 
-        # PRECIP_COLOURS[3] - moderate rain. Must be updated in both files together.
+        # Use PRECIP_COLOURS[3] (bright cyan) as the sentinel colour.
+        # The RGB is hardcoded so a silent palette change triggers the sanity assertion below
+        # (the test can't regenerate a matching tile from the new palette automatically).
+        # The expected intensity is read from production so this test doesn't duplicate
+        # the constant - the sanity assertion already proves the hardcoded colour is present.
         _TILE_R, _TILE_G, _TILE_B = 81, 197, 232
-        _EXPECTED_INTENSITY = 0.38
 
         tile_img = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (_TILE_R, _TILE_G, _TILE_B, 255))
         buf = BytesIO()
@@ -221,9 +224,9 @@ class TestComposableRenderingPipeline:
         assert matching, (
             f"Production PRECIP_COLOURS no longer contains the hardcoded tile colour "
             f"({_TILE_R},{_TILE_G},{_TILE_B}) - palette has diverged. "
-            f"Update the hardcoded constants in this test AND in PRECIP_COLOURS "
-            f"to keep them in sync."
+            f"Update the hardcoded RGB constants in this test to match PRECIP_COLOURS."
         )
+        _expected_intensity = matching[0][3]
 
         intensity_array = _tile_to_intensity_array(tile_bytes)
 
@@ -231,8 +234,8 @@ class TestComposableRenderingPipeline:
             f"Expected intensity array shape ({TILE_SIZE}, {TILE_SIZE}), "
             f"got {intensity_array.shape}"
         )
-        assert np.allclose(intensity_array, _EXPECTED_INTENSITY, atol=0.01), (
-            f"Parser should produce intensity ~{_EXPECTED_INTENSITY} for "
+        assert np.allclose(intensity_array, _expected_intensity, atol=0.01), (
+            f"Parser should produce intensity ~{_expected_intensity} for "
             f"the hardcoded production colour ({_TILE_R},{_TILE_G},{_TILE_B}), "
             f"got mean={intensity_array.mean():.4f}. "
             f"Check PRECIP_COLOURS in rainviewer.py still contains this entry."
