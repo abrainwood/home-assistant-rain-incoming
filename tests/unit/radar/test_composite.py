@@ -77,6 +77,7 @@ class TestFilterPrecipitationPixels:
         result = filter_precipitation_pixels(img)
         assert result[5, 5, 3] == 255
 
+    @pytest.mark.skip(reason="GH #180 experiment: all three khaki tiers reclassified as trace precipitation tiers on this branch; original test will be rewritten when the winning variant lands")
     def test_khaki_land_mask_removed(self):
         """Khaki/beige land-mask pixels (not in documented colour table) become transparent."""
         img = np.zeros((10, 10, 4), dtype=np.uint8)

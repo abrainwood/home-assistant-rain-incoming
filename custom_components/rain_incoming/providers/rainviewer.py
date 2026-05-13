@@ -35,6 +35,10 @@ TILE_SIZE = 256
 # Each entry: (R, G, B, intensity 0.0-1.0).
 # Intensities are calibrated against approximate dBZ equivalents.
 PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
+    # GH #180 experiment V4: all three previously-undocumented trace tiers.
+    (218, 204, 147, 0.02), # trace (~3-5 dBZ, RainViewer khaki tier 3 - lightest)
+    (206, 192, 135, 0.05), # trace very light (~7-10 dBZ, RainViewer khaki tier 2)
+    (170, 158, 121, 0.09), # trace light (~12-15 dBZ, RainViewer khaki tier 1)
     (0, 91, 142, 0.10),    # very light (~16 dBZ)
     (0, 119, 170, 0.18),   # light (~20 dBZ)
     (0, 154, 213, 0.28),   # light-moderate (~24 dBZ)
