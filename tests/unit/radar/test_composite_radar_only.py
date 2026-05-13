@@ -349,12 +349,16 @@ class TestComposableRenderingPipeline:
             _tile_to_intensity_array,
         )
 
-        # Offset PRECIP_COLOURS[0] red channel by +100 - lands at L2=100 from
+        # Offset PRECIP_COLOURS[0] red channel by -100 - lands at L2=100 from
         # the source entry, well beyond the parser threshold (60). If palette
         # changes push a nearer entry within 60 of this pixel, the sanity
         # assertion below will tell you to update the offset.
+        # GH #180 experiment: changed from +100 to -100 because the new
+        # trace tiers at index 0 have R>=200, and +100 overflowed past 255
+        # → PIL clamping landed the synthetic pixel inside MAX_COLOUR_DISTANCE
+        # of the trace tier itself, defeating the test's intent.
         base_r, base_g, base_b, _ = PRECIP_COLOURS[0]
-        offset = 100
+        offset = -100
         far_r, far_g, far_b = base_r + offset, base_g, base_b
 
         min_dist = min(
