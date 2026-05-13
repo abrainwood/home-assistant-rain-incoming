@@ -41,10 +41,16 @@ For each variant, the procedure is identical except for which branch is checked 
 cd ~/src/projects/homeassistant/rain-incoming-backtester
 mkdir -p /tmp/issue180/scorecards
 
+# Quick approach (default): use the curated subset (290 windows, 8 locations).
+# Aligned with prior Phase 0.5 / Phase -2 A/B comparisons - this is the
+# standard knob in this repo. Use --locations all only if the subset signal
+# is ambiguous and you need the fuller dataset to resolve it.
+
 # V1 baseline
 ( cd ../home-assistant-rain-incoming && git checkout main )
 .venv/bin/python -m scripts.backtest \
-    --locations all \
+    --data-dir backtest_data \
+    --subset manifests/quick-v3.json \
     --qc full \
     --verify \
     --output-dir /tmp/issue180/scorecards/v1 \
@@ -53,7 +59,8 @@ mkdir -p /tmp/issue180/scorecards
 # V2
 ( cd ../home-assistant-rain-incoming && git checkout experiment/180-palette-v2 )
 .venv/bin/python -m scripts.backtest \
-    --locations all \
+    --data-dir backtest_data \
+    --subset manifests/quick-v3.json \
     --qc full \
     --verify \
     --output-dir /tmp/issue180/scorecards/v2 \
@@ -62,7 +69,8 @@ mkdir -p /tmp/issue180/scorecards
 # V3
 ( cd ../home-assistant-rain-incoming && git checkout experiment/180-palette-v3 )
 .venv/bin/python -m scripts.backtest \
-    --locations all \
+    --data-dir backtest_data \
+    --subset manifests/quick-v3.json \
     --qc full \
     --verify \
     --output-dir /tmp/issue180/scorecards/v3 \
@@ -71,7 +79,8 @@ mkdir -p /tmp/issue180/scorecards
 # V4
 ( cd ../home-assistant-rain-incoming && git checkout experiment/180-palette-v4 )
 .venv/bin/python -m scripts.backtest \
-    --locations all \
+    --data-dir backtest_data \
+    --subset manifests/quick-v3.json \
     --qc full \
     --verify \
     --output-dir /tmp/issue180/scorecards/v4 \
@@ -83,7 +92,7 @@ mkdir -p /tmp/issue180/scorecards
 
 **Time estimate:** unknown - depends on dataset size. Run V1 first, time it, multiply by four for total budget.
 
-**If using a curated subset instead of all data,** add `--subset path/to/manifest.json` to each command. The Phase 0.5 / Phase -2 curated subsets in the backtester repo are the standard A/B knobs - see `docs/backtest-investigations.md` in this repo for what's been used historically.
+**Full-dataset variant:** if the curated subset signal is weak or aggregate POD/FAR/CSI hides a regression at one location, swap `--subset manifests/quick-v3.json` for `--locations all` and rerun. Roughly 8x more windows; budget accordingly.
 
 ### Step 2: Compile the comparison table
 
@@ -100,13 +109,14 @@ done
 The backtester also supports `--compare`, which produces a per-variant delta against a prior run. Useful for V2/V3/V4 vs V1:
 
 ```bash
-# Compare V2 against V1 baseline
+# Compare V2 against V1 baseline (requires checking out experiment/180-palette-v2 first)
 .venv/bin/python -m scripts.backtest \
-    --locations all --qc full --verify \
+    --data-dir backtest_data \
+    --subset manifests/quick-v3.json \
+    --qc full --verify \
     --output-dir /tmp/issue180/scorecards/v2-vs-v1 \
     --compare /tmp/issue180/scorecards/v1 \
     2>&1 | tee /tmp/issue180/scorecards/v2-vs-v1.log
-# (Requires checking out v2 first)
 ```
 
 ### Step 3: Visual compare (user-driven, but render fixtures here)
