@@ -30,15 +30,27 @@ MANIFEST_URL = f"{_API_BASE}/public/weather-maps.json"
 TILE_BASE_URL = _TILE_BASE
 TILE_SIZE = 256
 
-# RainViewer Universal Blue colour scheme (scheme 2, the only available scheme)
+# RainViewer Universal Blue colour scheme (scheme 2, the only available scheme).
 # Reference: https://www.rainviewer.com/api/color-schemes.html
-# Each entry: (R, G, B, intensity 0.0-1.0).
-# Intensities are calibrated against approximate dBZ equivalents.
+# Each entry: (R, G, B, intensity 0.0-1.0). Intensity approximates radar reflectivity.
+#
+# Ordering: STRICTLY MONOTONIC by intensity from index 0 (lowest) to last (highest).
+# Enforced by test_intensities_monotonically_increasing_by_index. Maintain it.
+#
+# Counter-intuitive sub-palette orderings (verified by spatial radial traces through
+# real captured tiles - DO NOT "fix" without checking the tests):
+#   - Khaki trace: LIGHTER RGB = HIGHER intensity. (218,204,147) sits adjacent to
+#     cell cores (heaviest trace); (170,158,121) sits at the outer halo (lightest).
+#   - Blue/cyan: DARKER blue = HIGHER intensity. (0,91,142) is the heaviest blue;
+#     (81,197,232) bright cyan is the lightest standard-precip tier.
 PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
-    (0, 91, 142, 0.10),    # very light (~16 dBZ)
-    (0, 119, 170, 0.18),   # light (~20 dBZ)
-    (0, 154, 213, 0.28),   # light-moderate (~24 dBZ)
-    (81, 197, 232, 0.38),  # moderate (~28 dBZ)
+    (170, 158, 121, 0.02), # outermost khaki trace (faintest visible return)
+    (206, 192, 135, 0.05), # middle trace
+    (218, 204, 147, 0.09), # innermost trace (just below standard precip threshold)
+    (81, 197, 232, 0.10),  # bright cyan - lightest standard precip, just above trace
+    (0, 154, 213, 0.18),   # light blue
+    (0, 119, 170, 0.28),   # medium blue
+    (0, 91, 142, 0.38),    # dark blue - heaviest blue tier
     (255, 224, 0, 0.50),   # moderate (~32 dBZ)
     (255, 170, 0, 0.63),   # moderate-heavy (~36 dBZ)
     (255, 68, 0, 0.77),    # heavy (~40 dBZ)

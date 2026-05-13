@@ -10,6 +10,7 @@ from aiohttp import ClientError
 
 from custom_components.rain_incoming.providers.base import BoundingBox
 from custom_components.rain_incoming.providers.rainviewer import (
+    PRECIP_COLOURS,
     RainViewerFrame,
     RainViewerProvider,
     _colour_to_intensity,
@@ -18,6 +19,23 @@ from custom_components.rain_incoming.providers.rainviewer import (
     check_coverage,
 )
 from custom_components.rain_incoming.radar.geo import lat_lon_to_tile
+
+
+# --- Palette structural invariants ---
+
+class TestPrecipColoursOrdering:
+    def test_intensities_monotonically_increasing_by_index(self):
+        """Every PRECIP_COLOURS entry must have strictly higher intensity than its
+        predecessor. Catches silent drift where someone inserts a colour at the wrong
+        position - which is exactly how the bug behind GH #180 happened.
+        """
+        intensities = [intensity for _, _, _, intensity in PRECIP_COLOURS]
+        for i in range(1, len(intensities)):
+            assert intensities[i] > intensities[i - 1], (
+                f"PRECIP_COLOURS[{i}] intensity {intensities[i]} not greater than "
+                f"PRECIP_COLOURS[{i-1}] intensity {intensities[i-1]} - palette must be "
+                f"strictly monotonic by index."
+            )
 
 
 # --- URL resolution ---
@@ -42,9 +60,12 @@ class TestColourToIntensity:
     def test_transparent_pixel_is_zero(self):
         assert _colour_to_intensity(0, 0, 0, alpha=0) == pytest.approx(0.0)
 
-    def test_land_colour_is_zero(self):
-        # Known land mask colour from exploration
-        assert _colour_to_intensity(170, 158, 121, alpha=255) == pytest.approx(0.0)
+    def test_outermost_trace_khaki_has_low_nonzero_intensity(self):
+        # (170, 158, 121) is the OUTERMOST khaki trace tier - the dimmest visible radar
+        # return. Previously (incorrectly) treated as a land mask colour (intensity 0).
+        # Spatial radial traces show it sits at the outer edge of cell halos.
+        intensity = _colour_to_intensity(170, 158, 121, alpha=255)
+        assert 0.0 < intensity < 0.05
 
     def test_light_rain_colour_nonzero(self):
         # Known light rain colour (0, 154, 213) in RainViewer scheme 6
@@ -58,6 +79,37 @@ class TestColourToIntensity:
 
     def test_max_intensity_does_not_exceed_one(self):
         assert _colour_to_intensity(255, 119, 255, alpha=255) <= 1.0
+
+    def test_cell_core_blue_higher_intensity_than_cell_halo_cyan(self):
+        # (0, 154, 213) appears at cell cores (high intensity);
+        # (81, 197, 232) appears at cell halos (lower intensity).
+        # Spatial radial traces through real captured radar tiles confirm ordering.
+        core_blue = _colour_to_intensity(0, 154, 213, alpha=255)
+        halo_cyan = _colour_to_intensity(81, 197, 232, alpha=255)
+        assert core_blue > halo_cyan
+
+    def test_trace_tier_ordered_inner_to_outer(self):
+        # RainViewer scheme 2 khaki sub-palette. Spatial radial traces through
+        # captured radar tiles show three concentric tiers:
+        #   (218,204,147) innermost, adjacent to cell cores - highest trace intensity
+        #   (206,192,135) middle ring
+        #   (170,158,121) outermost, fading to transparent - lowest trace intensity
+        inner = _colour_to_intensity(218, 204, 147, alpha=255)
+        middle = _colour_to_intensity(206, 192, 135, alpha=255)
+        outer = _colour_to_intensity(170, 158, 121, alpha=255)
+        assert 0.0 < outer < middle < inner < 0.10
+
+    def test_blue_tier_ordered_dark_to_cyan(self):
+        # RainViewer Universal Blue scheme 2: darker blue means heavier precipitation.
+        # Cell-core to cell-halo ordering (inferred from radial trace evidence + standard
+        # radar convention): dark blue > medium blue > light blue > bright cyan.
+        # The highest trace tier (218,204,147 at 0.09) must sit below bright cyan.
+        dark = _colour_to_intensity(0, 91, 142, alpha=255)
+        medium = _colour_to_intensity(0, 119, 170, alpha=255)
+        light = _colour_to_intensity(0, 154, 213, alpha=255)
+        cyan = _colour_to_intensity(81, 197, 232, alpha=255)
+        inner_trace = _colour_to_intensity(218, 204, 147, alpha=255)
+        assert inner_trace < cyan < light < medium < dark
 
 
 class TestLatLonToTile:
@@ -415,3 +467,77 @@ class TestTileToIntensityArrayPerformance:
             f"_tile_to_intensity_array took {avg_ms:.1f}ms per call, "
             f"expected <3ms with unique-colour optimisation"
         )
+
+
+# ---------------------------------------------------------------------------
+# _tile_to_intensity_array: semantic / spatial ordering
+# ---------------------------------------------------------------------------
+
+
+class TestTileToIntensityArraySemantic:
+    """Full pipeline test: real captured tile -> intensity grid -> spatial ordering.
+
+    Loads a 256x256 tile from the golden_v2 fixture set (a captured RainViewer
+    radar tile, scheme 2). Asserts that `_tile_to_intensity_array` assigns a
+    higher intensity value to a pixel we independently verified is cell-core blue
+    (0, 154, 213) than to a pixel we independently verified is cell-halo cyan
+    (81, 197, 232).
+
+    This test is pinned to specific pixel coordinates confirmed via PIL before
+    being committed. It catches semantic regressions where the palette ordering
+    unit tests pass but the full tile->intensity pipeline is broken.
+
+    Fixture: tests/fixtures/golden_v2/Canberra/bronze/tiles/1775715600/7_115_77_s2.png
+    Pixel coords confirmed by scanning the RGBA array with PIL:
+      core_blue  (0, 154, 213) at row=0, col=24
+      halo_cyan  (81, 197, 232) at row=0, col=5
+    """
+
+    def test_captured_tile_intensity_matches_spatial_ordering(self):
+        import pathlib
+        from custom_components.rain_incoming.providers.rainviewer import (
+            _tile_to_intensity_array,
+            _colour_to_intensity,
+        )
+
+        fixture = (
+            pathlib.Path(__file__).parent.parent.parent
+            / "fixtures"
+            / "golden_v2"
+            / "Canberra"
+            / "bronze"
+            / "tiles"
+            / "1775715600"
+            / "7_115_77_s2.png"
+        )
+        tile_bytes = fixture.read_bytes()
+        grid = _tile_to_intensity_array(tile_bytes)
+
+        # Independently confirmed pixel coordinates (see class docstring)
+        core_blue_intensity = float(grid[0, 24])   # (0, 154, 213) - cell core
+        halo_cyan_intensity = float(grid[0, 5])    # (81, 197, 232) - cell halo
+
+        # Both pixels must map to nonzero intensity (they're real precipitation)
+        assert core_blue_intensity > 0.0, (
+            f"core_blue pixel produced zero intensity ({core_blue_intensity}); "
+            "expected nonzero - palette match may be broken"
+        )
+        assert halo_cyan_intensity > 0.0, (
+            f"halo_cyan pixel produced zero intensity ({halo_cyan_intensity}); "
+            "expected nonzero - palette match may be broken"
+        )
+
+        # Cell core must register higher intensity than cell halo (radial ordering)
+        assert core_blue_intensity > halo_cyan_intensity, (
+            f"core_blue intensity {core_blue_intensity:.4f} not greater than "
+            f"halo_cyan intensity {halo_cyan_intensity:.4f}; "
+            "spatial radial ordering is violated - this is the GH #180 class of bug"
+        )
+
+        # Pin actual values so the test fails loudly if the palette shifts
+        assert core_blue_intensity == pytest.approx(
+            _colour_to_intensity(0, 154, 213, alpha=255), abs=1e-5
+        ), "core_blue tile value diverged from _colour_to_intensity reference"
+        assert halo_cyan_intensity == pytest.approx(
+            _colour_to_intensity(81, 197, 232, alpha=255), abs=1e-5
+        ), "halo_cyan tile value diverged from _colour_to_intensity reference"
