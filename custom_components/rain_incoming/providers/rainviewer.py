@@ -37,15 +37,16 @@ TILE_SIZE = 256
 # Ordering: STRICTLY MONOTONIC by intensity from index 0 (lowest) to last (highest).
 # Enforced by test_intensities_monotonically_increasing_by_index. Maintain it.
 #
-# Counter-intuitive sub-palette orderings (verified by spatial radial traces through
+# V2 palette (GH #189): only the innermost khaki trace tier is kept.
+# Long-backtest analysis (#188) showed the outer two tiers added false positives
+# without meaningful detections (CSI 0.709 vs 0.705, FAR 0.156 vs 0.158).
+# (170,158,121) outermost and (206,192,135) middle have been removed.
+#
+# Counter-intuitive sub-palette ordering (verified by spatial radial traces through
 # real captured tiles - DO NOT "fix" without checking the tests):
-#   - Khaki trace: LIGHTER RGB = HIGHER intensity. (218,204,147) sits adjacent to
-#     cell cores (heaviest trace); (170,158,121) sits at the outer halo (lightest).
 #   - Blue/cyan: DARKER blue = HIGHER intensity. (0,91,142) is the heaviest blue;
 #     (81,197,232) bright cyan is the lightest standard-precip tier.
 PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
-    (170, 158, 121, 0.02), # outermost khaki trace (faintest visible return)
-    (206, 192, 135, 0.05), # middle trace
     (218, 204, 147, 0.09), # innermost trace (just below standard precip threshold)
     (81, 197, 232, 0.10),  # bright cyan - lightest standard precip, just above trace
     (0, 154, 213, 0.18),   # light blue

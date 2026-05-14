@@ -344,6 +344,14 @@ class TestComposableRenderingPipeline:
         Complement to test_parser_accepts_filter_rejects_in_threshold_gap:
         proves the parser reads the threshold, not just that it accepts
         in-range pixels.
+
+        Construction note: use an absolute colour that is genuinely far from
+        every palette entry. Do NOT construct by offsetting a palette entry's
+        channel - PIL clamps out-of-range channel values (e.g. 270 -> 255),
+        so the actual stored pixel can land much closer to the palette than
+        the Python-integer arithmetic suggests. Grey (128,128,128) sits
+        ~119+ from every entry in the current palette - safely beyond the
+        threshold of 60.
         """
         from custom_components.rain_incoming.providers.rainviewer import (
             MAX_COLOUR_DISTANCE,
@@ -352,13 +360,7 @@ class TestComposableRenderingPipeline:
             _tile_to_intensity_array,
         )
 
-        # Offset PRECIP_COLOURS[0] red channel by +100 - lands at L2=100 from
-        # the source entry, well beyond the parser threshold (60). If palette
-        # changes push a nearer entry within 60 of this pixel, the sanity
-        # assertion below will tell you to update the offset.
-        base_r, base_g, base_b, _ = PRECIP_COLOURS[0]
-        offset = 100
-        far_r, far_g, far_b = base_r + offset, base_g, base_b
+        far_r, far_g, far_b = 128, 128, 128
 
         min_dist = min(
             ((far_r - r) ** 2 + (far_g - g) ** 2 + (far_b - b) ** 2) ** 0.5
@@ -367,7 +369,7 @@ class TestComposableRenderingPipeline:
         assert min_dist > MAX_COLOUR_DISTANCE, (
             f"Synthetic pixel ({far_r},{far_g},{far_b}) has min palette distance "
             f"{min_dist:.2f}, which is not beyond MAX_COLOUR_DISTANCE ({MAX_COLOUR_DISTANCE}). "
-            f"Update the offset in this test to keep the out-of-range property."
+            f"Pick a different colour - the palette has shifted closer to grey."
         )
 
         tile_img = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (far_r, far_g, far_b, 255))

@@ -77,14 +77,15 @@ class TestFilterPrecipitationPixels:
         result = filter_precipitation_pixels(img)
         assert result[5, 5, 3] == 255
 
-    def test_outermost_trace_khaki_preserved(self):
-        """(170, 158, 121) is the outermost trace tier of RainViewer scheme 2's khaki
-        sub-palette - faint precipitation, not land mask. The filter must preserve it.
-        Replaces test_khaki_land_mask_removed which encoded the prior (incorrect) assumption."""
+    def test_outermost_trace_khaki_filtered_out(self):
+        """(170, 158, 121) was the outermost trace tier in V1. Per GH #189 (V2 palette),
+        it has been removed from PRECIP_COLOURS. Its L2 distance to the nearest remaining
+        entry (218,204,147) is ~71, which exceeds MAX_COLOUR_DISTANCE (60), so it is now
+        treated as land mask and must be filtered OUT (alpha set to 0)."""
         img = np.zeros((10, 10, 4), dtype=np.uint8)
         img[5, 5] = [170, 158, 121, 255]
         result = filter_precipitation_pixels(img)
-        assert result[5, 5, 3] == 255
+        assert result[5, 5, 3] == 0
 
     def test_low_alpha_pixel_removed(self):
         img = np.zeros((10, 10, 4), dtype=np.uint8)

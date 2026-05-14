@@ -60,12 +60,15 @@ class TestColourToIntensity:
     def test_transparent_pixel_is_zero(self):
         assert _colour_to_intensity(0, 0, 0, alpha=0) == pytest.approx(0.0)
 
-    def test_outermost_trace_khaki_has_low_nonzero_intensity(self):
-        # (170, 158, 121) is the OUTERMOST khaki trace tier - the dimmest visible radar
-        # return. Previously (incorrectly) treated as a land mask colour (intensity 0).
-        # Spatial radial traces show it sits at the outer edge of cell halos.
+    def test_outermost_trace_khaki_returns_zero_intensity(self):
+        # (170, 158, 121) was the outermost khaki trace tier in V1 (12-entry palette).
+        # Per GH #189: V2 drops the outer two trace tiers (confirmed by long-backtest
+        # analysis, #188). They added false positives without meaningful detections.
+        # With only the inner trace (218,204,147) remaining, (170,158,121) is now ~71
+        # L2 from the nearest palette entry - exceeds MAX_COLOUR_DISTANCE (60) so it
+        # returns 0.0 and is treated as land mask / non-precipitation.
         intensity = _colour_to_intensity(170, 158, 121, alpha=255)
-        assert 0.0 < intensity < 0.05
+        assert intensity == pytest.approx(0.0)
 
     def test_light_rain_colour_nonzero(self):
         # Known light rain colour (0, 154, 213) in RainViewer scheme 6
@@ -88,16 +91,21 @@ class TestColourToIntensity:
         halo_cyan = _colour_to_intensity(81, 197, 232, alpha=255)
         assert core_blue > halo_cyan
 
-    def test_trace_tier_ordered_inner_to_outer(self):
-        # RainViewer scheme 2 khaki sub-palette. Spatial radial traces through
-        # captured radar tiles show three concentric tiers:
-        #   (218,204,147) innermost, adjacent to cell cores - highest trace intensity
-        #   (206,192,135) middle ring
-        #   (170,158,121) outermost, fading to transparent - lowest trace intensity
-        inner = _colour_to_intensity(218, 204, 147, alpha=255)
-        middle = _colour_to_intensity(206, 192, 135, alpha=255)
-        outer = _colour_to_intensity(170, 158, 121, alpha=255)
-        assert 0.0 < outer < middle < inner < 0.10
+    def test_only_inner_trace_tier_is_a_palette_entry(self):
+        # Per GH #189 (V2 palette): only the innermost trace tier remains in
+        # PRECIP_COLOURS. The outer two were dropped after long-backtest analysis
+        # (#188) showed they added false positives without meaningful detections.
+        #
+        # Inner tier (218,204,147) must be present.
+        # Middle (206,192,135) and outer (170,158,121) must NOT be present.
+        # Palette length must be exactly 10 (locks size to prevent silent drift).
+        rgb_entries = {(r, g, b) for r, g, b, _ in PRECIP_COLOURS}
+        assert (218, 204, 147) in rgb_entries, "(218,204,147) inner trace must remain in PRECIP_COLOURS"
+        assert (170, 158, 121) not in rgb_entries, "(170,158,121) outer trace must be removed per #189"
+        assert (206, 192, 135) not in rgb_entries, "(206,192,135) middle trace must be removed per #189"
+        assert len(PRECIP_COLOURS) == 10, (
+            f"PRECIP_COLOURS should have 10 entries after V2 drop, got {len(PRECIP_COLOURS)}"
+        )
 
     def test_blue_tier_ordered_dark_to_cyan(self):
         # RainViewer Universal Blue scheme 2: darker blue means heavier precipitation.
