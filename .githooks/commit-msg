@@ -1,0 +1,19 @@
+#!/bin/sh
+first_line=$(head -n 1 "$1")
+case "$first_line" in
+    "Merge "*|"fixup! "*|"squash! "*|"Revert "*)
+        exit 0
+        ;;
+esac
+if ! grep -qE '^Signed-off-by: .+ <.+@.+>' "$1"; then
+    echo ""
+    echo "COMMIT BLOCKED: missing 'Signed-off-by:' trailer."
+    echo ""
+    echo "The GitHub DCO check requires every commit to be signed off."
+    echo "Re-run your commit with -s, e.g.:"
+    echo "  git commit -s"
+    echo "  git commit --amend -s --no-edit   # to fix the most recent commit"
+    echo ""
+    exit 1
+fi
+exit 0
