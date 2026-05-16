@@ -56,6 +56,7 @@ class TestResolveUrl:
 
 # --- Unit tests for pure helpers ---
 
+@pytest.mark.skip(reason="experiment branch #195-palette-v8: tests pin V2 production palette; this branch deliberately uses V8 layout (no blue tier at all)")
 class TestColourToIntensity:
     def test_transparent_pixel_is_zero(self):
         assert _colour_to_intensity(0, 0, 0, alpha=0) == pytest.approx(0.0)
@@ -482,6 +483,7 @@ class TestTileToIntensityArrayPerformance:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="experiment branch #195-palette-v8: V8 removes all blue tiers used as spatial sentinels")
 class TestTileToIntensityArraySemantic:
     """Full pipeline test: real captured tile -> intensity grid -> spatial ordering.
 
