@@ -47,6 +47,8 @@ TILE_SIZE = 256
 #   - Blue/cyan: DARKER blue = HIGHER intensity. (0,91,142) is the heaviest blue;
 #     (81,197,232) bright cyan is the lightest standard-precip tier.
 PRECIP_COLOURS: list[tuple[int, int, int, float]] = [
+    # V3 variant for #195 obs-truth palette sweep: V2 + middle trace tier.
+    (206, 192, 135, 0.05), # middle trace
     (218, 204, 147, 0.09), # innermost trace (just below standard precip threshold)
     (81, 197, 232, 0.10),  # bright cyan - lightest standard precip, just above trace
     (0, 154, 213, 0.18),   # light blue
