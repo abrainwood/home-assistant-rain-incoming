@@ -1,5 +1,7 @@
 # GH #192 proximity radius sweep results
 
+**⚠️ SUPERSEDED.** This v1 sweep used RainViewer pixel intensity as truth, which is 4-5× over-coverage vs source BoM data per `docs/rainviewer-vs-bom-investigation.md`. The "Keep 15.0" conclusion was based on biased data. The actual decision (`PROXIMITY_RADIUS_KM = 5.0`) was made on the obs-truth v2 sweep - see `docs/issue-195-obs-truth-sweep-results.md`.
+
 Captured 2026-05-15 against the V2 palette (`PROXIMITY_RADIUS_KM = 15.0` on main at `bda126d`). 5 radii × 5 locations × 3886 windows each, obs-station-aligned verifier.
 
 ## Experiment design
