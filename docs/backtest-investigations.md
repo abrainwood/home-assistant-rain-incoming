@@ -1,5 +1,14 @@
 # Backtest Investigations
 
+> **Note (2026-05-23)**: this doc is now a **historical investigation log**, not the active plan. The canonical phase plan for ongoing experimentation lives in [rain-incoming-backtester `docs/experiment-motion-estimation-comparison.md` § "Phase plan"](https://github.com/abrainwood/rain-incoming-backtester/blob/main/docs/experiment-motion-estimation-comparison.md). The Tier 1-4 / Priority 1-7 items below have been superseded or folded into the phase structure:
+> - **Tier 1 (improve detection)** → addressed by Phase -2.5 (noise taxonomy) and Phase -2.7 (Mt Read orographic — issue #201).
+> - **Tier 2 (arrival time)** → folded into Phase 4-13 winner selection criteria (motion estimator bake-off).
+> - **Tier 3 (QC tuning)** → Phase -2.5 scope.
+> - **Tier 4 (lower priority)** → tested-and-abandoned items.
+> - Verifier methodology: all subsequent phases run with `--obs-window-forward-min 30` (post-#200 default; see `docs/issue-200-window-sweep-results.md`).
+>
+> Use this doc for historical context on what's been tried and rejected. Use the canonical plan for what to work on next.
+
 Baseline run: 2026-04-24, 10 days of data, 8 locations, `--qc none`.
 
 ## Baseline Results
